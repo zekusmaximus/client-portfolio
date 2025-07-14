@@ -11,7 +11,7 @@ import {
   CheckCircle, 
   Download
 } from 'lucide-react';
-import usePortfolioStore from '../store/portfolioStore';
+import usePortfolioStore from './portfolioStore';
 
 const DataUploadManager = () => {
   const {

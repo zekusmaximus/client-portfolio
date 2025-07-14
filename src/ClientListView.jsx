@@ -13,7 +13,7 @@ import {
   Shield,
   Building
 } from 'lucide-react';
-import usePortfolioStore from '../store/portfolioStore';
+import usePortfolioStore from './portfolioStore';
 
 const ClientListView = () => {
   const { 

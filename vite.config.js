@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   define: {
-    'process.env.VITE_API_BASE_URL': JSON.stringify('https://5000-iu5y7tq9e83tumhd1uoou-57987d5d.manusvm.computer')
+    'process.env.VITE_API_BASE_URL': JSON.stringify('http://localhost:5000')
   }
 })
 

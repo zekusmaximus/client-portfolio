@@ -21,7 +21,7 @@ import {
   Target,
   FileText
 } from 'lucide-react';
-import usePortfolioStore from '../store/portfolioStore';
+import usePortfolioStore from './portfolioStore';
 
 const ClientEnhancementForm = ({ onClose, clientId = null }) => {
   const { 

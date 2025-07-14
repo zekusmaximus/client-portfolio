@@ -28,7 +28,7 @@ import {
   Bar,
   Legend
 } from 'recharts';
-import usePortfolioStore from '../store/portfolioStore';
+import usePortfolioStore from './portfolioStore';
 
 const DashboardView = () => {
   const { clients } = usePortfolioStore();

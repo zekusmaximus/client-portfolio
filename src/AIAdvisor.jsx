@@ -14,7 +14,7 @@ import {
   Clock,
   Sparkles
 } from 'lucide-react';
-import usePortfolioStore from '../store/portfolioStore';
+import usePortfolioStore from './portfolioStore';
 
 const AIAdvisor = () => {
   const { clients } = usePortfolioStore();

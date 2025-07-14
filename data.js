@@ -5,7 +5,7 @@ const {
   validateClientData,
   calculateStrategicScores,
   optimizePortfolio
-} = require('../utils/clientAnalyzer');
+} = require('./clientAnalyzer');
 
 // POST /api/data/process-csv
 router.post('/process-csv', (req, res) => {
@@ -184,46 +184,6 @@ router.post('/analytics', (req, res) => {
   }
 });
 
-// Update client with enhanced data
-router.post('/update-client', (req, res) => {
-  try {
-    const { clients, updatedClient } = req.body;
-    
-    if (!clients || !updatedClient) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Missing clients array or updated client data' 
-      });
-    }
-    
-    // Update the client in the array
-    const updatedClients = clients.map(client => 
-      client.id === updatedClient.id ? updatedClient : client
-    );
-    
-    // Recalculate strategic values for all clients
-    const processedClients = updatedClients.map(client => {
-      const processed = clientAnalyzer.processClient(client);
-      return {
-        ...client,
-        ...processed
-      };
-    });
-    
-    res.json({
-      success: true,
-      clients: processedClients,
-      message: 'Client updated successfully'
-    });
-    
-  } catch (error) {
-    console.error('Error updating client:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error' 
-    });
-  }
-});
 
 module.exports = router;
 

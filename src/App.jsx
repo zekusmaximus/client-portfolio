@@ -3,13 +3,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, BarChart3, Users, Target, Brain } from 'lucide-react';
-import usePortfolioStore from './store/portfolioStore';
-import DataUploadManager from './components/DataUploadManager';
-import DashboardView from './components/DashboardView';
-import ClientEnhancementForm from './components/ClientEnhancementForm';
-import ClientListView from './components/ClientListView';
-import AIAdvisor from './components/AIAdvisor';
-import ScenarioModeler from './components/ScenarioModeler';
+import usePortfolioStore from './portfolioStore';
+import DataUploadManager from './DataUploadManager';
+import DashboardView from './DashboardView';
+import ClientEnhancementForm from './ClientEnhancementForm';
+import ClientListView from './ClientListView';
+import AIAdvisor from './AIAdvisor';
+import ScenarioModeler from './ScenarioModeler';
 import './App.css';
 
 function App() {

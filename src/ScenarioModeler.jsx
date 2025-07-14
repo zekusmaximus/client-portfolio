@@ -31,7 +31,7 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import usePortfolioStore from '../store/portfolioStore';
+import usePortfolioStore from './portfolioStore';
 
 const ScenarioModeler = () => {
   const { clients } = usePortfolioStore();
