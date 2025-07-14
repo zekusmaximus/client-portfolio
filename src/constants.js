@@ -1,0 +1,1 @@
+export const LOBBYISTS = ["Jay", "Steve", "Fritz", "Brendan", "Paula", "Zeke", "Mike", "Kevin", "Joe"];

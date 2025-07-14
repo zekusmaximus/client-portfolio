@@ -8,6 +8,8 @@ import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Select } from '@/components/ui/select';
+import { LOBBYISTS } from './constants';
 import { 
   X, 
   Users, 
@@ -40,7 +42,12 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
     practiceArea: [],
     relationshipStrength: 5,
     conflictRisk: 'Medium',
-    timeCommitment: '',
+    primaryLobbyist: '',
+    clientOriginator: '',
+    lobbyistTeam: [],
+    interactionFrequency: 'As-Needed',
+    relationshipIntensity: 5,
+    crisisManagement: 'Low',
     renewalProbability: 0.7,
     strategicFitScore: 5,
     notes: ''
@@ -72,7 +79,12 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
         practiceArea: client.practiceArea || [],
         relationshipStrength: client.relationshipStrength || 5,
         conflictRisk: client.conflictRisk || 'Medium',
-        timeCommitment: client.timeCommitment ?? '',
+        primaryLobbyist: client.primaryLobbyist || '',
+        clientOriginator: client.clientOriginator || '',
+        lobbyistTeam: client.lobbyistTeam || [],
+        interactionFrequency: client.interactionFrequency || 'As-Needed',
+        relationshipIntensity: client.relationshipIntensity || 5,
+        crisisManagement: client.crisisManagement || 'Low',
         renewalProbability: client.renewalProbability || 0.7,
         strategicFitScore: client.strategicFitScore || 5,
         notes: client.notes || ''
@@ -103,9 +115,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
       newErrors.practiceArea = 'Please select at least one practice area';
     }
     
-    if (!formData.timeCommitment || formData.timeCommitment <= 0) {
-      newErrors.timeCommitment = 'Time commitment is required and must be greater than 0';
-    }
+    // Additional validations can be added here as needed
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -272,33 +282,135 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
             </RadioGroup>
           </div>
 
-          {/* Time Commitment */}
+          {/* Lobbyist & Origination Assignment */}
+          <div className="space-y-3">
+            <Label className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Lobbyist & Origination Assignment
+            </Label>
+
+            {/* Primary Lobbyist */}
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Primary Lobbyist</Label>
+              <Select
+                value={formData.primaryLobbyist}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, primaryLobbyist: e.target.value }))
+                }
+                className="w-full border rounded-md p-2"
+              >
+                <option value="">Select...</option>
+                {LOBBYISTS.map((lob) => (
+                  <option key={lob} value={lob}>
+                    {lob}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            {/* Client Originator */}
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Client Originator</Label>
+              <Select
+                value={formData.clientOriginator}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, clientOriginator: e.target.value }))
+                }
+                className="w-full border rounded-md p-2"
+              >
+                <option value="">Select...</option>
+                {LOBBYISTS.map((lob) => (
+                  <option key={lob} value={lob}>
+                    {lob}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            {/* Lobbyist Team */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Lobbyist Team</Label>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {LOBBYISTS.map((lob) => (
+                  <div key={lob} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`team-${lob}`}
+                      checked={formData.lobbyistTeam.includes(lob)}
+                      onCheckedChange={(checked) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          lobbyistTeam: checked
+                            ? [...prev.lobbyistTeam, lob]
+                            : prev.lobbyistTeam.filter((l) => l !== lob),
+                        }))
+                      }
+                    />
+                    <Label htmlFor={`team-${lob}`} className="text-sm">
+                      {lob}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Relationship & Engagement Metrics */}
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
-              Time Commitment (hours/month)
+              Relationship & Engagement Metrics
             </Label>
-            {errors.timeCommitment && (
-              <p className="text-sm text-red-500 flex items-center gap-1">
-                <AlertCircle className="h-3 w-3" />
-                {errors.timeCommitment}
-              </p>
-            )}
-            <Input
-              type="number"
-              value={formData.timeCommitment}
-              onChange={(e) => {
-                const value = e.target.value;
-                setFormData(prev => ({
-                  ...prev,
-                  timeCommitment: value === '' ? '' : parseFloat(value)
-                }));
-              }}
-              min="0"
-              step="1"
-              placeholder="Enter hours"
-              required
-            />
+
+            {/* Interaction Frequency */}
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Interaction Frequency</Label>
+              <RadioGroup
+                value={formData.interactionFrequency}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, interactionFrequency: value }))
+                }
+              >
+                {['As-Needed', 'Quarterly', 'Monthly', 'Weekly', 'Daily'].map((freq) => (
+                  <div key={freq} className="flex items-center space-x-2">
+                    <RadioGroupItem value={freq} id={`freq-${freq}`} />
+                    <Label htmlFor={`freq-${freq}`}>{freq}</Label>
+                  </div>
+                ))}
+              </RadioGroup>
+            </div>
+
+            {/* Relationship Intensity */}
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">
+                Relationship Intensity: {formData.relationshipIntensity}/10
+              </Label>
+              <Slider
+                value={[formData.relationshipIntensity]}
+                onValueChange={(value) => handleSliderChange('relationshipIntensity', value)}
+                max={10}
+                min={1}
+                step={1}
+                className="w-full"
+              />
+            </div>
+
+            {/* Crisis Management Needs */}
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Crisis Management Needs</Label>
+              <RadioGroup
+                value={formData.crisisManagement}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({ ...prev, crisisManagement: value }))
+                }
+              >
+                {['Low', 'Medium', 'High'].map((lvl) => (
+                  <div key={lvl} className="flex items-center space-x-2">
+                    <RadioGroupItem value={lvl} id={`crisis-${lvl}`} />
+                    <Label htmlFor={`crisis-${lvl}`}>{lvl}</Label>
+                  </div>
+                ))}
+              </RadioGroup>
+            </div>
           </div>
 
           {/* Renewal Probability */}
