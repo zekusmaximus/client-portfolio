@@ -1,0 +1,360 @@
+# AI Agent Prompt: Build a Client Portfolio Optimization Dashboard
+
+## 1. Role & Objective
+
+**Role:** You are an expert full-stack developer tasked with building a comprehensive client portfolio optimization dashboard.
+
+**Objective:** Create a React web application with Node.js/Express backend for a government relations attorney to analyze client portfolios, model succession scenarios, and receive AI-driven strategic recommendations during firm transition planning.
+
+## 2. System Architecture & Tech Stack
+
+**Frontend:** React
+
+- **State Management:** Zustand
+- **Data Visualization:** Recharts
+- **CSV Parsing:** Papaparse
+- **Styling:** Tailwind CSS
+- **File Upload:** react-dropzone
+
+**Backend:** Node.js with Express
+
+- **Purpose:** Serve React app, handle Claude API calls securely
+- **Environment:** Claude API key stored as environment variable, never exposed to client
+
+**Data Persistence (MVP):** localStorage for client data persistence across sessions
+
+## 3. Data Schema & Input Specification
+
+**Input Data:** CSV file with the following structure (based on actual firm data):
+
+```csv
+CLIENT,Contract Period,2023 Contracts,2024 Contracts,2025 Contracts
+50CAN,1/1/25-12/31/25,$72000.00,$72000.00,$72000.00
+Adv. Beh. Health,2/1/23-1/31/24,$30000.00,$30000.00,
+Altria,1/1/25-12/31/25,$82000.00,$82000.00,$82000.00
+```
+
+**Client Object Schema:**
+
+```javascript
+{
+  id: string, // UUID generated on import
+  name: string,
+  contractPeriod: string,
+  status: 'IF' | 'D' | 'P' | 'H', // Derived from contract dates vs current date
+  revenue: {
+    2023: number,
+    2024: number, 
+    2025: number
+  },
+  // Enhanced fields (user input after upload)
+  practiceArea: string[], // Healthcare, Municipal, Corporate, Energy, etc.
+  relationshipStrength: number, // 1-10 scale
+  conflictRisk: 'Low' | 'Medium' | 'High',
+  timeCommitment: number, // Hours per month estimate
+  renewalProbability: number, // 0-1 probability
+  strategicFitScore: number, // 1-10 user-defined strategic importance
+  notes: string,
+  // Calculated fields
+  strategicValue: number,
+  growthScore: number,
+  efficiencyScore: number,
+  averageRevenue: number
+}
+```
+
+## 4. Core Implementation Requirements
+
+### 4.1 Data Import & Management (Component: DataUploadManager)
+
+**CSV Upload Interface:**
+
+- Implement drag-and-drop using react-dropzone
+- Parse CSV using Papaparse with configuration:
+
+```javascript
+{
+  header: true,
+  dynamicTyping: true,
+  skipEmptyLines: true,
+  transformHeader: (header) => header.trim()
+}
+```
+
+**Data Processing Logic:**
+
+1. Parse revenue columns, handling empty values as 0
+1. Derive contract status using explicit rules:
+   
+   ```javascript
+   // Contract Status Logic (use current date: July 12, 2025)
+   // Split contractPeriod "M/D/YY-M/D/YY" to get start and end dates
+   function deriveStatus(contractPeriod) {
+     const currentDate = new Date('2025-07-12');
+     const [startStr, endStr] = contractPeriod.split('-');
+     const startDate = new Date(startStr);
+     const endDate = new Date(endStr);
+     
+     if (currentDate >= startDate && currentDate <= endDate) return 'IF'; // In Force
+     if (endDate < currentDate) return 'D'; // Done
+     if (startDate > currentDate) return 'P'; // Proposal
+     return 'H'; // Hold (manual override available)
+   }
+   ```
+1. Generate UUID for each client
+1. Initialize enhancement fields with defaults
+1. Store in localStorage under key ‘clientPortfolio’
+
+**Data Validation:**
+
+- Flag clients with all zero revenue
+- Identify malformed contract periods
+- Highlight missing critical data for user review
+
+### 4.2 Strategic Analysis Engine (Module: ClientAnalyzer.js)
+
+**Strategic Value Calculation:**
+
+```javascript
+// Step 1: Calculate sub-scores (normalize 0-10)
+function calculateSubScores(clients) {
+  const revenues = clients.map(c => (c.revenue[2023] + c.revenue[2024] + c.revenue[2025]) / 3);
+  const maxRevenue = Math.max(...revenues);
+  const minRevenue = Math.min(...revenues);
+  
+  return clients.map(client => {
+    const avgRevenue = (client.revenue[2023] + client.revenue[2024] + client.revenue[2025]) / 3;
+    
+    // Revenue Score (0-10)
+    const revenueScore = maxRevenue === minRevenue ? 5 : 
+      ((avgRevenue - minRevenue) / (maxRevenue - minRevenue)) * 10;
+    
+    // Growth Score (CAGR normalized 0-10, centered around 0% growth = 5 points)
+    const initialRevenue = client.revenue[2023] || 1; // Avoid division by zero
+    const finalRevenue = client.revenue[2025] || 0;
+    const cagr = initialRevenue > 0 ? Math.pow(finalRevenue / initialRevenue, 1/2) - 1 : 0;
+    const growthScore = Math.max(0, Math.min(10, (cagr + 0.5) * 10));
+    
+    // Efficiency Score (Revenue per hour - normalized by $1000/hour baseline)
+    const efficiencyScore = client.timeCommitment > 0 ? 
+      Math.min(10, (avgRevenue / client.timeCommitment) / 1000) : 0;
+    
+    return {
+      ...client,
+      averageRevenue: avgRevenue,
+      revenueScore,
+      growthScore,
+      efficiencyScore
+    };
+  });
+}
+
+// Step 2: Calculate Strategic Value
+function calculateStrategicValue(client) {
+  const conflictPenalty = {
+    'High': 3,
+    'Medium': 1, 
+    'Low': 0
+  }[client.conflictRisk];
+  
+  return (
+    (client.revenueScore * 0.30) +
+    (client.growthScore * 0.20) +
+    (client.relationshipStrength * 0.20) +
+    (client.strategicFitScore * 0.15) +
+    (client.renewalProbability * 10 * 0.10) +
+    (client.efficiencyScore * 0.05)
+  ) - conflictPenalty;
+}
+```
+
+**Portfolio Optimization Algorithm:**
+
+```javascript
+function optimizePortfolio(clients, maxCapacity) {
+  const eligibleClients = clients
+    .filter(c => c.status === 'IF' || c.status === 'P')
+    .sort((a, b) => b.strategicValue - a.strategicValue);
+  
+  const optimal = [];
+  let usedCapacity = 0;
+  
+  for (const client of eligibleClients) {
+    if (usedCapacity + client.timeCommitment <= maxCapacity) {
+      optimal.push(client);
+      usedCapacity += client.timeCommitment;
+    }
+  }
+  
+  return {
+    clients: optimal,
+    totalRevenue: optimal.reduce((sum, c) => sum + c.averageRevenue, 0),
+    totalHours: usedCapacity,
+    averageStrategicValue: optimal.reduce((sum, c) => sum + c.strategicValue, 0) / optimal.length
+  };
+}
+```
+
+### 4.3 Visual Analytics Dashboard (Component: DashboardView)
+
+**Required Visualizations:**
+
+1. **Strategic Quadrant Chart** (Recharts ScatterChart):
+- X-axis: timeCommitment
+- Y-axis: strategicValue
+- Color-coded by practiceArea
+- Size by averageRevenue
+1. **Portfolio Composition** (Recharts PieChart):
+- Revenue breakdown by practiceArea
+- Show percentage and dollar amounts
+1. **Revenue Pipeline** (Recharts BarChart):
+- Revenue by contract status (IF, P, D, H)
+- Stacked by year (2023, 2024, 2025)
+1. **Client Ranking Table**:
+- Sortable columns: name, strategicValue, averageRevenue, timeCommitment
+- Action buttons for quick edits
+
+### 4.4 Client Enhancement Interface (Component: ClientEnhancementForm)
+
+**Create a modal/drawer for each client to input:**
+
+- Practice area (multi-select: Healthcare, Municipal, Corporate, Energy, Financial, etc.)
+- Relationship strength (1-10 slider)
+- Conflict risk (radio buttons)
+- Time commitment (number input with hours/month)
+- Renewal probability (0-100% slider)
+- Strategic fit score (1-10 slider)
+- Notes (textarea)
+
+### 4.5 Scenario Modeling & Claude Integration (Component: ScenarioModeler)
+
+**Scenario Builder Interface:**
+
+- Client multi-select with search/filter
+- Capacity input (total available hours)
+- “Optimize Automatically” button
+- Results display showing total revenue, hours, strategic value
+
+**Claude Integration Backend Endpoint:**
+
+First, install the Anthropic SDK: `npm install @anthropic-ai/sdk`
+
+```javascript
+// POST /api/claude/recommendation
+const Anthropic = require('@anthropic-ai/sdk');
+const anthropic = new Anthropic({
+  apiKey: process.env.CLAUDE_API_KEY,
+});
+
+app.post('/api/claude/recommendation', async (req, res) => {
+  const { clients, query, context } = req.body;
+  
+  // Note: For large client lists, consider summarizing data to fit context limits
+  const prompt = `You are a strategic advisor for a government relations attorney at Gaffney, Bennett & Associates during firm succession planning. Two of three partners are retiring by end of 2025, creating advancement opportunities. The firm is Connecticut's top government relations firm with 70+ clients.
+
+Current User Situation: ${context}
+
+Client Portfolio Data:
+${JSON.stringify(clients, null, 2)}
+
+User's Question: "${query}"
+
+Provide specific, actionable strategic recommendations focusing on:
+1. **Client Prioritization:** Which clients best position for partnership track?
+2. **Revenue Optimization:** Where are biggest growth opportunities?  
+3. **Risk Mitigation:** How to handle conflicts (e.g., CTLA vs corporate clients)?
+4. **Business Development:** Top new business priorities?
+
+Keep response concise, practical, and data-driven.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 2048,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    res.json({ recommendation: response.content[0].text });
+  } catch (error) {
+    console.error('Claude API Error:', error);
+    res.status(500).json({ error: 'Failed to get recommendation from AI advisor.' });
+  }
+});
+```
+
+**Sample Claude Queries:**
+
+- “Which clients best position me for partnership consideration?”
+- “How should I balance CTLA relationships with corporate client growth?”
+- “What’s my optimal strategy for the healthcare sector expansion?”
+- “Which prospects from the pipeline deserve priority focus?”
+
+## 5. User Experience Flow
+
+**Step 1: Data Import**
+
+- Upload CSV file via drag-and-drop
+- Review parsed data for errors/gaps
+- Proceed to enhancement phase
+
+**Step 2: Client Enhancement**
+
+- For each client, add practice area, relationship data, etc.
+- System calculates strategic scores in real-time
+- Save enhanced portfolio to localStorage
+
+**Step 3: Portfolio Analysis**
+
+- View dashboard with strategic quadrants, composition charts
+- Review client rankings and identify opportunities
+- Use optimization algorithm for capacity planning
+
+**Step 4: Strategic Planning**
+
+- Build custom scenarios with selected clients
+- Get Claude recommendations for strategic questions
+- Export insights for decision-making
+
+## 6. Development Execution Plan
+
+**Phase 1 (MVP Core):**
+
+1. Set up React/Node.js project structure
+1. Build DataUploadManager with CSV parsing
+1. Implement ClientAnalyzer calculation engine
+1. Create DashboardView with core visualizations
+1. Build ClientEnhancementForm for data enrichment
+
+**Phase 2 (AI Integration):**
+
+1. Implement ScenarioModeler interface
+1. Build Node.js Claude API endpoint
+1. Create frontend-backend integration
+1. Add portfolio optimization algorithm
+
+**Phase 3 (Polish):**
+
+1. Enhance UI/UX with better styling
+1. Add data export capabilities
+1. Implement portfolio versioning
+1. Add advanced visualizations
+1. **Implement UI feedback:** Loading spinners during calculations and API calls, toast notifications for success/error states, progress indicators during CSV processing
+
+## 7. Success Criteria
+
+**Immediate Value:**
+
+- Accurate strategic scoring of current 70+ client portfolio
+- Clear visualization of revenue concentration and growth opportunities
+- Actionable optimization recommendations
+
+**Strategic Positioning:**
+
+- Data-driven insights for partnership advancement
+- Conflict identification and mitigation strategies
+- Succession planning alignment with 2027-2031 timeline
+
+**Decision Support:**
+
+- Claude-powered strategic recommendations
+- Scenario modeling for different advancement paths
+- Quantified portfolio optimization results
