@@ -5,7 +5,7 @@ const {
   validateClientData,
   calculateStrategicScores,
   optimizePortfolio
-} = require('./clientAnalyzer');
+} = require('./clientAnalyzer.cjs');
 
 // POST /api/data/process-csv
 router.post('/process-csv', (req, res) => {
