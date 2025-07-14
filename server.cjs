@@ -18,8 +18,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, '../frontend/build')));
 
 // API Routes
-app.use('/api/claude', require('./claude'));
-app.use('/api/data', require('./data'));
+app.use('/api/claude', require('./claude.cjs'));
+app.use('/api/data', require('./data.cjs'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
