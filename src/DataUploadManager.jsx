@@ -38,8 +38,8 @@ const DataUploadManager = () => {
       setUploadProgress(75);
       
       if (result.success) {
-        setClients(result.data.clients);
-        setOriginalClients(result.data.clients);
+        setClients(result.clients);
+        setOriginalClients(result.clients);
         setUploadProgress(100);
         
         // Auto-navigate to dashboard after successful upload
