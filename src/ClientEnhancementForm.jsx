@@ -148,7 +148,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
   if (!client) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <Card className="w-full max-w-md">
+        <Card className="w-full max-w-md bg-white dark:bg-gray-900">
           <CardContent className="pt-6">
             <p className="text-center text-muted-foreground">
               No client selected for enhancement.
@@ -164,7 +164,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+      <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-900">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
