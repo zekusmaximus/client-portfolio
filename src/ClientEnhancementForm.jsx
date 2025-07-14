@@ -22,6 +22,7 @@ import {
   FileText
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
+import { apiClient } from './api';
 
 const ClientEnhancementForm = ({ onClose, clientId = null }) => {
   const { 
@@ -39,7 +40,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
     practiceArea: [],
     relationshipStrength: 5,
     conflictRisk: 'Medium',
-    timeCommitment: 40,
+    timeCommitment: '',
     renewalProbability: 0.7,
     strategicFitScore: 5,
     notes: ''
@@ -71,7 +72,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
         practiceArea: client.practiceArea || [],
         relationshipStrength: client.relationshipStrength || 5,
         conflictRisk: client.conflictRisk || 'Medium',
-        timeCommitment: client.timeCommitment || 40,
+        timeCommitment: client.timeCommitment ?? '',
         renewalProbability: client.renewalProbability || 0.7,
         strategicFitScore: client.strategicFitScore || 5,
         notes: client.notes || ''
@@ -102,8 +103,8 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
       newErrors.practiceArea = 'Please select at least one practice area';
     }
     
-    if (formData.timeCommitment <= 0) {
-      newErrors.timeCommitment = 'Time commitment must be greater than 0';
+    if (!formData.timeCommitment || formData.timeCommitment <= 0) {
+      newErrors.timeCommitment = 'Time commitment is required and must be greater than 0';
     }
     
     setErrors(newErrors);
@@ -123,23 +124,10 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
       };
       
       // Send to backend for recalculation
-      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
-      const response = await fetch(`${apiBaseUrl}/api/data/update-client`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          clients: clients,
-          updatedClient 
-        }),
+      const result = await apiClient.post('/data/update-client', {
+        clients,
+        updatedClient,
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to update client');
-      }
-      
-      const result = await response.json();
       
       if (result.success) {
         // Update the store with recalculated data
@@ -299,13 +287,17 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
             <Input
               type="number"
               value={formData.timeCommitment}
-              onChange={(e) => setFormData(prev => ({ 
-                ...prev, 
-                timeCommitment: parseFloat(e.target.value) || 0 
-              }))}
+              onChange={(e) => {
+                const value = e.target.value;
+                setFormData(prev => ({
+                  ...prev,
+                  timeCommitment: value === '' ? '' : parseFloat(value)
+                }));
+              }}
               min="0"
               step="1"
-              placeholder="40"
+              placeholder="Enter hours"
+              required
             />
           </div>
 

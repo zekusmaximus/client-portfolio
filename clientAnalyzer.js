@@ -15,7 +15,7 @@ function deriveContractStatus(contractPeriod) {
 
   try {
     // Use current date: July 12, 2025 as specified in requirements
-    const currentDate = new Date('2025-07-12');
+    const currentDate = new Date();
     const [startStr, endStr] = contractPeriod.split('-');
     
     if (!startStr || !endStr) {

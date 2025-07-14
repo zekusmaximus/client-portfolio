@@ -15,6 +15,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
+import { apiClient } from './api';
 
 const AIAdvisor = () => {
   const { clients } = usePortfolioStore();
@@ -37,20 +38,7 @@ const AIAdvisor = () => {
       setIsLoading(true);
       setError(null);
       
-      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
-      const response = await fetch(`${apiBaseUrl}/api/claude/analyze-portfolio`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ clients }),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to analyze portfolio');
-      }
-      
-      const data = await response.json();
+      const data = await apiClient.post('/claude/analyze-portfolio', { clients });
       
       if (data.success) {
         setResults(prev => ({ ...prev, portfolioAnalysis: data }));
@@ -73,24 +61,11 @@ const AIAdvisor = () => {
     setError(null);
     
     try {
-      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
-      const response = await fetch(`${apiBaseUrl}/api/claude/strategic-advice`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          clients,
-          query: customQuery || undefined,
-          context: 'Government relations law firm portfolio optimization'
-        }),
+      const data = await apiClient.post('/claude/strategic-advice', {
+        clients,
+        query: customQuery || undefined,
+        context: 'Government relations law firm portfolio optimization',
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to get strategic advice');
-      }
-      
-      const data = await response.json();
       
       if (data.success) {
         setResults(prev => ({ ...prev, strategicAdvice: data }));
@@ -115,22 +90,13 @@ const AIAdvisor = () => {
     setSelectedClient(client);
     
     try {
-      const response = await fetch('/api/claude/client-recommendations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          client,
-          portfolioContext: `Portfolio of ${clients.length} clients with total revenue of $${clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0).toLocaleString()}`
-        }),
+      const data = await apiClient.post('/claude/client-recommendations', {
+        client,
+        portfolioContext: `Portfolio of ${clients.length} clients with total revenue of $${clients.reduce(
+          (sum, c) => sum + (c.averageRevenue || 0),
+          0,
+        ).toLocaleString()}`,
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to get client recommendations');
-      }
-      
-      const data = await response.json();
       
       if (data.success) {
         setResults(prev => ({ ...prev, clientRecommendations: data }));
@@ -249,7 +215,7 @@ const AIAdvisor = () => {
                 Get a detailed SWOT analysis and strategic assessment of your entire client portfolio.
               </p>
               
-              <Button 
+              <Button
                 onClick={handlePortfolioAnalysis}
                 disabled={isLoading}
                 className="mb-4"
@@ -266,6 +232,15 @@ const AIAdvisor = () => {
                   </>
                 )}
               </Button>
+
+              {isLoading && activeTab === 'portfolio' && (
+                <div className="mt-4 p-4 bg-muted/30 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                    <span>Generating portfolio analysis...</span>
+                  </div>
+                </div>
+              )}
 
               {results.portfolioAnalysis && (
                 <div className="mt-6 p-4 bg-muted/30 rounded-lg">
@@ -312,7 +287,7 @@ const AIAdvisor = () => {
                   />
                 </div>
                 
-                <Button 
+                <Button
                   onClick={handleStrategicAdvice}
                   disabled={isLoading}
                 >
@@ -328,6 +303,15 @@ const AIAdvisor = () => {
                     </>
                   )}
                 </Button>
+
+                {isLoading && activeTab === 'strategic' && (
+                  <div className="mt-4 p-4 bg-muted/30 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                      <span>Generating strategic advice...</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {results.strategicAdvice && (

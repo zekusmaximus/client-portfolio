@@ -12,6 +12,7 @@ import {
   Download
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
+import { apiClient } from './api';
 
 const DataUploadManager = () => {
   const {
@@ -32,22 +33,9 @@ const DataUploadManager = () => {
       setUploadProgress(25);
 
       // Send to backend for processing
-      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
-      const response = await fetch(`${apiBaseUrl}/api/data/process-csv`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ csvData }),
-      });
+      const result = await apiClient.post('/data/process-csv', { csvData });
 
       setUploadProgress(75);
-
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
-      }
-
-      const result = await response.json();
       
       if (result.success) {
         setClients(result.data.clients);
