@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const userModel = require('../models/userModel');
-const { compare } = require('../utils/hash');
-const { sign } = require('../utils/jwt');
+const userModel = require('../models/userModel.cjs');
+const { compare } = require('../utils/hash.cjs');
+const { sign } = require('../utils/jwt.cjs');
 
 router.post('/login', async (req, res) => {
   try {

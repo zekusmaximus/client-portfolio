@@ -1,4 +1,4 @@
-const db = require('../db');
+const db = require('../db.cjs');
 
 exports.findByUsername = async (username) => {
   const { rows } = await db.query(

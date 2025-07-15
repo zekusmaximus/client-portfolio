@@ -16,12 +16,12 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Auth routes
-const authRouter = require('./routes/auth');
+const authRouter = require('./routes/auth.cjs');
 app.use('/api/auth', authRouter);
 
 // Stage 3 routers
-const clientsRouter = require('./routes/clients');
-const revenuesRouter = require('./routes/revenues');
+const clientsRouter = require('./routes/clients.cjs');
+const revenuesRouter = require('./routes/revenues.cjs');
 
 app.use('/api/clients', clientsRouter);
 app.use('/api/revenues', revenuesRouter);

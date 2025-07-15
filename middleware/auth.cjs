@@ -1,4 +1,4 @@
-const { verify } = require('../utils/jwt');
+const { verify } = require('../utils/jwt.cjs');
 
 module.exports = function authenticateToken(req, res, next) {
   const header = req.headers['authorization'];

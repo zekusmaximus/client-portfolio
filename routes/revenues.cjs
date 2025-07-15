@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const auth = require('../middleware/auth');
-const revenues = require('../models/revenueModel');
+const auth = require('../middleware/auth.cjs');
+const revenues = require('../models/revenueModel.cjs');
 
 router.use(auth);
 

@@ -1,5 +1,5 @@
-const db = require('../db');
-const { calculateStrategicScores } = require('../utils/strategic');
+const db = require('../db.cjs');
+const { calculateStrategicScores } = require('../utils/strategic.cjs');
 
 /* List all clients for a user, each with nested revenues array */
 exports.listWithRevenues = async (userId) => {
@@ -104,10 +104,10 @@ exports.get = async (clientId, userId) => {
 /* ---------- Stage 4: Metrics helpers ---------- */
 
 /**
-* List clients with calculated strategic metrics
-* @param {number} userId
-* @returns {Promise<Array>}
-*/
+ * List clients with calculated strategic metrics
+ * @param {number} userId
+ * @returns {Promise<Array>}
+ */
 exports.listWithMetrics = async (userId) => {
  const clients = await exports.listWithRevenues(userId);
 
@@ -139,11 +139,11 @@ exports.listWithMetrics = async (userId) => {
 };
 
 /**
-* Get single client with calculated metrics
-* @param {number|string} clientId
-* @param {number} userId
-* @returns {Promise<Object|null>}
-*/
+ * Get single client with calculated metrics
+ * @param {number|string} clientId
+ * @param {number} userId
+ * @returns {Promise<Object|null>}
+ */
 exports.getWithMetrics = async (clientId, userId) => {
  const client = await exports.get(clientId, userId);
  if (!client) return null;

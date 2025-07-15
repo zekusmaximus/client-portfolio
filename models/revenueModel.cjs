@@ -1,14 +1,14 @@
-const db = require('../db');
+const db = require('../db.cjs');
 
 /* Add or update (upsert) a yearly revenue record */
 exports.upsert = async (clientId, year, amount, endDate) => {
   const { rows: [rev] } = await db.query(
     `INSERT INTO client_revenues (client_id, year, revenue_amount, contract_end_date)
        VALUES ($1,$2,$3,$4)
-     ON CONFLICT (client_id, year)
-     DO UPDATE SET revenue_amount = EXCLUDED.revenue_amount,
-                   contract_end_date = EXCLUDED.contract_end_date
-     RETURNING *`,
+      ON CONFLICT (client_id, year)
+      DO UPDATE SET revenue_amount = EXCLUDED.revenue_amount,
+                    contract_end_date = EXCLUDED.contract_end_date
+      RETURNING *`,
     [clientId, year, amount, endDate]
   );
   return rev;
