@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
 
-const authenticateToken = require('../middleware/auth');
-const clientModel = require('../models/clientModel');
-const { generatePortfolioSummary } = require('../utils/strategic');
+const authenticateToken = require('./middleware/auth');
+const clientModel = require('./models/clientModel');
+const { generatePortfolioSummary } = require('./utils/strategic');
 
 // Initialize Anthropic client
 let anthropic;
