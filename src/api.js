@@ -1,7 +1,24 @@
 // src/api.js
 // Centralized API client utility for the frontend
 
+import usePortfolioStore from './portfolioStore';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+// Retrieve the auth token from Zustand store or, as a fallback, from localStorage
+function getAuthToken() {
+  try {
+    const storeToken = usePortfolioStore?.getState?.().token;
+    if (storeToken) return storeToken;
+  } catch {
+    /* ignore Zustand access errors */
+  }
+
+  if (typeof localStorage !== 'undefined') {
+    return localStorage.getItem('authToken');
+  }
+  return null;
+}
 
 /**
  * Simple wrapper around fetch for POST requests to the backend API.
@@ -17,11 +34,18 @@ async function post(endpoint, body) {
   // Ensure the endpoint starts with a leading slash
   const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
+  // Build headers and inject JWT automatically when present
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE_URL}/api${normalized}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
 

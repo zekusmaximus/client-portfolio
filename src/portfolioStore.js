@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-
+import jwt_decode from 'jwt-decode';
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
@@ -22,6 +22,11 @@ const usePortfolioStore = create(
       optimizationParams: {
         maxCapacity: 2000
       },
+
+      // Authentication state
+      isAuthenticated: false,
+      user: null,
+      token: null,
       
       // UI state
       selectedClient: null,
@@ -62,6 +67,43 @@ const usePortfolioStore = create(
       setShowEnhancementModal: (show) => set({ showEnhancementModal: show }),
       
       setCurrentView: (view) => set({ currentView: view }),
+
+      // Authentication actions
+      login: (token) => {
+        try {
+          const decoded = jwt_decode(token);
+          localStorage.setItem('authToken', token);
+          set({
+            token,
+            user: decoded,
+            isAuthenticated: true
+          });
+        } catch (err) {
+          console.error('Invalid JWT token', err);
+        }
+      },
+
+      logout: () => {
+        localStorage.removeItem('authToken');
+        set({
+          token: null,
+          user: null,
+          isAuthenticated: false
+        });
+      },
+
+      checkAuth: () => {
+        const storedToken = localStorage.getItem('authToken');
+        if (storedToken) {
+          get().login(storedToken);
+        } else {
+          set({
+            token: null,
+            user: null,
+            isAuthenticated: false
+          });
+        }
+      },
       
       // Computed getters
       getClientById: (id) => {

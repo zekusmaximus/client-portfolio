@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -10,18 +10,27 @@ import ClientEnhancementForm from './ClientEnhancementForm';
 import ClientListView from './ClientListView';
 import AIAdvisor from './AIAdvisor';
 import ScenarioModeler from './ScenarioModeler';
+import LoginPage from './LoginPage';
 import './App.css';
 
 function App() {
-  const { 
-    clients, 
-    currentView, 
+  const {
+    clients,
+    currentView,
     setCurrentView,
     showEnhancementModal,
-    setShowEnhancementModal 
+    setShowEnhancementModal,
+    isAuthenticated,
+    logout,
+    checkAuth
   } = usePortfolioStore();
 
   const hasData = clients && clients.length > 0;
+
+  // Re-hydrate auth state on initial mount
+  useEffect(() => {
+    checkAuth();
+  }, []);
 
   const renderContent = () => {
     switch (currentView) {
@@ -40,6 +49,11 @@ function App() {
     }
   };
 
+  // Gate the UI behind authentication
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -54,16 +68,21 @@ function App() {
                 Strategic analysis for government relations practice
               </p>
             </div>
-            {hasData && (
-              <div className="text-right">
-                <p className="text-sm text-muted-foreground">
-                  {clients.length} clients loaded
-                </p>
-                <p className="text-lg font-semibold">
-                  ${usePortfolioStore.getState().getTotalRevenue().toLocaleString()}
-                </p>
-              </div>
-            )}
+            <div className="flex items-center gap-4">
+              {hasData && (
+                <div className="text-right">
+                  <p className="text-sm text-muted-foreground">
+                    {clients.length} clients loaded
+                  </p>
+                  <p className="text-lg font-semibold">
+                    ${usePortfolioStore.getState().getTotalRevenue().toLocaleString()}
+                  </p>
+                </div>
+              )}
+              <Button variant="outline" onClick={logout}>
+                Logout
+              </Button>
+            </div>
           </div>
         </div>
       </header>
