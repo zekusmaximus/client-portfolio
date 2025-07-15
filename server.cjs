@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
+const db = require('./db.js');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -13,6 +14,17 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Auth routes
+const authRouter = require('./routes/auth');
+app.use('/api/auth', authRouter);
+
+// Stage 3 routers
+const clientsRouter = require('./routes/clients');
+const revenuesRouter = require('./routes/revenues');
+
+app.use('/api/clients', clientsRouter);
+app.use('/api/revenues', revenuesRouter);
 
 // Serve static files from React build
 app.use(express.static(path.join(__dirname, '../frontend/build')));
@@ -39,6 +51,17 @@ app.use((err, req, res, next) => {
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
 });
+ 
+// Health check for DB on boot
+(async () => {
+  try {
+    await db.query('SELECT 1');
+    console.log('✅  PostgreSQL connection OK');
+  } catch (e) {
+    console.error('❌  PostgreSQL connection failed', e);
+    process.exit(1);
+  }
+})();
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);

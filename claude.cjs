@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 
+const authenticateToken = require('../middleware/auth');
+const clientModel = require('../models/clientModel');
+const { generatePortfolioSummary } = require('../utils/strategic');
+
 // Initialize Anthropic client
 let anthropic;
 try {
@@ -12,41 +16,38 @@ try {
   console.error('Failed to initialize Anthropic client:', error);
 }
 
-// Strategic advice endpoint
+// Apply JWT auth to all claude routes
+router.use(authenticateToken);
+
+/* -------------------------------------------------------------------------- */
+/*                                  ROUTES                                    */
+/* -------------------------------------------------------------------------- */
+
+// Strategic advice
+// Request body: { query?: string, context?: string }
 router.post('/strategic-advice', async (req, res) => {
   try {
     if (!anthropic) {
-      return res.status(500).json({
-        success: false,
-        error: 'AI service not available'
-      });
+      return res.status(500).json({ success: false, error: 'AI service not available' });
     }
 
-    const { clients, query, context } = req.body;
+    const { query, context } = req.body || {};
+    const userId = req.user.id;
 
-    if (!clients || !Array.isArray(clients) || clients.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Client portfolio data is required'
-      });
+    // Fetch portfolio with metrics
+    const clients = await clientModel.listWithMetrics(userId);
+    if (!clients.length) {
+      return res.status(400).json({ success: false, error: 'No clients found for user' });
     }
 
-    // Prepare portfolio summary for AI analysis
     const portfolioSummary = generatePortfolioSummary(clients);
-    
-    // Create the prompt based on query type or custom query
     const prompt = createStrategicPrompt(portfolioSummary, query, context);
 
     const response = await anthropic.messages.create({
       model: 'claude-3-sonnet-20240229',
       max_tokens: 2000,
       temperature: 0.3,
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ]
+      messages: [{ role: 'user', content: prompt }],
     });
 
     const advice = response.content[0].text;
@@ -55,35 +56,26 @@ router.post('/strategic-advice', async (req, res) => {
       success: true,
       advice,
       portfolioSummary,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-
   } catch (error) {
     console.error('Error generating strategic advice:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to generate strategic advice'
-    });
+    res.status(500).json({ success: false, error: 'Failed to generate strategic advice' });
   }
 });
 
-// Portfolio analysis endpoint
+// Portfolio analysis
+// Request body: {}
 router.post('/analyze-portfolio', async (req, res) => {
   try {
     if (!anthropic) {
-      return res.status(500).json({
-        success: false,
-        error: 'AI service not available'
-      });
+      return res.status(500).json({ success: false, error: 'AI service not available' });
     }
 
-    const { clients } = req.body;
-
-    if (!clients || !Array.isArray(clients) || clients.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Client portfolio data is required'
-      });
+    const userId = req.user.id;
+    const clients = await clientModel.listWithMetrics(userId);
+    if (!clients.length) {
+      return res.status(400).json({ success: false, error: 'No clients found for user' });
     }
 
     const portfolioSummary = generatePortfolioSummary(clients);
@@ -93,12 +85,7 @@ router.post('/analyze-portfolio', async (req, res) => {
       model: 'claude-3-sonnet-20240229',
       max_tokens: 2500,
       temperature: 0.2,
-      messages: [
-        {
-          role: 'user',
-          content: analysisPrompt
-        }
-      ]
+      messages: [{ role: 'user', content: analysisPrompt }],
     });
 
     const analysis = response.content[0].text;
@@ -107,35 +94,37 @@ router.post('/analyze-portfolio', async (req, res) => {
       success: true,
       analysis,
       portfolioSummary,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-
   } catch (error) {
     console.error('Error analyzing portfolio:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to analyze portfolio'
-    });
+    res.status(500).json({ success: false, error: 'Failed to analyze portfolio' });
   }
 });
 
-// Client-specific recommendations endpoint
+// Client-specific recommendations
+// Request body: { clientId: string|number, includePortfolio?: boolean }
 router.post('/client-recommendations', async (req, res) => {
   try {
     if (!anthropic) {
-      return res.status(500).json({
-        success: false,
-        error: 'AI service not available'
-      });
+      return res.status(500).json({ success: false, error: 'AI service not available' });
     }
 
-    const { client, portfolioContext } = req.body;
+    const { clientId, includePortfolio } = req.body || {};
+    if (!clientId) {
+      return res.status(400).json({ success: false, error: 'clientId is required' });
+    }
 
+    const userId = req.user.id;
+    const client = await clientModel.getWithMetrics(clientId, userId);
     if (!client) {
-      return res.status(400).json({
-        success: false,
-        error: 'Client data is required'
-      });
+      return res.status(404).json({ success: false, error: 'Client not found' });
+    }
+
+    let portfolioContext;
+    if (includePortfolio) {
+      const clients = await clientModel.listWithMetrics(userId);
+      portfolioContext = JSON.stringify(generatePortfolioSummary(clients));
     }
 
     const clientPrompt = createClientRecommendationPrompt(client, portfolioContext);
@@ -144,12 +133,7 @@ router.post('/client-recommendations', async (req, res) => {
       model: 'claude-3-sonnet-20240229',
       max_tokens: 1500,
       temperature: 0.3,
-      messages: [
-        {
-          role: 'user',
-          content: clientPrompt
-        }
-      ]
+      messages: [{ role: 'user', content: clientPrompt }],
     });
 
     const recommendations = response.content[0].text;
@@ -158,66 +142,18 @@ router.post('/client-recommendations', async (req, res) => {
       success: true,
       recommendations,
       client: client.name,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-
   } catch (error) {
     console.error('Error generating client recommendations:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to generate client recommendations'
-    });
+    res.status(500).json({ success: false, error: 'Failed to generate client recommendations' });
   }
 });
 
-// Helper function to generate portfolio summary
-function generatePortfolioSummary(clients) {
-  const totalRevenue = clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-  const avgStrategicValue = clients.length > 0 ? 
-    clients.reduce((sum, c) => sum + (c.strategicValue || 0), 0) / clients.length : 0;
-  
-  const statusBreakdown = clients.reduce((acc, c) => {
-    acc[c.status] = (acc[c.status] || 0) + 1;
-    return acc;
-  }, {});
+/* -------------------------------------------------------------------------- */
+/*                              PROMPT BUILDERS                               */
+/* -------------------------------------------------------------------------- */
 
-  const practiceAreas = clients.reduce((acc, c) => {
-    if (c.practiceArea && Array.isArray(c.practiceArea)) {
-      c.practiceArea.forEach(area => {
-        acc[area] = (acc[area] || 0) + 1;
-      });
-    }
-    return acc;
-  }, {});
-
-  const riskProfile = clients.reduce((acc, c) => {
-    acc[c.conflictRisk || 'Unknown'] = (acc[c.conflictRisk || 'Unknown'] || 0) + 1;
-    return acc;
-  }, {});
-
-  const topClients = clients
-    .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0))
-    .slice(0, 5)
-    .map(c => ({
-      name: c.name,
-      revenue: c.averageRevenue || 0,
-      strategicValue: c.strategicValue || 0,
-      status: c.status,
-      practiceArea: c.practiceArea || []
-    }));
-
-  return {
-    totalClients: clients.length,
-    totalRevenue,
-    avgStrategicValue: avgStrategicValue.toFixed(2),
-    statusBreakdown,
-    practiceAreas,
-    riskProfile,
-    topClients
-  };
-}
-
-// Helper function to create strategic prompt
 function createStrategicPrompt(portfolioSummary, query, context) {
   const basePrompt = `You are a strategic advisor for a government relations law firm. Analyze the following client portfolio data and provide strategic recommendations.
 
@@ -230,16 +166,28 @@ Portfolio Summary:
 - Risk Profile: ${JSON.stringify(portfolioSummary.riskProfile)}
 
 Top 5 Clients by Strategic Value:
-${portfolioSummary.topClients.map((c, i) => 
-  `${i+1}. ${c.name} - Revenue: $${c.revenue.toLocaleString()}, Strategic Value: ${c.strategicValue}, Status: ${c.status}, Practice Areas: ${c.practiceArea.join(', ')}`
-).join('\n')}
+${portfolioSummary.topClients
+  .map(
+    (c, i) =>
+      `${i + 1}. ${c.name} - Revenue: $${c.revenue.toLocaleString()}, Strategic Value: ${c.strategicValue}, Status: ${c.status}, Practice Areas: ${c.practiceArea.join(
+        ', ',
+      )}`,
+  )
+  .join('\n')}
 
 ${context ? `Additional Context: ${context}` : ''}`;
 
   if (query) {
-    return `${basePrompt}\n\nSpecific Question: ${query}\n\nPlease provide detailed strategic advice addressing this question.`;
-  } else {
-    return `${basePrompt}\n\nPlease provide comprehensive strategic recommendations covering:
+    return `${basePrompt}
+
+Specific Question: ${query}
+
+Please provide detailed strategic advice addressing this question.`;
+  }
+
+  return `${basePrompt}
+
+Please provide comprehensive strategic recommendations covering:
 1. Portfolio optimization opportunities
 2. Risk management strategies
 3. Revenue growth potential
@@ -248,10 +196,8 @@ ${context ? `Additional Context: ${context}` : ''}`;
 6. Succession planning considerations
 
 Format your response with clear sections and actionable recommendations.`;
-  }
 }
 
-// Helper function to create analysis prompt
 function createAnalysisPrompt(portfolioSummary) {
   return `As a strategic consultant for a government relations law firm, conduct a comprehensive analysis of this client portfolio:
 
@@ -264,9 +210,12 @@ Portfolio Data:
 - Risk Distribution: ${JSON.stringify(portfolioSummary.riskProfile)}
 
 Top Clients:
-${portfolioSummary.topClients.map((c, i) => 
-  `${i+1}. ${c.name} - $${c.revenue.toLocaleString()} revenue, ${c.strategicValue} strategic value, ${c.status} status`
-).join('\n')}
+${portfolioSummary.topClients
+  .map(
+    (c, i) =>
+      `${i + 1}. ${c.name} - $${c.revenue.toLocaleString()} revenue, ${c.strategicValue} strategic value, ${c.status} status`,
+  )
+  .join('\n')}
 
 Provide a detailed analysis including:
 
@@ -298,7 +247,6 @@ Provide a detailed analysis including:
 Format with clear headers and bullet points for easy reading.`;
 }
 
-// Helper function to create client-specific recommendation prompt
 function createClientRecommendationPrompt(client, portfolioContext) {
   return `As a strategic advisor for a government relations law firm, provide specific recommendations for this client:
 
@@ -308,7 +256,9 @@ Strategic Value: ${client.strategicValue || 'Not assessed'}
 Contract Status: ${client.status}
 Practice Areas: ${client.practiceArea ? client.practiceArea.join(', ') : 'Not specified'}
 Time Commitment: ${client.timeCommitment || 'Not specified'} hours/month
-Renewal Probability: ${client.renewalProbability ? Math.round(client.renewalProbability * 100) + '%' : 'Not assessed'}
+Renewal Probability: ${
+    client.renewalProbability ? Math.round(client.renewalProbability * 100) + '%' : 'Not assessed'
+  }
 Conflict Risk: ${client.conflictRisk || 'Not assessed'}
 Relationship Strength: ${client.relationshipStrength || 'Not assessed'}/10
 Notes: ${client.notes || 'None'}
@@ -341,4 +291,3 @@ Keep recommendations specific, actionable, and tailored to this client's profile
 }
 
 module.exports = router;
-
