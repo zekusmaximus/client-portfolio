@@ -2,12 +2,9 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, BarChart3, Users, Target, Brain } from 'lucide-react';
+import { BarChart3, Target, Brain } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
-import DataUploadManager from './DataUploadManager';
 import DashboardView from './DashboardView';
-import ClientEnhancementForm from './ClientEnhancementForm';
-import ClientListView from './ClientListView';
 import AIAdvisor from './AIAdvisor';
 import ScenarioModeler from './ScenarioModeler';
 import LoginPage from './LoginPage';
@@ -16,10 +13,10 @@ import './App.css';
 function App() {
   const {
     clients,
+    clientsLoading,
+    fetchClients,
     currentView,
     setCurrentView,
-    showEnhancementModal,
-    setShowEnhancementModal,
     isAuthenticated,
     logout,
     checkAuth
@@ -32,20 +29,26 @@ function App() {
     checkAuth();
   }, []);
 
+  // Fetch clients after authentication
+  useEffect(() => {
+    if (isAuthenticated && clients.length === 0) {
+      fetchClients();
+    }
+  }, [isAuthenticated]);
+
   const renderContent = () => {
+    if (clientsLoading) {
+      return <p className="text-center py-12">Loading clients…</p>;
+    }
     switch (currentView) {
-      case 'upload':
-        return <DataUploadManager />;
       case 'dashboard':
-        return hasData ? <DashboardView /> : <DataUploadManager />;
-      case 'enhancement':
-        return hasData ? <ClientListView /> : <DataUploadManager />;
+        return hasData ? <DashboardView /> : <p>No clients found.</p>;
       case 'ai':
-        return hasData ? <AIAdvisor /> : <DataUploadManager />;
+        return hasData ? <AIAdvisor /> : <p>No clients found.</p>;
       case 'scenarios':
-        return hasData ? <ScenarioModeler /> : <DataUploadManager />;
+        return hasData ? <ScenarioModeler /> : <p>No clients found.</p>;
       default:
-        return <DataUploadManager />;
+        return hasData ? <DashboardView /> : <p>No clients found.</p>;
     }
   };
 
@@ -92,21 +95,11 @@ function App() {
         <nav className="border-b bg-muted/30">
           <div className="container mx-auto px-4">
             <Tabs value={currentView} onValueChange={setCurrentView} className="w-full">
-              <TabsList className="grid w-full grid-cols-5">
-                <TabsTrigger value="upload" className="flex items-center gap-2">
-                  <Upload className="h-4 w-4" />
-                  Data Upload
-                  {!hasData && <span className="ml-1 text-xs bg-green-500 text-white px-1 rounded">1</span>}
-                </TabsTrigger>
+              <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="dashboard" className="flex items-center gap-2">
                   <BarChart3 className="h-4 w-4" />
                   Dashboard
                   {hasData && <span className="ml-1 text-xs bg-blue-500 text-white px-1 rounded">2</span>}
-                </TabsTrigger>
-                <TabsTrigger value="enhancement" className="flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  Client Details
-                  {hasData && <span className="ml-1 text-xs bg-orange-500 text-white px-1 rounded">3</span>}
                 </TabsTrigger>
                 <TabsTrigger value="ai" className="flex items-center gap-2">
                   <Brain className="h-4 w-4" />
@@ -126,21 +119,15 @@ function App() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-6">
-        {!hasData && currentView !== 'upload' && (
+        {!hasData && !clientsLoading && (
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5" />
-                No Data Available
-              </CardTitle>
+              <CardTitle>No Client Data Available</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground mb-4">
-                Please upload your client portfolio CSV file to begin analysis.
+              <p className="text-muted-foreground">
+                No client records were found for your account.
               </p>
-              <Button onClick={() => setCurrentView('upload')}>
-                Upload Data
-              </Button>
             </CardContent>
           </Card>
         )}
@@ -148,12 +135,7 @@ function App() {
         {renderContent()}
       </main>
 
-      {/* Client Enhancement Modal */}
-      {showEnhancementModal && (
-        <ClientEnhancementForm 
-          onClose={() => setShowEnhancementModal(false)}
-        />
-      )}
+      {/* ClientCardModal handled in DashboardView */}
 
       {/* Footer */}
       <footer className="border-t bg-muted/30 mt-12">

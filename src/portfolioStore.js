@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import jwt_decode from 'jwt-decode';
+import { apiClient } from './api';
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
       // Client data
       clients: [],
       originalClients: [], // Keep original data for comparison
+      clientsLoading: false,
       
       // Upload state
       isUploading: false,
@@ -31,10 +33,24 @@ const usePortfolioStore = create(
       // UI state
       selectedClient: null,
       showEnhancementModal: false,
-      currentView: 'upload', // 'upload', 'dashboard', 'enhancement', 'scenarios'
+      currentView: 'dashboard', // 'dashboard', 'enhancement', 'ai', 'scenarios'
       
       // Actions
       setClients: (clients) => set({ clients }),
+
+      // Fetch clients from backend
+      fetchClients: async () => {
+        const { isAuthenticated, clientsLoading, clients } = get();
+        if (!isAuthenticated || clientsLoading || (clients && clients.length > 0)) return;
+        set({ clientsLoading: true });
+        try {
+          const data = await apiClient.get('/api/clients');
+          set({ clients: data, clientsLoading: false });
+        } catch (err) {
+          console.error('Failed to fetch clients', err);
+          set({ clientsLoading: false });
+        }
+      },
       
       setOriginalClients: (clients) => set({ originalClients: clients }),
       
@@ -64,6 +80,12 @@ const usePortfolioStore = create(
       
       setSelectedClient: (client) => set({ selectedClient: client }),
       
+      // Modal helpers for unified Client Card interface (Phase 3)
+      // Passing `null` opens the modal in “create” mode.
+      openClientModal: (client = null) => set({ selectedClient: client }),
+      // Clears the selection to close the modal.
+      closeClientModal: () => set({ selectedClient: null }),
+      
       setShowEnhancementModal: (show) => set({ showEnhancementModal: show }),
       
       setCurrentView: (view) => set({ currentView: view }),
@@ -88,7 +110,9 @@ const usePortfolioStore = create(
         set({
           token: null,
           user: null,
-          isAuthenticated: false
+          isAuthenticated: false,
+          clients: [],
+          clientsLoading: false
         });
       },
 

@@ -37,15 +37,17 @@ const AIAdvisor = () => {
     try {
       setIsLoading(true);
       setError(null);
-      
-      const data = await apiClient.post('/claude/analyze-portfolio', { clients });
-      
+
+      // Extract only necessary client IDs for analysis
+      const clientIds = clients.map(c => c.id);
+      const data = await apiClient.post('/claude/analyze-portfolio', { clientIds });
+
       if (data.success) {
         setResults(prev => ({ ...prev, portfolioAnalysis: data }));
       } else {
         throw new Error(data.error || 'Analysis failed');
       }
-      
+
     } catch (err) {
       console.error('Portfolio analysis error:', err);
       setError(err.message);
@@ -56,24 +58,26 @@ const AIAdvisor = () => {
 
   const handleStrategicAdvice = async () => {
     if (!hasData) return;
-    
+
     setIsLoading(true);
     setError(null);
-    
+
     try {
+      // Extract only necessary client IDs for advice
+      const clientIds = clients.map(c => c.id);
       const data = await apiClient.post('/claude/strategic-advice', {
-        clients,
+        clientIds,
         query: customQuery || undefined,
         context: 'Government relations law firm portfolio optimization',
       });
-      
+
       if (data.success) {
         setResults(prev => ({ ...prev, strategicAdvice: data }));
         setCustomQuery(''); // Clear the query after successful request
       } else {
         throw new Error(data.error || 'Advice generation failed');
       }
-      
+
     } catch (err) {
       console.error('Strategic advice error:', err);
       setError(err.message);
@@ -84,26 +88,26 @@ const AIAdvisor = () => {
 
   const handleClientRecommendations = async (client) => {
     if (!client) return;
-    
+
     setIsLoading(true);
     setError(null);
     setSelectedClient(client);
-    
+
     try {
+      // Only send the client ID and basic context, not the entire clients array
       const data = await apiClient.post('/claude/client-recommendations', {
-        client,
-        portfolioContext: `Portfolio of ${clients.length} clients with total revenue of $${clients.reduce(
-          (sum, c) => sum + (c.averageRevenue || 0),
-          0,
-        ).toLocaleString()}`,
+        clientId: client.id,
+        clientName: client.name,
+        clientRevenue: client.averageRevenue,
+        portfolioSize: clients.length,
       });
-      
+
       if (data.success) {
         setResults(prev => ({ ...prev, clientRecommendations: data }));
       } else {
         throw new Error(data.error || 'Recommendations generation failed');
       }
-      
+
     } catch (err) {
       console.error('Client recommendations error:', err);
       setError(err.message);

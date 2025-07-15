@@ -29,10 +29,23 @@ import {
   Legend
 } from 'recharts';
 import usePortfolioStore from './portfolioStore';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
+import ClientCard from './ClientCard';
+import ClientCardModal from './ClientCardModal';
 
 const DashboardView = () => {
-  const { clients } = usePortfolioStore();
+  const {
+    clients,
+    clientsLoading,
+    selectedClient,
+    openClientModal,
+    closeClientModal,
+  } = usePortfolioStore();
   const [selectedTab, setSelectedTab] = useState('overview');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [practiceFilter, setPracticeFilter] = useState('');
+  const [lobbyistFilter, setLobbyistFilter] = useState('');
 
   // Color palette for charts
   const COLORS = {
@@ -108,6 +121,20 @@ const DashboardView = () => {
     };
   }, [clients]);
 
+  /* ---------- Client grid helpers ---------- */
+  const filteredClients = useMemo(() => {
+    return clients
+      .filter((c) =>
+        c.name.toLowerCase().includes(searchTerm.toLowerCase().trim())
+      )
+      .filter((c) =>
+        practiceFilter ? c.practiceArea?.includes(practiceFilter) : true
+      )
+      .filter((c) =>
+        lobbyistFilter ? c.primaryLobbyist === lobbyistFilter : true
+      );
+  }, [clients, searchTerm, practiceFilter, lobbyistFilter]);
+
   // Prepare data for charts
   const scatterData = clients.map(client => ({
     x: client.timeCommitment || 0,
@@ -161,6 +188,60 @@ const DashboardView = () => {
 
   return (
     <div className="space-y-6">
+      {/* ---------- Phase 3: Client Grid & Filters ---------- */}
+      <section className="space-y-4">
+        <div className="flex flex-col md:flex-row md:items-end gap-4">
+          <Input
+            placeholder="Search clients…"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="md:flex-1"
+          />
+          <Select
+            value={practiceFilter}
+            onChange={(e) => setPracticeFilter(e.target.value)}
+          >
+            <option value="">All Practice Areas</option>
+            {Array.from(
+              new Set(clients.flatMap((c) => c.practiceArea || []))
+            ).map((area) => (
+              <option key={area} value={area}>
+                {area}
+              </option>
+            ))}
+          </Select>
+          <Select
+            value={lobbyistFilter}
+            onChange={(e) => setLobbyistFilter(e.target.value)}
+          >
+            <option value="">All Lobbyists</option>
+            {Array.from(new Set(clients.map((c) => c.primaryLobbyist))).map(
+              (lb) => (
+                <option key={lb} value={lb}>
+                  {lb}
+                </option>
+              )
+            )}
+          </Select>
+          <Button onClick={() => openClientModal(null)}>Add New Client</Button>
+        </div>
+
+        {clientsLoading ? (
+          <p className="text-center py-8">Loading…</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {filteredClients.map((c) => (
+              <ClientCard key={c.id} client={c} />
+            ))}
+            {filteredClients.length === 0 && (
+              <p className="col-span-full text-center text-muted-foreground">
+                No clients match the current filters.
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
       {/* Key Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
@@ -405,6 +486,14 @@ const DashboardView = () => {
           </Card>
         </TabsContent>
       </Tabs>
+      {/* Modal hub */}
+      <ClientCardModal
+        open={Boolean(selectedClient)}
+        onOpenChange={(open) => {
+          if (!open) closeClientModal();
+        }}
+        client={selectedClient}
+      />
     </div>
   );
 };

@@ -126,187 +126,84 @@ const ScenarioModeler = () => {
   };
 
   // Calculate succession scenario
-  const calculateSuccessionScenario = () => {
+  const calculateSuccessionScenario = async () => {
     if (!hasData || selectedClients.length === 0) return;
-    
-    setIsCalculating(true);
-    
-    // Simulate calculation delay
-    setTimeout(() => {
-      const remainingClients = clients.filter(c => !selectedClients.includes(c.id));
-      const departingClients = clients.filter(c => selectedClients.includes(c.id));
-      
-      const currentRevenue = clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-      const remainingRevenue = remainingClients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-      const lostRevenue = departingClients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-      
-      const currentHours = clients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0);
-      const remainingHours = remainingClients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0);
-      const freedHours = departingClients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0);
-      
-      const capacityUtilization = (remainingHours / scenarioParams.maxCapacity) * 100;
-      const revenueImpact = ((currentRevenue - remainingRevenue) / currentRevenue) * 100;
-      
-      // Calculate recommendations
-      const recommendations = [];
-      if (capacityUtilization < 70) {
-        recommendations.push({
-          type: 'opportunity',
-          message: `Low capacity utilization (${capacityUtilization.toFixed(1)}%) - opportunity to take on new clients`
-        });
-      }
-      if (revenueImpact > 30) {
-        recommendations.push({
-          type: 'warning',
-          message: `High revenue impact (${revenueImpact.toFixed(1)}%) - consider retention strategies`
-        });
-      }
-      if (freedHours > 200) {
-        recommendations.push({
-          type: 'opportunity',
-          message: `${freedHours} hours freed up - opportunity for practice development`
-        });
-      }
 
-      setResults({
-        type: 'succession',
-        current: {
-          revenue: currentRevenue,
-          hours: currentHours,
-          clients: clients.length
-        },
-        projected: {
-          revenue: remainingRevenue,
-          hours: remainingHours,
-          clients: remainingClients.length
-        },
-        impact: {
-          revenueChange: remainingRevenue - currentRevenue,
-          hoursChange: remainingHours - currentHours,
-          clientChange: remainingClients.length - clients.length,
-          capacityUtilization,
-          revenueImpact
-        },
-        recommendations,
-        departingClients,
-        remainingClients
+    setIsCalculating(true);
+
+    try {
+      // Send only the necessary parameters to the backend
+      const response = await apiClient.post('/scenarios/succession', {
+        departingClientIds: selectedClients,
+        maxCapacity: scenarioParams.maxCapacity,
       });
-      
+
+      if (response.success) {
+        setResults(response.data);
+      } else {
+        throw new Error(response.error || 'Succession scenario calculation failed');
+      }
+    } catch (err) {
+      console.error('Succession scenario error:', err);
+      // Handle error (e.g., show notification)
+    } finally {
       setIsCalculating(false);
-    }, 1500);
+    }
   };
 
   // Calculate capacity optimization
-  const calculateCapacityOptimization = () => {
+  const calculateCapacityOptimization = async () => {
     if (!hasData) return;
-    
+
     setIsCalculating(true);
-    
-    setTimeout(() => {
-      const currentHours = clients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0);
-      const currentRevenue = clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-      
-      // Sort clients by revenue per hour efficiency
-      const clientEfficiency = clients.map(c => ({
-        ...c,
-        efficiency: (c.averageRevenue || 0) / (c.timeCommitment || 40)
-      })).sort((a, b) => b.efficiency - a.efficiency);
-      
-      // Optimize portfolio within capacity constraints
-      let optimizedHours = 0;
-      let optimizedRevenue = 0;
-      const optimizedClients = [];
-      
-      for (const client of clientEfficiency) {
-        if (optimizedHours + (client.timeCommitment || 40) <= scenarioParams.maxCapacity) {
-          optimizedClients.push(client);
-          optimizedHours += (client.timeCommitment || 40);
-          optimizedRevenue += (client.averageRevenue || 0);
-        }
-      }
-      
-      const excludedClients = clients.filter(c => !optimizedClients.find(oc => oc.id === c.id));
-      
-      setResults({
-        type: 'capacity',
-        current: {
-          revenue: currentRevenue,
-          hours: currentHours,
-          clients: clients.length,
-          efficiency: currentRevenue / currentHours
-        },
-        optimized: {
-          revenue: optimizedRevenue,
-          hours: optimizedHours,
-          clients: optimizedClients.length,
-          efficiency: optimizedRevenue / optimizedHours
-        },
-        impact: {
-          revenueChange: optimizedRevenue - currentRevenue,
-          hoursChange: optimizedHours - currentHours,
-          clientChange: optimizedClients.length - clients.length,
-          efficiencyGain: (optimizedRevenue / optimizedHours) - (currentRevenue / currentHours)
-        },
-        optimizedClients,
-        excludedClients
+
+    try {
+      // Send only the necessary parameters to the backend
+      const response = await apiClient.post('/scenarios/capacity-optimization', {
+        clientIds: clients.map(c => c.id),
+        maxCapacity: scenarioParams.maxCapacity,
       });
-      
+
+      if (response.success) {
+        setResults(response.data);
+      } else {
+        throw new Error(response.error || 'Capacity optimization calculation failed');
+      }
+    } catch (err) {
+      console.error('Capacity optimization error:', err);
+      // Handle error (e.g., show notification)
+    } finally {
       setIsCalculating(false);
-    }, 1500);
+    }
   };
 
   // Calculate growth scenario
-  const calculateGrowthScenario = () => {
+  const calculateGrowthScenario = async () => {
     if (!hasData) return;
-    
+
     setIsCalculating(true);
-    
-    setTimeout(() => {
-      const currentRevenue = clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-      const currentHours = clients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0);
-      
-      const revenueGap = scenarioParams.targetRevenue - currentRevenue;
-      const availableHours = scenarioParams.maxCapacity - currentHours;
-      
-      // Calculate required new clients
-      const avgClientRevenue = currentRevenue / clients.length;
-      const avgClientHours = currentHours / clients.length;
-      
-      const newClientsNeeded = Math.ceil(revenueGap / avgClientRevenue);
-      const hoursNeeded = newClientsNeeded * avgClientHours;
-      
-      const feasible = hoursNeeded <= availableHours;
-      
-      setResults({
-        type: 'growth',
-        current: {
-          revenue: currentRevenue,
-          hours: currentHours,
-          clients: clients.length
-        },
-        target: {
-          revenue: scenarioParams.targetRevenue,
-          hours: currentHours + hoursNeeded,
-          clients: clients.length + newClientsNeeded
-        },
-        requirements: {
-          revenueGap,
-          newClientsNeeded,
-          hoursNeeded,
-          availableHours,
-          feasible
-        },
-        recommendations: feasible ? [
-          { type: 'success', message: `Target achievable with ${newClientsNeeded} new clients` },
-          { type: 'info', message: `Will utilize ${((currentHours + hoursNeeded) / scenarioParams.maxCapacity * 100).toFixed(1)}% of capacity` }
-        ] : [
-          { type: 'warning', message: `Target requires ${hoursNeeded} hours but only ${availableHours} available` },
-          { type: 'info', message: 'Consider increasing capacity or adjusting target' }
-        ]
+
+    try {
+      // Send only the necessary parameters to the backend
+      const response = await apiClient.post('/scenarios/growth', {
+        clientIds: clients.map(c => c.id),
+        currentRevenue: clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
+        currentHours: clients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0),
+        targetRevenue: scenarioParams.targetRevenue,
+        maxCapacity: scenarioParams.maxCapacity,
       });
-      
+
+      if (response.success) {
+        setResults(response.data);
+      } else {
+        throw new Error(response.error || 'Growth scenario calculation failed');
+      }
+    } catch (err) {
+      console.error('Growth scenario error:', err);
+      // Handle error (e.g., show notification)
+    } finally {
       setIsCalculating(false);
-    }, 1500);
+    }
   };
 
   const formatCurrency = (amount) => `$${amount.toLocaleString()}`;

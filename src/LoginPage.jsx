@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Input } from './components/ui/input';
-import { Label } from './components/ui/label';
-import { Button } from './components/ui/button';
+import React, { useState } from 'react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
 import usePortfolioStore from './portfolioStore';
 import apiClient from './api';
-import { useNavigate } from 'react-router-dom';
 
 /**
  * LoginPage – renders a simple authentication form, handles credential
@@ -14,21 +13,12 @@ import { useNavigate } from 'react-router-dom';
  * react-router isn’t configured yet).
  */
 const LoginPage = () => {
-  const navigate = useNavigate?.(); // safe-guard if react-router not yet wired
   const isAuthenticated = usePortfolioStore((state) => state.isAuthenticated);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  // Redirect authenticated users away from the login page
-  useEffect(() => {
-    if (isAuthenticated) {
-      // Prefer router navigation, fallback to rendering nothing
-      navigate?.('/') ;
-    }
-  }, [isAuthenticated, navigate]);
 
   if (isAuthenticated) return null;
 
@@ -38,8 +28,7 @@ const LoginPage = () => {
     setError(null);
 
     try {
-      const res = await apiClient.post('/api/auth/login', { username, password });
-      const { token } = res.data ?? {};
+      const { token } = await apiClient.post('/api/auth/login', { username, password });
 
       if (!token) {
         throw new Error('Token not provided in response');
@@ -48,8 +37,7 @@ const LoginPage = () => {
       // Update global auth state
       usePortfolioStore.getState().login(token);
 
-      // Navigate to home/dashboard
-      navigate?.('/') ;
+      // nothing else; App will re-render authenticated state
     } catch (err) {
       const message =
         err?.response?.data?.message ||

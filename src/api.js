@@ -34,6 +34,10 @@ async function post(endpoint, body) {
   // Ensure the endpoint starts with a leading slash
   const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
+  // Determine whether to prefix with `/api` to avoid double-prefixing when the
+  // caller already includes it (e.g. '/api/auth/login').
+  const basePath = normalized.startsWith('/api/') ? '' : '/api';
+
   // Build headers and inject JWT automatically when present
   const headers = {
     'Content-Type': 'application/json',
@@ -43,7 +47,7 @@ async function post(endpoint, body) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}/api${normalized}`, {
+  const response = await fetch(`${API_BASE_URL}${basePath}${normalized}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -64,6 +68,86 @@ async function post(endpoint, body) {
   return response.json();
 }
 
-export const apiClient = { post };
+/**
+ * Generic GET helper mirroring the `post` wrapper but for retrieving data.
+ *
+ * @param {string} endpoint – Path after `/api`, e.g. '/clients'
+ * @returns {Promise<any>} Parsed JSON returned by the backend
+ */
+async function get(endpoint) {
+  // Ensure the endpoint starts with a leading slash
+  const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+  // Determine base path just like in `post`
+  const basePath = normalized.startsWith('/api/') ? '' : '/api';
+
+  // Build headers and inject JWT automatically when present
+  const headers = {};
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${basePath}${normalized}`, {
+    method: 'GET',
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorMessage = `API GET to ${normalized} failed with status ${response.status}`;
+    try {
+      const text = await response.text();
+      if (text) errorMessage += ` – ${text}`;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+}
+
+/**
+ * Generic PUT helper mirroring `post` but for updates.
+ *
+ * @param {string} endpoint – Path after `/api`
+ * @param {Record<string, unknown>} body – JSON payload
+ * @returns {Promise<any>}
+ */
+async function put(endpoint, body) {
+  const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const basePath = normalized.startsWith('/api/') ? '' : '/api';
+
+  const headers = { 'Content-Type': 'application/json' };
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const response = await fetch(`${API_BASE_URL}${basePath}${normalized}`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    let errorMessage = `API PUT to ${normalized} failed with status ${response.status}`;
+    try {
+      const text = await response.text();
+      if (text) errorMessage += ` – ${text}`;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+}
+
+// ---------- Domain-specific helpers for Phase 3 ----------
+export const postClient   = (data)      => post('/clients', data);
+export const putClient    = (id, data)  => put(`/clients/${id}`, data);
+export const postRevenue  = (clientId, data) => post(`/clients/${clientId}/revenues`, data);
+export const putRevenue   = (revenueId, data) => put(`/revenues/${revenueId}`, data);
+
+export const apiClient = { post, get, put };
 
 export default apiClient;
