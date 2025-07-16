@@ -223,7 +223,10 @@ const DashboardView = () => {
                     Retry Connection
                   </Button>
                 ) : (
-                  <Button variant="outline" size="lg" onClick={() => setShowUpload(true)}>
+                  <Button variant="outline" size="lg" onClick={() => {
+                    console.log('Upload button clicked');
+                    setShowUpload(true);
+                  }}>
                     <BarChart3 className="h-4 w-4 mr-2" />
                     Upload Portfolio Data
                   </Button>
