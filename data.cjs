@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const db = require('./db.cjs');
 const {
   processCSVData,
   validateClientData,
@@ -211,6 +212,220 @@ router.post('/analytics', (req, res) => {
       error: 'Failed to calculate analytics',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  }
+});
+
+// GET /api/data/clients - Get all clients with aggregated revenue data
+router.get('/clients', async (req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT 
+        c.*,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'year', r.year,
+              'revenue_amount', r.revenue_amount
+            ) ORDER BY r.year
+          ) FILTER (WHERE r.id IS NOT NULL),
+          '[]'
+        ) AS revenues
+      FROM clients c
+      LEFT JOIN revenues r ON r.client_id = c.id
+      GROUP BY c.id
+      ORDER BY c.created_at DESC
+    `);
+    
+    res.json({
+      success: true,
+      clients: rows
+    });
+  } catch (error) {
+    console.error('Error fetching clients:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch clients',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// POST /api/data/clients - Create new client with revenues
+router.post('/clients', async (req, res) => {
+  const client = db.pool.connect();
+  
+  try {
+    await (await client).query('BEGIN');
+    
+    const {
+      name,
+      status,
+      practice_area,
+      relationship_strength,
+      conflict_risk,
+      renewal_probability,
+      strategic_fit_score,
+      notes,
+      primary_lobbyist,
+      client_originator,
+      lobbyist_team,
+      interaction_frequency,
+      relationship_intensity,
+      revenues = []
+    } = req.body;
+
+    // Insert client record
+    const { rows: [newClient] } = await (await client).query(`
+      INSERT INTO clients (
+        name, status, practice_area, relationship_strength, conflict_risk,
+        renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+        client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING *
+    `, [
+      name, status, practice_area, relationship_strength, conflict_risk,
+      renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+      client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+    ]);
+
+    // Insert revenue records
+    for (const revenue of revenues) {
+      await (await client).query(`
+        INSERT INTO revenues (client_id, year, revenue_amount)
+        VALUES ($1, $2, $3)
+      `, [newClient.id, revenue.year, revenue.revenue_amount]);
+    }
+
+    await (await client).query('COMMIT');
+    
+    // Fetch the complete client with revenues
+    const { rows } = await db.query(`
+      SELECT 
+        c.*,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'year', r.year,
+              'revenue_amount', r.revenue_amount
+            ) ORDER BY r.year
+          ) FILTER (WHERE r.id IS NOT NULL),
+          '[]'
+        ) AS revenues
+      FROM clients c
+      LEFT JOIN revenues r ON r.client_id = c.id
+      WHERE c.id = $1
+      GROUP BY c.id
+    `, [newClient.id]);
+
+    res.status(201).json({
+      success: true,
+      client: rows[0]
+    });
+    
+  } catch (error) {
+    await (await client).query('ROLLBACK');
+    console.error('Error creating client:', error);
+    res.status(500).json({ 
+      error: 'Failed to create client',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  } finally {
+    (await client).release();
+  }
+});
+
+// PUT /api/data/clients/:id - Update client with revenues
+router.put('/clients/:id', async (req, res) => {
+  const client = db.pool.connect();
+  
+  try {
+    await (await client).query('BEGIN');
+    
+    const clientId = req.params.id;
+    const {
+      name,
+      status,
+      practice_area,
+      relationship_strength,
+      conflict_risk,
+      renewal_probability,
+      strategic_fit_score,
+      notes,
+      primary_lobbyist,
+      client_originator,
+      lobbyist_team,
+      interaction_frequency,
+      relationship_intensity,
+      revenues = []
+    } = req.body;
+
+    // Update client record
+    const { rows: [updatedClient] } = await (await client).query(`
+      UPDATE clients SET 
+        name = $1, status = $2, practice_area = $3, relationship_strength = $4,
+        conflict_risk = $5, renewal_probability = $6, strategic_fit_score = $7,
+        notes = $8, primary_lobbyist = $9, client_originator = $10,
+        lobbyist_team = $11, interaction_frequency = $12, relationship_intensity = $13,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $14
+      RETURNING *
+    `, [
+      name, status, practice_area, relationship_strength, conflict_risk,
+      renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+      client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+      clientId
+    ]);
+
+    if (!updatedClient) {
+      await (await client).query('ROLLBACK');
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    // Delete existing revenues
+    await (await client).query('DELETE FROM revenues WHERE client_id = $1', [clientId]);
+
+    // Insert new revenues
+    for (const revenue of revenues) {
+      await (await client).query(`
+        INSERT INTO revenues (client_id, year, revenue_amount)
+        VALUES ($1, $2, $3)
+      `, [clientId, revenue.year, revenue.revenue_amount]);
+    }
+
+    await (await client).query('COMMIT');
+    
+    // Fetch the complete updated client with revenues
+    const { rows } = await db.query(`
+      SELECT 
+        c.*,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'year', r.year,
+              'revenue_amount', r.revenue_amount
+            ) ORDER BY r.year
+          ) FILTER (WHERE r.id IS NOT NULL),
+          '[]'
+        ) AS revenues
+      FROM clients c
+      LEFT JOIN revenues r ON r.client_id = c.id
+      WHERE c.id = $1
+      GROUP BY c.id
+    `, [clientId]);
+
+    res.json({
+      success: true,
+      client: rows[0]
+    });
+    
+  } catch (error) {
+    await (await client).query('ROLLBACK');
+    console.error('Error updating client:', error);
+    res.status(500).json({ 
+      error: 'Failed to update client',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  } finally {
+    (await client).release();
   }
 });
 
