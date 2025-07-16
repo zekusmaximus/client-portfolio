@@ -576,7 +576,10 @@ const DashboardView = () => {
             <div className="p-6">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-semibold">Upload Client Data</h2>
-                <Button variant="ghost" size="sm" onClick={() => setShowUpload(false)}>
+                <Button variant="ghost" size="sm" onClick={() => {
+                  console.log('Close modal clicked');
+                  setShowUpload(false);
+                }}>
                   ×
                 </Button>
               </div>
@@ -585,6 +588,11 @@ const DashboardView = () => {
           </div>
         </div>
       )}
+      
+      {/* Debug showUpload state */}
+      <div className="fixed top-4 right-4 bg-red-500 text-white p-2 rounded z-50">
+        showUpload: {showUpload.toString()}
+      </div>
 
       {/* Modal hub */}
       <ClientCardModal
