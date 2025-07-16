@@ -41,8 +41,8 @@ const usePortfolioStore = create(
 
       // Fetch clients from backend
       fetchClients: async () => {
-        const { isAuthenticated, clientsLoading } = get();
-        if (!isAuthenticated || clientsLoading) return;
+        const { clientsLoading } = get();
+        if (clientsLoading) return;
         set({ clientsLoading: true, fetchError: null });
         try {
           const response = await apiClient.get('/api/data/clients');
@@ -68,8 +68,6 @@ const usePortfolioStore = create(
       
       // Retry fetching clients (useful when connection is restored)
       retryFetchClients: async () => {
-        const { isAuthenticated } = get();
-        if (!isAuthenticated) return;
         set({ fetchError: null });
         await get().fetchClients();
       },

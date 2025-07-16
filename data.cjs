@@ -38,7 +38,9 @@ function calculateStrategicValue(client) {
 }
 
 // POST /api/data/process-csv
-router.post('/process-csv', (req, res) => {
+router.post('/process-csv', async (req, res) => {
+  const client = db.pool.connect();
+  
   try {
     const { csvData } = req.body;
     
@@ -57,6 +59,53 @@ router.post('/process-csv', (req, res) => {
     // Calculate strategic scores
     const clientsWithScores = calculateStrategicScores(clients);
     
+    // Save to database
+    await (await client).query('BEGIN');
+    
+    const savedClients = [];
+    
+    for (const clientData of clientsWithScores) {
+      // Insert client record
+      const { rows: [newClient] } = await (await client).query(`
+        INSERT INTO clients (
+          name, status, practice_area, relationship_strength, conflict_risk,
+          renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+          client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING *
+      `, [
+        clientData.name || '',
+        clientData.status || 'H',
+        clientData.practiceArea || [],
+        clientData.relationshipStrength || 5,
+        clientData.conflictRisk || 'Medium',
+        clientData.renewalProbability || 0.7,
+        clientData.strategicFitScore || 5,
+        clientData.notes || '',
+        clientData.primaryLobbyist || '',
+        clientData.clientOriginator || '',
+        clientData.lobbyistTeam || [],
+        clientData.interactionFrequency || '',
+        clientData.relationshipIntensity || 5
+      ]);
+
+      // Insert revenue records
+      if (clientData.revenue) {
+        for (const [year, amount] of Object.entries(clientData.revenue)) {
+          if (amount && amount > 0) {
+            await (await client).query(`
+              INSERT INTO client_revenues (client_id, year, revenue_amount)
+              VALUES ($1, $2, $3)
+            `, [newClient.id, parseInt(year), amount]);
+          }
+        }
+      }
+      
+      savedClients.push(newClient);
+    }
+    
+    await (await client).query('COMMIT');
+    
     res.json({
       success: true,
       clients: clientsWithScores,
@@ -74,11 +123,14 @@ router.post('/process-csv', (req, res) => {
     });
 
   } catch (error) {
+    await (await client).query('ROLLBACK');
     console.error('CSV processing error:', error);
     res.status(500).json({ 
       error: 'Failed to process CSV data',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  } finally {
+    (await client).release();
   }
 });
 
