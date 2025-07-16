@@ -42,13 +42,13 @@ function App() {
     }
     switch (currentView) {
       case 'dashboard':
-        return hasData ? <DashboardView /> : <p>No clients found.</p>;
+        return <DashboardView />;
       case 'ai':
-        return hasData ? <AIAdvisor /> : <p>No clients found.</p>;
+        return hasData ? <AIAdvisor /> : <DashboardView />;
       case 'scenarios':
-        return hasData ? <ScenarioModeler /> : <p>No clients found.</p>;
+        return hasData ? <ScenarioModeler /> : <DashboardView />;
       default:
-        return hasData ? <DashboardView /> : <p>No clients found.</p>;
+        return <DashboardView />;
     }
   };
 
@@ -119,19 +119,6 @@ function App() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-6">
-        {!hasData && !clientsLoading && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>No Client Data Available</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground">
-                No client records were found for your account.
-              </p>
-            </CardContent>
-          </Card>
-        )}
-        
         {renderContent()}
       </main>
 

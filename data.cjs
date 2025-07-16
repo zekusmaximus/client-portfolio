@@ -231,7 +231,7 @@ router.get('/clients', async (req, res) => {
           '[]'
         ) AS revenues
       FROM clients c
-      LEFT JOIN revenues r ON r.client_id = c.id
+      LEFT JOIN client_revenues r ON r.client_id = c.id
       GROUP BY c.id
       ORDER BY c.created_at DESC
     `);
@@ -290,7 +290,7 @@ router.post('/clients', async (req, res) => {
     // Insert revenue records
     for (const revenue of revenues) {
       await (await client).query(`
-        INSERT INTO revenues (client_id, year, revenue_amount)
+        INSERT INTO client_revenues (client_id, year, revenue_amount)
         VALUES ($1, $2, $3)
       `, [newClient.id, revenue.year, revenue.revenue_amount]);
     }
@@ -311,7 +311,7 @@ router.post('/clients', async (req, res) => {
           '[]'
         ) AS revenues
       FROM clients c
-      LEFT JOIN revenues r ON r.client_id = c.id
+      LEFT JOIN client_revenues r ON r.client_id = c.id
       WHERE c.id = $1
       GROUP BY c.id
     `, [newClient.id]);
@@ -381,12 +381,12 @@ router.put('/clients/:id', async (req, res) => {
     }
 
     // Delete existing revenues
-    await (await client).query('DELETE FROM revenues WHERE client_id = $1', [clientId]);
+    await (await client).query('DELETE FROM client_revenues WHERE client_id = $1', [clientId]);
 
     // Insert new revenues
     for (const revenue of revenues) {
       await (await client).query(`
-        INSERT INTO revenues (client_id, year, revenue_amount)
+        INSERT INTO client_revenues (client_id, year, revenue_amount)
         VALUES ($1, $2, $3)
       `, [clientId, revenue.year, revenue.revenue_amount]);
     }
@@ -407,7 +407,7 @@ router.put('/clients/:id', async (req, res) => {
           '[]'
         ) AS revenues
       FROM clients c
-      LEFT JOIN revenues r ON r.client_id = c.id
+      LEFT JOIN client_revenues r ON r.client_id = c.id
       WHERE c.id = $1
       GROUP BY c.id
     `, [clientId]);

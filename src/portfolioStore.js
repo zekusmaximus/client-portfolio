@@ -50,6 +50,13 @@ const usePortfolioStore = create(
           set({ clients, clientsLoading: false, fetchError: null });
         } catch (err) {
           console.error('Failed to fetch clients', err);
+          
+          // If it's an authentication error, logout the user
+          if (err.message.includes('401') || err.message.includes('403')) {
+            get().logout();
+            return;
+          }
+          
           // On API failure, clear clients to show fallback UI and set error
           set({ 
             clients: [], 

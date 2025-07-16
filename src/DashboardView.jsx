@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import ClientCard from './ClientCard';
 import ClientCardModal from './ClientCardModal';
+import DataUploadManager from './DataUploadManager';
 
 const DashboardView = () => {
   const {
@@ -48,6 +49,7 @@ const DashboardView = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [practiceFilter, setPracticeFilter] = useState('');
   const [lobbyistFilter, setLobbyistFilter] = useState('');
+  const [showUpload, setShowUpload] = useState(false);
 
   // Color palette for charts
   const COLORS = {
@@ -221,7 +223,7 @@ const DashboardView = () => {
                     Retry Connection
                   </Button>
                 ) : (
-                  <Button variant="outline" size="lg">
+                  <Button variant="outline" size="lg" onClick={() => setShowUpload(true)}>
                     <BarChart3 className="h-4 w-4 mr-2" />
                     Upload Portfolio Data
                   </Button>
@@ -564,6 +566,23 @@ const DashboardView = () => {
           </Card>
         </TabsContent>
       </Tabs>
+      {/* Upload Modal */}
+      {showUpload && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold">Upload Client Data</h2>
+                <Button variant="ghost" size="sm" onClick={() => setShowUpload(false)}>
+                  ×
+                </Button>
+              </div>
+              <DataUploadManager />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal hub */}
       <ClientCardModal
         open={Boolean(selectedClient)}

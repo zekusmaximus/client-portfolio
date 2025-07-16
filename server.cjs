@@ -52,13 +52,20 @@ app.use((err, req, res, next) => {
   });
 });
  
-// Health check for DB on boot
+// Health check for DB on boot and initialize tables
 (async () => {
   try {
     await db.query('SELECT 1');
     console.log('✅  PostgreSQL connection OK');
+    
+    // Initialize database tables
+    const fs = require('fs');
+    const path = require('path');
+    const initScript = fs.readFileSync(path.join(__dirname, 'init-db.sql'), 'utf8');
+    await db.query(initScript);
+    console.log('✅  Database tables initialized');
   } catch (e) {
-    console.error('❌  PostgreSQL connection failed', e);
+    console.error('❌  Database initialization failed', e);
     process.exit(1);
   }
 })();
