@@ -171,7 +171,7 @@ const AIAdvisor = () => {
             </div>
             <div className="text-center">
               <p className="text-2xl font-bold">
-                ${clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0).toLocaleString()}
+                ${usePortfolioStore.getState().getTotalRevenue().toLocaleString()}
               </p>
               <p className="text-sm text-muted-foreground">Total Revenue</p>
             </div>

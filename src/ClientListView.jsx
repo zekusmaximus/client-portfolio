@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,51 +25,27 @@ const ClientListView = () => {
   const [sortOrder, setSortOrder] = useState('desc');
 
   // Filter and sort clients
-  const filteredAndSortedClients = clients
-    .filter(client => 
-      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (client.practiceArea && client.practiceArea.some(area => 
-        area.toLowerCase().includes(searchTerm.toLowerCase())
-      ))
-    )
-    .sort((a, b) => {
-      let aValue, bValue;
+  const filteredAndSortedClients = useMemo(() => {
+    return clients
+        .filter(client =>
+          client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (client.practiceArea && client.practiceArea.some(area =>
+            area.toLowerCase().includes(searchTerm.toLowerCase())
+          ))
+        )
+        .sort((a, b) => {
+          const aValue = a[sortBy] || 0;
+          const bValue = b[sortBy] || 0;
 
-      // Handle different property names and types
-      switch (sortBy) {
-        case 'strategicValue':
-          aValue = a.strategicValue || 0;
-          bValue = b.strategicValue || 0;
-          break;
-        case 'averageRevenue':
-          aValue = a.averageRevenue || 0;
-          bValue = b.averageRevenue || 0;
-          break;
-        case 'name':
-          aValue = (a.name || '').toLowerCase();
-          bValue = (b.name || '').toLowerCase();
-          break;
-        default:
-          aValue = a[sortBy] || 0;
-          bValue = b[sortBy] || 0;
-      }
-
-      // For string comparison
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        if (sortOrder === 'asc') {
-          return aValue.localeCompare(bValue);
-        } else {
-          return bValue.localeCompare(aValue);
-        }
-      }
-
-      // For numeric comparison
-      if (sortOrder === 'asc') {
-        return aValue - bValue;
-      } else {
-        return bValue - aValue;
-      }
-    });
+          if (sortOrder === 'asc') {
+            if (sortBy === 'name') return aValue.localeCompare(bValue);
+            return aValue - bValue;
+          } else {
+            if (sortBy === 'name') return bValue.localeCompare(aValue);
+            return bValue - aValue;
+          }
+        });
+  }, [clients, searchTerm, sortBy, sortOrder]);
 
   const handleEditClient = (client) => {
     openClientModal(client);
@@ -111,9 +87,12 @@ const ClientListView = () => {
       {/* Header */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Client Enhancement Center
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Client Enhancement Center
+            </div>
+            <Button onClick={() => openClientModal(null)}>Add New Client</Button>
           </CardTitle>
         </CardHeader>
         <CardContent>

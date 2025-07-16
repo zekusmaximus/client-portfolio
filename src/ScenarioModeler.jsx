@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,37 +12,22 @@ import {
   Users,
   TrendingUp,
   AlertTriangle,
-  Calculator,
   BarChart3,
-  PieChart,
   ArrowRight,
   CheckCircle,
-  XCircle,
   DollarSign,
   Flame
 } from 'lucide-react';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart as RechartsPieChart,
-  Pie,
-  Cell
-} from 'recharts';
 import usePortfolioStore from './portfolioStore';
 import { LOBBYISTS } from './constants';
+import { apiClient } from './api';
 
 const ScenarioModeler = () => {
   const { clients } = usePortfolioStore();
   const [activeTab, setActiveTab] = useState('succession');
-  const [selectedClients, setSelectedClients] = useState([]);
+
   const [departingLobbyists, setDepartingLobbyists] = useState([]);
   const [scenarioParams, setScenarioParams] = useState({
-    maxCapacity: 2000,
     targetRevenue: 500000,
     riskTolerance: 50,
     timeHorizon: 12
@@ -55,15 +40,13 @@ const ScenarioModeler = () => {
   // Calculate current portfolio metrics
   const currentMetrics = useMemo(() => {
     if (!hasData) return null;
-    
+
     const totalRevenue = clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-    const totalHours = clients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0);
     const avgStrategicValue = clients.reduce((sum, c) => sum + (c.strategicValue || 0), 0) / clients.length;
     const highRiskClients = clients.filter(c => c.conflictRisk === 'High').length;
-    
+
     return {
       totalRevenue,
-      totalHours,
       avgStrategicValue,
       highRiskClients,
       clientCount: clients.length
@@ -116,66 +99,9 @@ const ScenarioModeler = () => {
     };
   }, [departingLobbyists, clients]);
 
-  // Handle client selection
-  const handleClientToggle = (clientId) => {
-    setSelectedClients(prev => 
-      prev.includes(clientId) 
-        ? prev.filter(id => id !== clientId)
-        : [...prev, clientId]
-    );
-  };
 
-  // Calculate succession scenario
-  const calculateSuccessionScenario = async () => {
-    if (!hasData || selectedClients.length === 0) return;
 
-    setIsCalculating(true);
 
-    try {
-      // Send only the necessary parameters to the backend
-      const response = await apiClient.post('/scenarios/succession', {
-        departingClientIds: selectedClients,
-        maxCapacity: scenarioParams.maxCapacity,
-      });
-
-      if (response.success) {
-        setResults(response.data);
-      } else {
-        throw new Error(response.error || 'Succession scenario calculation failed');
-      }
-    } catch (err) {
-      console.error('Succession scenario error:', err);
-      // Handle error (e.g., show notification)
-    } finally {
-      setIsCalculating(false);
-    }
-  };
-
-  // Calculate capacity optimization
-  const calculateCapacityOptimization = async () => {
-    if (!hasData) return;
-
-    setIsCalculating(true);
-
-    try {
-      // Send only the necessary parameters to the backend
-      const response = await apiClient.post('/scenarios/capacity-optimization', {
-        clientIds: clients.map(c => c.id),
-        maxCapacity: scenarioParams.maxCapacity,
-      });
-
-      if (response.success) {
-        setResults(response.data);
-      } else {
-        throw new Error(response.error || 'Capacity optimization calculation failed');
-      }
-    } catch (err) {
-      console.error('Capacity optimization error:', err);
-      // Handle error (e.g., show notification)
-    } finally {
-      setIsCalculating(false);
-    }
-  };
 
   // Calculate growth scenario
   const calculateGrowthScenario = async () => {
@@ -188,9 +114,7 @@ const ScenarioModeler = () => {
       const response = await apiClient.post('/scenarios/growth', {
         clientIds: clients.map(c => c.id),
         currentRevenue: clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
-        currentHours: clients.reduce((sum, c) => sum + (c.timeCommitment || 40), 0),
         targetRevenue: scenarioParams.targetRevenue,
-        maxCapacity: scenarioParams.maxCapacity,
       });
 
       if (response.success) {
@@ -207,7 +131,6 @@ const ScenarioModeler = () => {
   };
 
   const formatCurrency = (amount) => `$${amount.toLocaleString()}`;
-  const formatHours = (hours) => `${hours.toLocaleString()}h`;
 
   if (!hasData) {
     return (
@@ -241,7 +164,7 @@ const ScenarioModeler = () => {
           
           {/* Current Portfolio Metrics */}
           {currentMetrics && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-4 bg-muted/30 rounded-lg">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-muted/30 rounded-lg">
               <div className="text-center">
                 <p className="text-lg font-bold">{currentMetrics.clientCount}</p>
                 <p className="text-xs text-muted-foreground">Clients</p>
@@ -249,10 +172,6 @@ const ScenarioModeler = () => {
               <div className="text-center">
                 <p className="text-lg font-bold">{formatCurrency(currentMetrics.totalRevenue)}</p>
                 <p className="text-xs text-muted-foreground">Revenue</p>
-              </div>
-              <div className="text-center">
-                <p className="text-lg font-bold">{formatHours(currentMetrics.totalHours)}</p>
-                <p className="text-xs text-muted-foreground">Time</p>
               </div>
               <div className="text-center">
                 <p className="text-lg font-bold">{currentMetrics.avgStrategicValue.toFixed(1)}</p>
@@ -269,9 +188,8 @@ const ScenarioModeler = () => {
 
       {/* Scenario Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="succession">Succession Planning</TabsTrigger>
-          <TabsTrigger value="capacity">Capacity Optimization</TabsTrigger>
           <TabsTrigger value="growth">Growth Modeling</TabsTrigger>
         </TabsList>
 
@@ -398,54 +316,7 @@ const ScenarioModeler = () => {
           </Card>
         </TabsContent>
 
-        {/* Capacity Optimization Tab */}
-        <TabsContent value="capacity" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5" />
-                Capacity Optimization
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground mb-4">
-                Optimize your client portfolio for maximum efficiency within capacity constraints.
-              </p>
-              
-              <div className="space-y-4">
-                <div>
-                  <Label>Maximum Capacity (hours/month): {scenarioParams.maxCapacity}</Label>
-                  <Slider
-                    value={[scenarioParams.maxCapacity]}
-                    onValueChange={(value) => setScenarioParams(prev => ({ ...prev, maxCapacity: value[0] }))}
-                    max={3000}
-                    min={1000}
-                    step={100}
-                    className="mt-2"
-                  />
-                </div>
-                
-                <Button 
-                  onClick={calculateCapacityOptimization}
-                  disabled={isCalculating}
-                  className="w-full"
-                >
-                  {isCalculating ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      Optimizing...
-                    </>
-                  ) : (
-                    <>
-                      <TrendingUp className="h-4 w-4 mr-2" />
-                      Optimize Portfolio
-                    </>
-                  )}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+
 
         {/* Growth Modeling Tab */}
         <TabsContent value="growth" className="space-y-4">
@@ -470,18 +341,6 @@ const ScenarioModeler = () => {
                     max={1000000}
                     min={100000}
                     step={25000}
-                    className="mt-2"
-                  />
-                </div>
-                
-                <div>
-                  <Label>Maximum Capacity (hours/month): {scenarioParams.maxCapacity}</Label>
-                  <Slider
-                    value={[scenarioParams.maxCapacity]}
-                    onValueChange={(value) => setScenarioParams(prev => ({ ...prev, maxCapacity: value[0] }))}
-                    max={3000}
-                    min={1000}
-                    step={100}
                     className="mt-2"
                   />
                 </div>
@@ -522,7 +381,7 @@ const ScenarioModeler = () => {
             {results.type === 'succession' && (
               <div className="space-y-6">
                 {/* Impact Summary */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="text-center p-4 bg-muted/30 rounded-lg">
                     <p className="text-2xl font-bold text-red-600">
                       {formatCurrency(results.impact.revenueChange)}
@@ -530,16 +389,10 @@ const ScenarioModeler = () => {
                     <p className="text-sm text-muted-foreground">Revenue Impact</p>
                   </div>
                   <div className="text-center p-4 bg-muted/30 rounded-lg">
-                    <p className="text-2xl font-bold text-green-600">
-                      {formatHours(Math.abs(results.impact.hoursChange))}
-                    </p>
-                    <p className="text-sm text-muted-foreground">Hours Freed</p>
-                  </div>
-                  <div className="text-center p-4 bg-muted/30 rounded-lg">
                     <p className="text-2xl font-bold">
-                      {results.impact.capacityUtilization.toFixed(1)}%
+                      {results.impact.clientsAffected || 0}
                     </p>
-                    <p className="text-sm text-muted-foreground">Capacity Utilization</p>
+                    <p className="text-sm text-muted-foreground">Clients Affected</p>
                   </div>
                 </div>
 
@@ -561,53 +414,7 @@ const ScenarioModeler = () => {
               </div>
             )}
 
-            {results.type === 'capacity' && (
-              <div className="space-y-6">
-                {/* Before/After Comparison */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <h4 className="font-semibold mb-3">Current Portfolio</h4>
-                    <div className="space-y-2">
-                      <p>Revenue: {formatCurrency(results.current.revenue)}</p>
-                      <p>Hours: {formatHours(results.current.hours)}</p>
-                      <p>Clients: {results.current.clients}</p>
-                      <p>Efficiency: ${results.current.efficiency.toFixed(0)}/hour</p>
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="font-semibold mb-3">Optimized Portfolio</h4>
-                    <div className="space-y-2">
-                      <p>Revenue: {formatCurrency(results.optimized.revenue)}</p>
-                      <p>Hours: {formatHours(results.optimized.hours)}</p>
-                      <p>Clients: {results.optimized.clients}</p>
-                      <p>Efficiency: ${results.optimized.efficiency.toFixed(0)}/hour</p>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Impact Metrics */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="text-center p-4 bg-muted/30 rounded-lg">
-                    <p className={`text-2xl font-bold ${results.impact.revenueChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {results.impact.revenueChange >= 0 ? '+' : ''}{formatCurrency(results.impact.revenueChange)}
-                    </p>
-                    <p className="text-sm text-muted-foreground">Revenue Change</p>
-                  </div>
-                  <div className="text-center p-4 bg-muted/30 rounded-lg">
-                    <p className={`text-2xl font-bold ${results.impact.clientChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {results.impact.clientChange >= 0 ? '+' : ''}{results.impact.clientChange}
-                    </p>
-                    <p className="text-sm text-muted-foreground">Client Change</p>
-                  </div>
-                  <div className="text-center p-4 bg-muted/30 rounded-lg">
-                    <p className="text-2xl font-bold text-blue-600">
-                      +${results.impact.efficiencyGain.toFixed(0)}/h
-                    </p>
-                    <p className="text-sm text-muted-foreground">Efficiency Gain</p>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {results.type === 'growth' && (
               <div className="space-y-6">
@@ -617,16 +424,16 @@ const ScenarioModeler = () => {
                     <h4 className="font-semibold mb-3">Current State</h4>
                     <div className="space-y-2">
                       <p>Revenue: {formatCurrency(results.current.revenue)}</p>
-                      <p>Hours: {formatHours(results.current.hours)}</p>
                       <p>Clients: {results.current.clients}</p>
+                      <p>Avg Revenue per Client: {formatCurrency(results.current.avgRevenuePerClient || 0)}</p>
                     </div>
                   </div>
                   <div>
                     <h4 className="font-semibold mb-3">Target State</h4>
                     <div className="space-y-2">
                       <p>Revenue: {formatCurrency(results.target.revenue)}</p>
-                      <p>Hours: {formatHours(results.target.hours)}</p>
                       <p>Clients: {results.target.clients}</p>
+                      <p>Avg Revenue per Client: {formatCurrency(results.target.avgRevenuePerClient || 0)}</p>
                     </div>
                   </div>
                 </div>
@@ -634,20 +441,16 @@ const ScenarioModeler = () => {
                 {/* Requirements */}
                 <div className="p-4 bg-muted/30 rounded-lg">
                   <h4 className="font-semibold mb-3">Requirements to Reach Target:</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="text-center">
                       <p className="text-xl font-bold">{results.requirements.newClientsNeeded}</p>
                       <p className="text-sm text-muted-foreground">New Clients Needed</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-xl font-bold">{formatHours(results.requirements.hoursNeeded)}</p>
-                      <p className="text-sm text-muted-foreground">Additional Hours</p>
-                    </div>
-                    <div className="text-center">
                       <p className={`text-xl font-bold ${results.requirements.feasible ? 'text-green-600' : 'text-red-600'}`}>
-                        {results.requirements.feasible ? 'Feasible' : 'Not Feasible'}
+                        {results.requirements.feasible ? 'Feasible' : 'Challenging'}
                       </p>
-                      <p className="text-sm text-muted-foreground">Within Capacity</p>
+                      <p className="text-sm text-muted-foreground">Growth Assessment</p>
                     </div>
                   </div>
                 </div>

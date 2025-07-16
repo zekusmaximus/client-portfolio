@@ -10,15 +10,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LOBBYISTS } from './constants';
-import { 
-  X, 
-  Users, 
-  Save, 
+import {
+  X,
+  Users,
+  Save,
   AlertCircle,
   Building,
   Heart,
   Shield,
-  TrendingUp,
   Target,
   FileText,
   DollarSign,
@@ -370,25 +369,7 @@ const ClientEnhancementForm = ({ onClose }) => {
             </div>
           </div>
 
-          {/* Relationship Strength */}
-          <div className="space-y-3">
-            <Label className="flex items-center gap-2">
-              <Heart className="h-4 w-4" />
-              Relationship Strength: {formData.relationship_strength}/10
-            </Label>
-            <Slider
-              value={[formData.relationship_strength]}
-              onValueChange={(value) => handleSliderChange('relationship_strength', value)}
-              max={10}
-              min={1}
-              step={1}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Weak (1)</span>
-              <span>Strong (10)</span>
-            </div>
-          </div>
+
 
           {/* Conflict Risk */}
           <div className="space-y-3">
@@ -491,8 +472,9 @@ const ClientEnhancementForm = ({ onClose }) => {
             <RadioGroup
               value={formData.interaction_frequency}
               onValueChange={(value) => setFormData(prev => ({ ...prev, interaction_frequency: value }))}
+              className="flex flex-wrap gap-x-4 gap-y-2"
             >
-              {['As-Needed', 'Quarterly', 'Monthly', 'Weekly', 'Daily'].map((freq) => (
+              {['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed'].map((freq) => (
                 <div key={freq} className="flex items-center space-x-2">
                   <RadioGroupItem value={freq} id={`freq-${freq}`} />
                   <Label htmlFor={`freq-${freq}`}>{freq}</Label>
@@ -516,23 +498,23 @@ const ClientEnhancementForm = ({ onClose }) => {
             />
           </div>
 
-          {/* Renewal Probability */}
+          {/* Relationship Strength */}
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4" />
-              Renewal Probability: {Math.round(formData.renewal_probability * 100)}%
+              <Heart className="h-4 w-4" />
+              Relationship Strength: {formData.relationship_strength}/10
             </Label>
             <Slider
-              value={[formData.renewal_probability]}
-              onValueChange={(value) => handleSliderChange('renewal_probability', value)}
-              max={1}
-              min={0}
-              step={0.05}
+              value={[formData.relationship_strength]}
+              onValueChange={(value) => handleSliderChange('relationship_strength', value)}
+              max={10}
+              min={1}
+              step={1}
               className="w-full"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Unlikely (0%)</span>
-              <span>Certain (100%)</span>
+              <span>Weak (1)</span>
+              <span>Strong (10)</span>
             </div>
           </div>
 

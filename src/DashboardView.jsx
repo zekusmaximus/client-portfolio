@@ -29,16 +29,13 @@ import {
   Legend
 } from 'recharts';
 import usePortfolioStore from './portfolioStore';
-import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
-import ClientCard from './ClientCard';
+
 import ClientCardModal from './ClientCardModal';
 import DataUploadManager from './DataUploadManager';
 
 const DashboardView = () => {
   const {
     clients,
-    clientsLoading,
     fetchError,
     selectedClient,
     openClientModal,
@@ -46,9 +43,6 @@ const DashboardView = () => {
     retryFetchClients,
   } = usePortfolioStore();
   const [selectedTab, setSelectedTab] = useState('overview');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [practiceFilter, setPracticeFilter] = useState('');
-  const [lobbyistFilter, setLobbyistFilter] = useState('');
   const [showUpload, setShowUpload] = useState(false);
 
   // Color palette for charts
@@ -155,28 +149,16 @@ const DashboardView = () => {
     };
   }, [clients]);
 
-  /* ---------- Client grid helpers ---------- */
-  const filteredClients = useMemo(() => {
-    return clients
-      .filter((c) =>
-        c.name.toLowerCase().includes(searchTerm.toLowerCase().trim())
-      )
-      .filter((c) =>
-        practiceFilter ? c.practiceArea?.includes(practiceFilter) : true
-      )
-      .filter((c) =>
-        lobbyistFilter ? c.primaryLobbyist === lobbyistFilter : true
-      );
-  }, [clients, searchTerm, practiceFilter, lobbyistFilter]);
+
 
   // Prepare data for charts
   const scatterData = clients.map(client => ({
-    x: parseFloat(client.timeCommitment) || 0,
+    x: parseFloat(client.averageRevenue) || 0,
     y: parseFloat(client.strategicValue) || 0,
     name: client.name || 'Unnamed Client',
     revenue: parseFloat(client.averageRevenue) || 0,
-    practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0) 
-      ? client.practiceArea[0] 
+    practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0)
+      ? client.practiceArea[0]
       : 'Not Specified',
     status: client.status || 'H'
   }));
@@ -253,14 +235,13 @@ const DashboardView = () => {
     );
   }
 
-  const CustomTooltip = ({ active, payload, label }) => {
+  const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
         <div className="bg-background border rounded-lg p-3 shadow-lg">
           <p className="font-semibold">{data.name || 'Unnamed Client'}</p>
           <p className="text-sm">Strategic Value: {(data.y || 0).toFixed(2)}</p>
-          <p className="text-sm">Time Commitment: {data.x || 0} hrs/month</p>
           <p className="text-sm">Revenue: ${(data.revenue || 0).toLocaleString()}</p>
           <p className="text-sm">Practice Area: {data.practiceArea || 'Not Specified'}</p>
           <p className="text-sm">Status: {data.status || 'Unknown'}</p>
@@ -272,59 +253,7 @@ const DashboardView = () => {
 
   return (
     <div className="space-y-6">
-      {/* ---------- Phase 3: Client Grid & Filters ---------- */}
-      <section className="space-y-4">
-        <div className="flex flex-col md:flex-row md:items-end gap-4">
-          <Input
-            placeholder="Search clients…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="md:flex-1"
-          />
-          <Select
-            value={practiceFilter}
-            onChange={(e) => setPracticeFilter(e.target.value)}
-          >
-            <option value="">All Practice Areas</option>
-            {Array.from(
-              new Set(clients.flatMap((c) => c.practiceArea || []))
-            ).map((area) => (
-              <option key={area} value={area}>
-                {area}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={lobbyistFilter}
-            onChange={(e) => setLobbyistFilter(e.target.value)}
-          >
-            <option value="">All Lobbyists</option>
-            {Array.from(new Set(clients.map((c) => c.primaryLobbyist))).map(
-              (lb) => (
-                <option key={lb} value={lb}>
-                  {lb}
-                </option>
-              )
-            )}
-          </Select>
-          <Button onClick={() => openClientModal(null)}>Add New Client</Button>
-        </div>
 
-        {clientsLoading ? (
-          <p className="text-center py-8">Loading…</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredClients.map((c) => (
-              <ClientCard key={c.id} client={c} />
-            ))}
-            {filteredClients.length === 0 && (
-              <p className="col-span-full text-center text-muted-foreground">
-                No clients match the current filters.
-              </p>
-            )}
-          </div>
-        )}
-      </section>
 
       {/* Key Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -464,24 +393,24 @@ const DashboardView = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="h-5 w-5" />
-                Strategic Value vs Time Commitment
+                Strategic Value vs Revenue
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={400}>
                 <ScatterChart data={scatterData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    type="number" 
-                    dataKey="x" 
-                    name="Time Commitment" 
-                    unit=" hrs/month"
-                    domain={[0, 'dataMax + 10']}
+                  <XAxis
+                    type="number"
+                    dataKey="x"
+                    name="Revenue"
+                    unit="$"
+                    domain={[0, 'dataMax + 10000']}
                   />
-                  <YAxis 
-                    type="number" 
-                    dataKey="y" 
-                    name="Strategic Value" 
+                  <YAxis
+                    type="number"
+                    dataKey="y"
+                    name="Strategic Value"
                     domain={[0, 'dataMax + 1']}
                   />
                   <Tooltip content={<CustomTooltip />} />
@@ -526,7 +455,6 @@ const DashboardView = () => {
                       <th className="text-left p-2 font-medium">Client</th>
                       <th className="text-left p-2 font-medium">Strategic Value</th>
                       <th className="text-left p-2 font-medium">Revenue</th>
-                      <th className="text-left p-2 font-medium">Time (hrs/month)</th>
                       <th className="text-left p-2 font-medium">Status</th>
                       <th className="text-left p-2 font-medium">Risk</th>
                     </tr>
@@ -535,8 +463,7 @@ const DashboardView = () => {
                     {analytics.topClients.map((client, index) => {
                       const strategicValue = parseFloat(client.strategicValue) || 0;
                       const revenue = parseFloat(client.averageRevenue) || 0;
-                      const timeCommitment = parseFloat(client.timeCommitment) || 0;
-                      
+
                       // Determine strategic value badge variant based on value
                       const getStrategicValueVariant = (value) => {
                         if (value >= 7) return 'default';
@@ -554,7 +481,6 @@ const DashboardView = () => {
                             </Badge>
                           </td>
                           <td className="p-2">${revenue.toLocaleString()}</td>
-                          <td className="p-2">{timeCommitment}</td>
                           <td className="p-2">
                             <Badge 
                               variant={client.status === 'IF' ? 'default' : 'secondary'}
