@@ -18,7 +18,6 @@ import {
   Building,
   Heart,
   Shield,
-  Target,
   FileText,
   DollarSign,
   Plus,
@@ -51,7 +50,6 @@ const ClientEnhancementForm = ({ onClose }) => {
     interaction_frequency: 'As-Needed',
     relationship_intensity: 5,
     renewal_probability: 0.7,
-    strategic_fit_score: 5,
     notes: '',
     revenues: []
   });
@@ -96,7 +94,6 @@ const ClientEnhancementForm = ({ onClose }) => {
         interaction_frequency: client.interaction_frequency || 'As-Needed',
         relationship_intensity: client.relationship_intensity || 5,
         renewal_probability: client.renewal_probability || 0.7,
-        strategic_fit_score: client.strategic_fit_score || 5,
         notes: client.notes || '',
         revenues: revenuesWithDefault
       });
@@ -114,7 +111,6 @@ const ClientEnhancementForm = ({ onClose }) => {
         interaction_frequency: 'As-Needed',
         relationship_intensity: 5,
         renewal_probability: 0.7,
-        strategic_fit_score: 5,
         notes: '',
         revenues: [{ year: new Date().getFullYear(), revenue_amount: '' }]
       });
@@ -518,25 +514,7 @@ const ClientEnhancementForm = ({ onClose }) => {
             </div>
           </div>
 
-          {/* Strategic Fit Score */}
-          <div className="space-y-3">
-            <Label className="flex items-center gap-2">
-              <Target className="h-4 w-4" />
-              Strategic Fit Score: {formData.strategic_fit_score}/10
-            </Label>
-            <Slider
-              value={[formData.strategic_fit_score]}
-              onValueChange={(value) => handleSliderChange('strategic_fit_score', value)}
-              max={10}
-              min={1}
-              step={1}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Poor Fit (1)</span>
-              <span>Perfect Fit (10)</span>
-            </div>
-          </div>
+
 
           {/* Notes */}
           <div className="space-y-3">

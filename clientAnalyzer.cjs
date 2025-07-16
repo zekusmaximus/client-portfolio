@@ -80,12 +80,11 @@ function calculateStrategicValue(client, revenues = []) {
     'Low': 0
   }[conflictRisk] ?? 1;
   
-  // Re-balanced weights emphasizing revenue, relationship, and strategic fit
+  // Re-balanced weights emphasizing revenue and relationship (removed strategic fit score)
   const strategicValue = (
-    (revenueScore * 0.40) +           // Increased from 0.30
-    (relationshipStrength * 0.30) +   // Increased from 0.20
-    (strategicFitScore * 0.20) +      // Increased from 0.15
-    (renewalProbabilityScore * 0.10)  // Same weight
+    (revenueScore * 0.50) +           // Increased from 0.40
+    (relationshipStrength * 0.35) +   // Increased from 0.30
+    (renewalProbabilityScore * 0.15)  // Increased from 0.10
   ) - conflictPenalty;
   
   return Math.max(0, Math.min(10, strategicValue));

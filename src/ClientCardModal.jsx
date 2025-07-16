@@ -19,7 +19,6 @@ const emptyClient = {
   relationship_strength: 5,
   conflict_risk: 'Medium',
   renewal_probability: 0.7,
-  strategic_fit_score: 5,
   interaction_frequency: '',
   relationship_intensity: '',
   revenues: [],

@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import ConfirmationDialog from './components/ui/confirmation-dialog';
 import {
   Users,
   Search,
@@ -10,19 +11,23 @@ import {
   DollarSign,
   Target,
   Shield,
-  Building
+  Building,
+  Trash2
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 
 const ClientListView = () => {
   const {
     clients,
-    openClientModal
+    openClientModal,
+    deleteClient
   } = usePortfolioStore();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('strategicValue');
   const [sortOrder, setSortOrder] = useState('desc');
+  const [deleteDialogClient, setDeleteDialogClient] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Filter and sort clients
   const filteredAndSortedClients = useMemo(() => {
@@ -49,6 +54,21 @@ const ClientListView = () => {
 
   const handleEditClient = (client) => {
     openClientModal(client);
+  };
+
+  const handleDeleteClient = async () => {
+    if (!deleteDialogClient) return;
+
+    try {
+      setIsDeleting(true);
+      await deleteClient(deleteDialogClient.id);
+      setDeleteDialogClient(null);
+    } catch (error) {
+      console.error('Failed to delete client:', error);
+      alert('Failed to delete client. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -156,13 +176,22 @@ const ClientListView = () => {
                     </Badge>
                   </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleEditClient(client)}
-                >
-                  <Edit className="h-4 w-4" />
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleEditClient(client)}
+                  >
+                    <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setDeleteDialogClient(client)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             
@@ -276,6 +305,18 @@ const ClientListView = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        open={!!deleteDialogClient}
+        onOpenChange={(open) => !open && setDeleteDialogClient(null)}
+        title="Delete Client"
+        description={deleteDialogClient ? `Are you sure you want to delete "${deleteDialogClient.name}"? This action cannot be undone and will permanently remove all client data including revenue records.` : ''}
+        confirmText="Delete Client"
+        cancelText="Cancel"
+        onConfirm={handleDeleteClient}
+        loading={isDeleting}
+      />
     </div>
   );
 };

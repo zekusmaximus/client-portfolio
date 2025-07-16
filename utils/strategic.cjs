@@ -42,9 +42,8 @@ function calculateStrategicScores(clients) {
     const efficiencyScore = timeCommitment > 0 ?
       Math.min(10, (avgRevenue / timeCommitment) / 1000) : 0;
 
-    // Strategic Value
+    // Strategic Value (removed strategic fit score)
     const relationshipStrength = parseFloat(client.relationshipStrength) || 5;
-    const strategicFitScore = parseFloat(client.strategicFitScore) || 5;
     const renewalProbability = parseFloat(client.renewalProbability) || 0.5;
 
     const conflictPenalty = {
@@ -54,12 +53,11 @@ function calculateStrategicScores(clients) {
     }[client.conflictRisk] || 1;
 
     const strategicValue = (
-      (revenueScore * 0.30) +
-      (growthScore * 0.20) +
-      (relationshipStrength * 0.20) +
-      (strategicFitScore * 0.15) +
-      (renewalProbability * 10 * 0.10) +
-      (efficiencyScore * 0.05)
+      (revenueScore * 0.35) +           // Increased from 0.30
+      (growthScore * 0.25) +           // Increased from 0.20
+      (relationshipStrength * 0.25) +  // Increased from 0.20
+      (renewalProbability * 10 * 0.10) + // Same weight
+      (efficiencyScore * 0.05)         // Same weight
     ) - conflictPenalty;
 
     return {

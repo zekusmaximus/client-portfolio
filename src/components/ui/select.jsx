@@ -88,7 +88,7 @@ const SelectContent = React.forwardRef(({ className, children, ...props }, ref) 
     <div
       ref={ref}
       className={clsx(
-        'absolute top-full left-0 z-50 w-full mt-1 bg-popover text-popover-foreground shadow-md border rounded-md py-1 max-h-60 overflow-auto',
+        'absolute top-full left-0 z-50 w-full mt-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-lg border border-gray-200 dark:border-gray-600 rounded-md py-1 max-h-60 overflow-auto',
         className
       )}
       {...props}
@@ -107,8 +107,8 @@ const SelectItem = React.forwardRef(({ className, value, children, ...props }, r
     <div
       ref={ref}
       className={clsx(
-        'relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 px-2 text-sm outline-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground',
-        isSelected && 'bg-accent text-accent-foreground',
+        'relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 px-2 text-sm outline-none hover:bg-blue-50 hover:text-blue-900 dark:hover:bg-blue-900 dark:hover:text-blue-100 focus:bg-blue-50 focus:text-blue-900 dark:focus:bg-blue-900 dark:focus:text-blue-100',
+        isSelected && 'bg-blue-100 text-blue-900 dark:bg-blue-800 dark:text-blue-100',
         className
       )}
       onClick={() => context?.onValueChange?.(value)}

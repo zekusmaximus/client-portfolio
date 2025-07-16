@@ -142,12 +142,47 @@ async function put(endpoint, body) {
   return response.json();
 }
 
+/**
+ * Generic DELETE helper for removing resources.
+ *
+ * @param {string} endpoint – Path after `/api`
+ * @returns {Promise<void>}
+ */
+async function del(endpoint) {
+  const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const basePath = normalized.startsWith('/api/') ? '' : '/api';
+
+  const headers = {};
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const response = await fetch(`${API_BASE_URL}${basePath}${normalized}`, {
+    method: 'DELETE',
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorMessage = `API DELETE to ${normalized} failed with status ${response.status}`;
+    try {
+      const text = await response.text();
+      if (text) errorMessage += ` – ${text}`;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(errorMessage);
+  }
+
+  // DELETE typically returns 204 No Content, so no JSON parsing needed
+  return;
+}
+
 // ---------- Domain-specific helpers for Phase 3 ----------
 export const postClient   = (data)      => post('/clients', data);
 export const putClient    = (id, data)  => put(`/clients/${id}`, data);
+export const deleteClient = (id)        => del(`/clients/${id}`);
 export const postRevenue  = (clientId, data) => post(`/clients/${clientId}/revenues`, data);
 export const putRevenue   = (revenueId, data) => put(`/revenues/${revenueId}`, data);
 
-export const apiClient = { post, get, put };
+export const apiClient = { post, get, put, del };
 
 export default apiClient;

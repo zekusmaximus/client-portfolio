@@ -57,7 +57,7 @@ app.use((err, req, res, next) => {
   try {
     await db.query('SELECT 1');
     console.log('✅  PostgreSQL connection OK');
-    
+
     // Initialize database tables
     const fs = require('fs');
     const path = require('path');
@@ -66,7 +66,9 @@ app.use((err, req, res, next) => {
     console.log('✅  Database tables initialized');
   } catch (e) {
     console.error('❌  Database initialization failed', e);
-    process.exit(1);
+    console.log('⚠️  Continuing without database for frontend testing...');
+    // Temporarily comment out process.exit for testing
+    // process.exit(1);
   }
 })();
 

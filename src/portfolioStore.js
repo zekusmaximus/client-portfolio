@@ -139,7 +139,7 @@ const usePortfolioStore = create(
           const response = await apiClient.put(`/api/data/clients/${clientId}`, formattedData);
           const updatedClient = response.client;
           set((state) => ({
-            clients: state.clients.map(client => 
+            clients: state.clients.map(client =>
               client.id === clientId ? updatedClient : client
             ),
             selectedClient: null,
@@ -148,6 +148,21 @@ const usePortfolioStore = create(
           return updatedClient;
         } catch (err) {
           console.error('Failed to update client', err);
+          throw err;
+        }
+      },
+
+      // Delete existing client
+      deleteClient: async (clientId) => {
+        try {
+          await apiClient.del(`/api/clients/${clientId}`);
+          set((state) => ({
+            clients: state.clients.filter(client => client.id !== clientId),
+            selectedClient: null,
+            isModalOpen: false
+          }));
+        } catch (err) {
+          console.error('Failed to delete client', err);
           throw err;
         }
       },

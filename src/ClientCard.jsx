@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardHeader, CardContent } from './components/ui/card';
 import { Badge } from './components/ui/badge';
 import usePortfolioStore from './portfolioStore';
 import { Button } from './components/ui/button';
+import ConfirmationDialog from './components/ui/confirmation-dialog';
 import {
   Pencil2Icon,
   PersonIcon,
   StarIcon,
-  ValueIcon
+  ValueIcon,
+  TrashIcon
 } from '@radix-ui/react-icons';
 
 /**
@@ -77,6 +79,24 @@ function StatusDot({ status }) {
  */
 export default function ClientCard({ client }) {
   const openClientModal = usePortfolioStore((s) => s.openClientModal);
+  const deleteClient = usePortfolioStore((s) => s.deleteClient);
+
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDeleteClient = async () => {
+    try {
+      setIsDeleting(true);
+      await deleteClient(client.id);
+      setShowDeleteDialog(false);
+    } catch (error) {
+      console.error('Failed to delete client:', error);
+      // You could add a toast notification here
+      alert('Failed to delete client. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   if (!client) return null;
 
@@ -157,8 +177,34 @@ export default function ClientCard({ client }) {
               {teamCount === 0 ? 'Not Assigned' : `${teamCount} ${teamCount === 1 ? 'member' : 'members'}`}
             </Badge>
           </div>
+
+          {/* Delete Button */}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setShowDeleteDialog(true)}
+              className="w-full"
+              disabled={isDeleting}
+            >
+              <TrashIcon className="w-4 h-4 mr-2" />
+              DELETE CLIENT
+            </Button>
+          </div>
         </div>
       </CardContent>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        title="Delete Client"
+        description={`Are you sure you want to delete "${client.name}"? This action cannot be undone and will permanently remove all client data including revenue records.`}
+        confirmText="Delete Client"
+        cancelText="Cancel"
+        onConfirm={handleDeleteClient}
+        loading={isDeleting}
+      />
     </Card>
   );
 }

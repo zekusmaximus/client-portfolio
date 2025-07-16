@@ -41,25 +41,27 @@ const RadioGroupItem = React.forwardRef(({ className, value, checked, onCheckedC
         onClick={handleChange}
         disabled={disabled}
         className={clsx(
-          'aspect-square h-4 w-4 rounded-full border border-primary text-primary ring-offset-background',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+          'aspect-square h-4 w-4 rounded-full border-2 ring-offset-background',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
           'disabled:cursor-not-allowed disabled:opacity-50',
           'transition-colors cursor-pointer',
-          checked && 'bg-primary border-primary',
+          checked
+            ? 'bg-blue-500 border-blue-500'
+            : 'border-gray-300 hover:border-blue-400 bg-white',
           className
         )}
         {...props}
       >
         {checked && (
-          <div className="flex items-center justify-center">
-            <div className="h-2.5 w-2.5 rounded-full bg-primary-foreground" />
+          <div className="flex items-center justify-center w-full h-full">
+            <div className="h-2 w-2 rounded-full bg-white" />
           </div>
         )}
       </button>
       {children && (
         <label
           className={clsx(
-            'text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer',
+            'text-sm font-medium leading-none cursor-pointer select-none',
             disabled && 'cursor-not-allowed opacity-70'
           )}
           onClick={handleChange}
