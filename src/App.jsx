@@ -1,19 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { BarChart3, Target, Brain } from 'lucide-react';
+import { BarChart3, Target, Brain, Upload, Users } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import DashboardView from './DashboardView';
 import AIAdvisor from './AIAdvisor';
 import ScenarioModeler from './ScenarioModeler';
+import DataUploadManager from './DataUploadManager';
+import ClientListView from './ClientListView';
 import LoginPage from './LoginPage';
 import './App.css';
 
 function App() {
   const {
     clients,
-    clientsLoading,
     fetchClients,
     currentView,
     setCurrentView,
@@ -36,21 +36,14 @@ function App() {
     }
   }, [isAuthenticated]);
 
-  const renderContent = () => {
-    if (clientsLoading) {
-      return <p className="text-center py-12">Loading clients…</p>;
+  // Set default view based on data availability
+  useEffect(() => {
+    if (isAuthenticated) {
+      if (!hasData && currentView !== 'data-upload') {
+        setCurrentView('data-upload');
+      }
     }
-    switch (currentView) {
-      case 'dashboard':
-        return <DashboardView />;
-      case 'ai':
-        return hasData ? <AIAdvisor /> : <DashboardView />;
-      case 'scenarios':
-        return hasData ? <ScenarioModeler /> : <DashboardView />;
-      default:
-        return <DashboardView />;
-    }
-  };
+  }, [isAuthenticated, hasData, currentView, setCurrentView]);
 
   // Gate the UI behind authentication
   if (!isAuthenticated) {
@@ -91,36 +84,54 @@ function App() {
       </header>
 
       {/* Navigation */}
-      {hasData && (
-        <nav className="border-b bg-muted/30">
-          <div className="container mx-auto px-4">
-            <Tabs value={currentView} onValueChange={setCurrentView} className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="dashboard" className="flex items-center gap-2">
-                  <BarChart3 className="h-4 w-4" />
-                  Dashboard
-                  {hasData && <span className="ml-1 text-xs bg-blue-500 text-white px-1 rounded">2</span>}
-                </TabsTrigger>
-                <TabsTrigger value="ai" className="flex items-center gap-2">
-                  <Brain className="h-4 w-4" />
-                  AI Advisor
-                  {hasData && <span className="ml-1 text-xs bg-purple-500 text-white px-1 rounded">4</span>}
-                </TabsTrigger>
-                <TabsTrigger value="scenarios" className="flex items-center gap-2">
-                  <Target className="h-4 w-4" />
-                  Scenarios
-                  {hasData && <span className="ml-1 text-xs bg-indigo-500 text-white px-1 rounded">5</span>}
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-        </nav>
-      )}
+      <nav className="border-b bg-muted/30">
+        <div className="container mx-auto px-4">
+          <Tabs value={currentView} onValueChange={setCurrentView} className="w-full">
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="data-upload" className="flex items-center gap-2">
+                <Upload className="h-4 w-4" />
+                Data Upload
+              </TabsTrigger>
+              <TabsTrigger value="dashboard" className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Dashboard
+              </TabsTrigger>
+              <TabsTrigger value="client-details" className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Client Details
+              </TabsTrigger>
+              <TabsTrigger value="ai" className="flex items-center gap-2">
+                <Brain className="h-4 w-4" />
+                AI Advisor
+              </TabsTrigger>
+              <TabsTrigger value="scenarios" className="flex items-center gap-2">
+                <Target className="h-4 w-4" />
+                Scenarios
+              </TabsTrigger>
+            </TabsList>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-6">
-        {renderContent()}
-      </main>
+            <TabsContent value="data-upload" className="mt-6">
+              <DataUploadManager />
+            </TabsContent>
+
+            <TabsContent value="dashboard" className="mt-6">
+              <DashboardView />
+            </TabsContent>
+
+            <TabsContent value="client-details" className="mt-6">
+              <ClientListView />
+            </TabsContent>
+
+            <TabsContent value="ai" className="mt-6">
+              {hasData ? <AIAdvisor /> : <DashboardView />}
+            </TabsContent>
+
+            <TabsContent value="scenarios" className="mt-6">
+              {hasData ? <ScenarioModeler /> : <DashboardView />}
+            </TabsContent>
+          </Tabs>
+        </div>
+      </nav>
 
       {/* ClientCardModal handled in DashboardView */}
 

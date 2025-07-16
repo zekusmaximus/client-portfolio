@@ -34,7 +34,7 @@ const usePortfolioStore = create(
       // UI state
       selectedClient: null,
       isModalOpen: false,
-      currentView: 'dashboard', // 'dashboard', 'enhancement', 'ai', 'scenarios'
+      currentView: 'data-upload', // 'data-upload', 'dashboard', 'client-details', 'ai', 'scenarios'
       
       // Actions
       setClients: (clients) => set({ clients }),
