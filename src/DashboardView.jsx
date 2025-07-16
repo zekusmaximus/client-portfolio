@@ -38,9 +38,11 @@ const DashboardView = () => {
   const {
     clients,
     clientsLoading,
+    fetchError,
     selectedClient,
     openClientModal,
     closeClientModal,
+    retryFetchClients,
   } = usePortfolioStore();
   const [selectedTab, setSelectedTab] = useState('overview');
   const [searchTerm, setSearchTerm] = useState('');
@@ -195,22 +197,35 @@ const DashboardView = () => {
         <Card>
           <CardContent className="pt-12 pb-12">
             <div className="text-center space-y-4">
-              <Users className="h-16 w-16 text-muted-foreground mx-auto" />
+              {fetchError ? (
+                <AlertTriangle className="h-16 w-16 text-yellow-500 mx-auto" />
+              ) : (
+                <Users className="h-16 w-16 text-muted-foreground mx-auto" />
+              )}
               <div>
-                <h3 className="text-lg font-semibold">No clients yet</h3>
+                <h3 className="text-lg font-semibold">
+                  {fetchError ? 'Connection Error' : 'No clients yet'}
+                </h3>
                 <p className="text-muted-foreground">
-                  Get started by adding your first client or uploading your portfolio data.
+                  {fetchError || 'Get started by adding your first client or uploading your portfolio data.'}
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Button onClick={() => openClientModal(null)} size="lg">
                   <Users className="h-4 w-4 mr-2" />
-                  Add Your First Client
+                  {fetchError ? 'Add Client Offline' : 'Add Your First Client'}
                 </Button>
-                <Button variant="outline" size="lg">
-                  <BarChart3 className="h-4 w-4 mr-2" />
-                  Upload Portfolio Data
-                </Button>
+                {fetchError ? (
+                  <Button variant="outline" size="lg" onClick={retryFetchClients}>
+                    <AlertTriangle className="h-4 w-4 mr-2" />
+                    Retry Connection
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="lg">
+                    <BarChart3 className="h-4 w-4 mr-2" />
+                    Upload Portfolio Data
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>

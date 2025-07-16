@@ -9,6 +9,7 @@ const usePortfolioStore = create(
       clients: [],
       originalClients: [], // Keep original data for comparison
       clientsLoading: false,
+      fetchError: null,
       
       // Upload state
       isUploading: false,
@@ -42,15 +43,28 @@ const usePortfolioStore = create(
       fetchClients: async () => {
         const { isAuthenticated, clientsLoading } = get();
         if (!isAuthenticated || clientsLoading) return;
-        set({ clientsLoading: true });
+        set({ clientsLoading: true, fetchError: null });
         try {
           const response = await apiClient.get('/api/data/clients');
           const clients = response.clients || [];
-          set({ clients, clientsLoading: false });
+          set({ clients, clientsLoading: false, fetchError: null });
         } catch (err) {
           console.error('Failed to fetch clients', err);
-          set({ clientsLoading: false });
+          // On API failure, clear clients to show fallback UI and set error
+          set({ 
+            clients: [], 
+            clientsLoading: false, 
+            fetchError: 'Unable to connect to server. Please try again later or add clients manually.' 
+          });
         }
+      },
+      
+      // Retry fetching clients (useful when connection is restored)
+      retryFetchClients: async () => {
+        const { isAuthenticated } = get();
+        if (!isAuthenticated) return;
+        set({ fetchError: null });
+        await get().fetchClients();
       },
       
       setOriginalClients: (clients) => set({ originalClients: clients }),
@@ -169,7 +183,8 @@ const usePortfolioStore = create(
           user: null,
           isAuthenticated: false,
           clients: [],
-          clientsLoading: false
+          clientsLoading: false,
+          fetchError: null
         });
       },
 
