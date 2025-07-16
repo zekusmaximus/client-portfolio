@@ -91,7 +91,9 @@ export default function ClientCard({ client }) {
 
   const strategicValueNum = parseFloat(strategic_value) || 0;
   const teamCount = lobbyist_team?.length || 0;
-  const practiceAreaText = Array.isArray(practice_area) ? practice_area.join(', ') : practice_area;
+  const practiceAreaText = Array.isArray(practice_area) && practice_area.length > 0 
+    ? practice_area.join(', ') 
+    : practice_area || 'Not Specified';
 
   return (
     <Card className="flex flex-col justify-between hover:shadow-md transition-shadow duration-200">
@@ -150,7 +152,7 @@ export default function ClientCard({ client }) {
               <span>Team Size</span>
             </div>
             <Badge variant="outline" className="text-xs">
-              {teamCount} {teamCount === 1 ? 'member' : 'members'}
+              {teamCount === 0 ? 'Not Assigned' : `${teamCount} ${teamCount === 1 ? 'member' : 'members'}`}
             </Badge>
           </div>
         </div>

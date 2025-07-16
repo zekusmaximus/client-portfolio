@@ -79,6 +79,12 @@ const ClientEnhancementForm = ({ onClose }) => {
   // Initialize form data when client changes
   useEffect(() => {
     if (client) {
+      const clientRevenues = client.revenues || [];
+      // If no revenue data exists, add an empty row with the next logical year
+      const revenuesWithDefault = clientRevenues.length === 0 
+        ? [{ year: new Date().getFullYear(), revenue_amount: '' }]
+        : clientRevenues;
+
       setFormData({
         name: client.name || '',
         status: client.status || 'Prospect',
@@ -93,10 +99,10 @@ const ClientEnhancementForm = ({ onClose }) => {
         renewal_probability: client.renewal_probability || 0.7,
         strategic_fit_score: client.strategic_fit_score || 5,
         notes: client.notes || '',
-        revenues: client.revenues || []
+        revenues: revenuesWithDefault
       });
     } else {
-      // Reset form for new client
+      // Reset form for new client with an empty revenue row for current year
       setFormData({
         name: '',
         status: 'Prospect',
@@ -111,7 +117,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         renewal_probability: 0.7,
         strategic_fit_score: 5,
         notes: '',
-        revenues: []
+        revenues: [{ year: new Date().getFullYear(), revenue_amount: '' }]
       });
     }
   }, [client]);
@@ -421,7 +427,7 @@ const ClientEnhancementForm = ({ onClose }) => {
               <Label className="text-sm font-medium">Primary Lobbyist</Label>
               <Select value={formData.primary_lobbyist} onValueChange={(value) => setFormData(prev => ({ ...prev, primary_lobbyist: value }))}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select primary lobbyist" />
+                  <SelectValue placeholder="Select primary lobbyist..." />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="">None</SelectItem>
@@ -439,7 +445,7 @@ const ClientEnhancementForm = ({ onClose }) => {
               <Label className="text-sm font-medium">Client Originator</Label>
               <Select value={formData.client_originator} onValueChange={(value) => setFormData(prev => ({ ...prev, client_originator: value }))}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select client originator" />
+                  <SelectValue placeholder="Select client originator..." />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="">None</SelectItem>

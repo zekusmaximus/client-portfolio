@@ -63,21 +63,22 @@ function calculateStrategicValue(client, revenues = []) {
   // Revenue Score (0-10) - normalized by $500k baseline
   const revenueScore = Math.min(10, (parseFloat(mostRecentRevenue) || 0) / 50000);
   
-  // Relationship Strength (1-10, direct mapping)
+  // Relationship Strength (1-10, direct mapping) - default to 5 for neutral
   const relationshipStrength = parseFloat(client.relationship_strength) || 5;
   
-  // Strategic Fit Score (1-10, direct mapping)
+  // Strategic Fit Score (1-10, direct mapping) - default to 5 for neutral
   const strategicFitScore = parseFloat(client.strategic_fit_score) || 5;
   
-  // Renewal Probability (0-1, normalized to 0-10)
+  // Renewal Probability (0-1, normalized to 0-10) - default to 0.5 for neutral
   const renewalProbabilityScore = (parseFloat(client.renewal_probability) || 0.5) * 10;
   
-  // Conflict Risk Penalty
+  // Conflict Risk Penalty - default to 'Medium' if null/undefined
+  const conflictRisk = client.conflict_risk ?? 'Medium';
   const conflictPenalty = {
     'High': 3,
     'Medium': 1, 
     'Low': 0
-  }[client.conflict_risk] || 1;
+  }[conflictRisk] ?? 1;
   
   // Re-balanced weights emphasizing revenue, relationship, and strategic fit
   const strategicValue = (

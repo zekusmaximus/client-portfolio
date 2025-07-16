@@ -55,6 +55,7 @@ const DashboardView = () => {
     'Energy': '#ff7300',
     'Financial': '#00ff88',
     'Other': '#8dd1e1',
+    'Not Specified': '#d1d5db',
     'IF': '#22c55e',
     'P': '#3b82f6',
     'D': '#6b7280',
@@ -68,21 +69,23 @@ const DashboardView = () => {
     // Practice area breakdown
     const practiceAreas = {};
     clients.forEach(client => {
-      if (client.practiceArea && Array.isArray(client.practiceArea)) {
+      const clientRevenue = parseFloat(client.averageRevenue) || 0;
+      
+      if (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0) {
         client.practiceArea.forEach(area => {
           if (!practiceAreas[area]) {
             practiceAreas[area] = { count: 0, revenue: 0 };
           }
           practiceAreas[area].count++;
-          practiceAreas[area].revenue += client.averageRevenue || 0;
+          practiceAreas[area].revenue += clientRevenue;
         });
       } else {
-        // Handle clients without practice area
-        if (!practiceAreas['Other']) {
-          practiceAreas['Other'] = { count: 0, revenue: 0 };
+        // Handle clients without practice area or with empty array
+        if (!practiceAreas['Not Specified']) {
+          practiceAreas['Not Specified'] = { count: 0, revenue: 0 };
         }
-        practiceAreas['Other'].count++;
-        practiceAreas['Other'].revenue += client.averageRevenue || 0;
+        practiceAreas['Not Specified'].count++;
+        practiceAreas['Not Specified'].revenue += clientRevenue;
       }
     });
 
@@ -95,27 +98,54 @@ const DashboardView = () => {
     };
     
     clients.forEach(client => {
-      revenueByStatus[client.status] += client.averageRevenue || 0;
-      countByStatus[client.status]++;
+      const clientRevenue = parseFloat(client.averageRevenue) || 0;
+      const clientStatus = client.status || 'H'; // Default to Hold if status is null
+      
+      if (revenueByStatus.hasOwnProperty(clientStatus)) {
+        revenueByStatus[clientStatus] += clientRevenue;
+        countByStatus[clientStatus]++;
+      } else {
+        // Handle unexpected status values
+        revenueByStatus['H'] += clientRevenue;
+        countByStatus['H']++;
+      }
     });
 
     // Top clients by strategic value
     const topClients = [...clients]
-      .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0))
+      .sort((a, b) => {
+        const aValue = parseFloat(a.strategicValue) || 0;
+        const bValue = parseFloat(b.strategicValue) || 0;
+        return bValue - aValue;
+      })
       .slice(0, 10);
 
     // Risk analysis
     const highRiskClients = clients.filter(c => c.conflictRisk === 'High').length;
-    const lowRenewalClients = clients.filter(c => (c.renewalProbability || 0) < 0.5).length;
+    const lowRenewalClients = clients.filter(c => {
+      const renewalProb = parseFloat(c.renewalProbability);
+      return !isNaN(renewalProb) && renewalProb < 0.5;
+    }).length;
+
+    // Calculate totals with robust null handling
+    const totalRevenue = clients.reduce((sum, c) => {
+      const revenue = parseFloat(c.averageRevenue) || 0;
+      return sum + revenue;
+    }, 0);
+
+    const averageStrategicValue = clients.length > 0 ? 
+      clients.reduce((sum, c) => {
+        const value = parseFloat(c.strategicValue) || 0;
+        return sum + value;
+      }, 0) / clients.length : 0;
 
     return {
       practiceAreas,
       revenueByStatus,
       countByStatus,
       topClients,
-      totalRevenue: clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
-      averageStrategicValue: clients.length > 0 ? 
-        clients.reduce((sum, c) => sum + (c.strategicValue || 0), 0) / clients.length : 0,
+      totalRevenue,
+      averageStrategicValue,
       highRiskClients,
       lowRenewalClients
     };
@@ -137,12 +167,14 @@ const DashboardView = () => {
 
   // Prepare data for charts
   const scatterData = clients.map(client => ({
-    x: client.timeCommitment || 0,
-    y: client.strategicValue || 0,
-    name: client.name,
-    revenue: client.averageRevenue || 0,
-    practiceArea: client.practiceArea?.[0] || 'Other',
-    status: client.status
+    x: parseFloat(client.timeCommitment) || 0,
+    y: parseFloat(client.strategicValue) || 0,
+    name: client.name || 'Unnamed Client',
+    revenue: parseFloat(client.averageRevenue) || 0,
+    practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0) 
+      ? client.practiceArea[0] 
+      : 'Not Specified',
+    status: client.status || 'H'
   }));
 
   const pieData = analytics ? Object.entries(analytics.practiceAreas).map(([area, data]) => ({
@@ -159,13 +191,31 @@ const DashboardView = () => {
 
   if (!analytics) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-center text-muted-foreground">
-            No client data available. Please upload your portfolio data first.
-          </p>
-        </CardContent>
-      </Card>
+      <div className="space-y-6">
+        <Card>
+          <CardContent className="pt-12 pb-12">
+            <div className="text-center space-y-4">
+              <Users className="h-16 w-16 text-muted-foreground mx-auto" />
+              <div>
+                <h3 className="text-lg font-semibold">No clients yet</h3>
+                <p className="text-muted-foreground">
+                  Get started by adding your first client or uploading your portfolio data.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button onClick={() => openClientModal(null)} size="lg">
+                  <Users className="h-4 w-4 mr-2" />
+                  Add Your First Client
+                </Button>
+                <Button variant="outline" size="lg">
+                  <BarChart3 className="h-4 w-4 mr-2" />
+                  Upload Portfolio Data
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -174,12 +224,12 @@ const DashboardView = () => {
       const data = payload[0].payload;
       return (
         <div className="bg-background border rounded-lg p-3 shadow-lg">
-          <p className="font-semibold">{data.name}</p>
-          <p className="text-sm">Strategic Value: {data.y?.toFixed(2)}</p>
-          <p className="text-sm">Time Commitment: {data.x} hrs/month</p>
-          <p className="text-sm">Revenue: ${data.revenue?.toLocaleString()}</p>
-          <p className="text-sm">Practice Area: {data.practiceArea}</p>
-          <p className="text-sm">Status: {data.status}</p>
+          <p className="font-semibold">{data.name || 'Unnamed Client'}</p>
+          <p className="text-sm">Strategic Value: {(data.y || 0).toFixed(2)}</p>
+          <p className="text-sm">Time Commitment: {data.x || 0} hrs/month</p>
+          <p className="text-sm">Revenue: ${(data.revenue || 0).toLocaleString()}</p>
+          <p className="text-sm">Practice Area: {data.practiceArea || 'Not Specified'}</p>
+          <p className="text-sm">Status: {data.status || 'Unknown'}</p>
         </div>
       );
     }
@@ -448,37 +498,50 @@ const DashboardView = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {analytics.topClients.map((client, index) => (
-                      <tr key={client.id} className="border-b hover:bg-muted/50">
-                        <td className="p-2 font-medium">{index + 1}</td>
-                        <td className="p-2">{client.name}</td>
-                        <td className="p-2">
-                          <Badge variant="outline">
-                            {(client.strategicValue || 0).toFixed(1)}
-                          </Badge>
-                        </td>
-                        <td className="p-2">${(client.averageRevenue || 0).toLocaleString()}</td>
-                        <td className="p-2">{client.timeCommitment || 0}</td>
-                        <td className="p-2">
-                          <Badge 
-                            variant={client.status === 'IF' ? 'default' : 'secondary'}
-                            className={client.status === 'IF' ? 'bg-green-500' : ''}
-                          >
-                            {client.status}
-                          </Badge>
-                        </td>
-                        <td className="p-2">
-                          <Badge 
-                            variant={
-                              client.conflictRisk === 'High' ? 'destructive' : 
-                              client.conflictRisk === 'Medium' ? 'outline' : 'secondary'
-                            }
-                          >
-                            {client.conflictRisk}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
+                    {analytics.topClients.map((client, index) => {
+                      const strategicValue = parseFloat(client.strategicValue) || 0;
+                      const revenue = parseFloat(client.averageRevenue) || 0;
+                      const timeCommitment = parseFloat(client.timeCommitment) || 0;
+                      
+                      // Determine strategic value badge variant based on value
+                      const getStrategicValueVariant = (value) => {
+                        if (value >= 7) return 'default';
+                        if (value >= 4) return 'secondary';
+                        return 'destructive';
+                      };
+
+                      return (
+                        <tr key={client.id || index} className="border-b hover:bg-muted/50">
+                          <td className="p-2 font-medium">{index + 1}</td>
+                          <td className="p-2">{client.name || 'Unnamed Client'}</td>
+                          <td className="p-2">
+                            <Badge variant={getStrategicValueVariant(strategicValue)}>
+                              {strategicValue.toFixed(1)}
+                            </Badge>
+                          </td>
+                          <td className="p-2">${revenue.toLocaleString()}</td>
+                          <td className="p-2">{timeCommitment}</td>
+                          <td className="p-2">
+                            <Badge 
+                              variant={client.status === 'IF' ? 'default' : 'secondary'}
+                              className={client.status === 'IF' ? 'bg-green-500' : ''}
+                            >
+                              {client.status || 'Unknown'}
+                            </Badge>
+                          </td>
+                          <td className="p-2">
+                            <Badge 
+                              variant={
+                                client.conflictRisk === 'High' ? 'destructive' : 
+                                client.conflictRisk === 'Medium' ? 'outline' : 'secondary'
+                              }
+                            >
+                              {client.conflictRisk || 'Medium'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
