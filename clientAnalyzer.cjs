@@ -48,71 +48,70 @@ function deriveContractStatus(contractPeriod) {
 }
 
 /**
+ * Calculate strategic value for a single client
+ * @param {Object} client - Client object with basic information
+ * @param {Array} revenues - Array of revenue objects with year and revenue_amount
+ * @returns {number} Strategic value score (0-10)
+ */
+function calculateStrategicValue(client, revenues = []) {
+  // Get the most recent year's revenue as primary financial input
+  const mostRecentRevenue = revenues.length > 0 ? 
+    revenues.reduce((latest, current) => 
+      current.year > latest.year ? current : latest
+    ).revenue_amount : 0;
+  
+  // Revenue Score (0-10) - normalized by $500k baseline
+  const revenueScore = Math.min(10, (parseFloat(mostRecentRevenue) || 0) / 50000);
+  
+  // Relationship Strength (1-10, direct mapping)
+  const relationshipStrength = parseFloat(client.relationship_strength) || 5;
+  
+  // Strategic Fit Score (1-10, direct mapping)
+  const strategicFitScore = parseFloat(client.strategic_fit_score) || 5;
+  
+  // Renewal Probability (0-1, normalized to 0-10)
+  const renewalProbabilityScore = (parseFloat(client.renewal_probability) || 0.5) * 10;
+  
+  // Conflict Risk Penalty
+  const conflictPenalty = {
+    'High': 3,
+    'Medium': 1, 
+    'Low': 0
+  }[client.conflict_risk] || 1;
+  
+  // Re-balanced weights emphasizing revenue, relationship, and strategic fit
+  const strategicValue = (
+    (revenueScore * 0.40) +           // Increased from 0.30
+    (relationshipStrength * 0.30) +   // Increased from 0.20
+    (strategicFitScore * 0.20) +      // Increased from 0.15
+    (renewalProbabilityScore * 0.10)  // Same weight
+  ) - conflictPenalty;
+  
+  return Math.max(0, Math.min(10, strategicValue));
+}
+
+/**
  * Calculate strategic scores for all clients
- * @param {Array} clients - Array of client objects
+ * @param {Array} clients - Array of client objects with revenues
  * @returns {Array} Clients with calculated scores
  */
 function calculateStrategicScores(clients) {
   if (!clients || clients.length === 0) {
     return [];
   }
-
-  // Calculate average revenues for normalization
-  const revenues = clients.map(client => {
-    const rev2023 = parseFloat(client.revenue?.['2023']) || 0;
-    const rev2024 = parseFloat(client.revenue?.['2024']) || 0;
-    const rev2025 = parseFloat(client.revenue?.['2025']) || 0;
-    return (rev2023 + rev2024 + rev2025) / 3;
-  });
-
-  const maxRevenue = Math.max(...revenues);
-  const minRevenue = Math.min(...revenues);
   
-  return clients.map((client, index) => {
-    const avgRevenue = revenues[index];
+  return clients.map(client => {
+    const revenues = client.revenues || [];
+    const strategicValue = calculateStrategicValue(client, revenues);
     
-    // Revenue Score (0-10) - normalized by portfolio range
-    const revenueScore = maxRevenue === minRevenue ? 5 : 
-      ((avgRevenue - minRevenue) / (maxRevenue - minRevenue)) * 10;
-    
-    // Growth Score (CAGR normalized 0-10, centered around 0% growth = 5 points)
-    const initialRevenue = parseFloat(client.revenue?.['2023']) || 1;
-    const finalRevenue = parseFloat(client.revenue?.['2025']) || 0;
-    const cagr = initialRevenue > 0 ? Math.pow(finalRevenue / initialRevenue, 1/2) - 1 : 0;
-    const growthScore = Math.max(0, Math.min(10, (cagr + 0.5) * 10));
-    
-    // Efficiency Score (Revenue per hour - normalized by $1000/hour baseline)
-    const timeCommitment = parseFloat(client.timeCommitment) || 1;
-    const efficiencyScore = timeCommitment > 0 ? 
-      Math.min(10, (avgRevenue / timeCommitment) / 1000) : 0;
-    
-    // Strategic Value Calculation
-    const relationshipStrength = parseFloat(client.relationshipStrength) || 5;
-    const strategicFitScore = parseFloat(client.strategicFitScore) || 5;
-    const renewalProbability = parseFloat(client.renewalProbability) || 0.5;
-    
-    const conflictPenalty = {
-      'High': 3,
-      'Medium': 1, 
-      'Low': 0
-    }[client.conflictRisk] || 1;
-    
-    const strategicValue = (
-      (revenueScore * 0.30) +
-      (growthScore * 0.20) +
-      (relationshipStrength * 0.20) +
-      (strategicFitScore * 0.15) +
-      (renewalProbability * 10 * 0.10) +
-      (efficiencyScore * 0.05)
-    ) - conflictPenalty;
+    // Calculate average revenue for display purposes
+    const totalRevenue = revenues.reduce((sum, rev) => sum + (parseFloat(rev.revenue_amount) || 0), 0);
+    const averageRevenue = revenues.length > 0 ? totalRevenue / revenues.length : 0;
     
     return {
       ...client,
-      averageRevenue: Math.round(avgRevenue),
-      revenueScore: Math.round(revenueScore * 100) / 100,
-      growthScore: Math.round(growthScore * 100) / 100,
-      efficiencyScore: Math.round(efficiencyScore * 100) / 100,
-      strategicValue: Math.max(0, Math.round(strategicValue * 100) / 100)
+      averageRevenue: Math.round(averageRevenue),
+      strategicValue: Math.round(strategicValue * 100) / 100
     };
   });
 }
@@ -120,7 +119,7 @@ function calculateStrategicScores(clients) {
 /**
  * Optimize portfolio based on capacity constraints
  * @param {Array} clients - Array of client objects with strategic scores
- * @param {number} maxCapacity - Maximum available hours
+ * @param {number} maxCapacity - Maximum available hours (deprecated but kept for compatibility)
  * @returns {Object} Optimization results
  */
 function optimizePortfolio(clients, maxCapacity = 2000) {
@@ -128,29 +127,18 @@ function optimizePortfolio(clients, maxCapacity = 2000) {
     return {
       clients: [],
       totalRevenue: 0,
-      totalHours: 0,
       averageStrategicValue: 0,
-      utilizationRate: 0
+      clientCount: 0
     };
   }
 
   // Filter eligible clients (In Force or Proposal) and sort by strategic value
   const eligibleClients = clients
     .filter(client => client.status === 'IF' || client.status === 'P')
-    .filter(client => (parseFloat(client.timeCommitment) || 0) > 0)
     .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0));
   
-  const optimal = [];
-  let usedCapacity = 0;
-  
-  // Greedy algorithm: select highest value clients that fit
-  for (const client of eligibleClients) {
-    const timeCommitment = parseFloat(client.timeCommitment) || 0;
-    if (usedCapacity + timeCommitment <= maxCapacity) {
-      optimal.push(client);
-      usedCapacity += timeCommitment;
-    }
-  }
+  // Since timeCommitment is removed, we'll return top clients by strategic value
+  const optimal = eligibleClients.slice(0, Math.min(eligibleClients.length, 50)); // Top 50 clients
   
   const totalRevenue = optimal.reduce((sum, client) => sum + (client.averageRevenue || 0), 0);
   const averageStrategicValue = optimal.length > 0 ? 
@@ -159,9 +147,8 @@ function optimizePortfolio(clients, maxCapacity = 2000) {
   return {
     clients: optimal,
     totalRevenue: Math.round(totalRevenue),
-    totalHours: Math.round(usedCapacity),
     averageStrategicValue: Math.round(averageStrategicValue * 100) / 100,
-    utilizationRate: Math.round((usedCapacity / maxCapacity) * 100),
+    clientCount: optimal.length,
     excludedClients: eligibleClients.length - optimal.length
   };
 }
@@ -202,14 +189,11 @@ function processCSVData(csvData) {
         practiceArea: [],
         relationshipStrength: 5,
         conflictRisk: 'Medium',
-        timeCommitment: 40, // Default 40 hours/month
         renewalProbability: 0.7,
         strategicFitScore: 5,
         notes: '',
         // Calculated fields (will be computed)
         strategicValue: 0,
-        growthScore: 0,
-        efficiencyScore: 0,
         averageRevenue: 0
       };
     });
@@ -256,6 +240,7 @@ function validateClientData(clients) {
 
 module.exports = {
   deriveContractStatus,
+  calculateStrategicValue,
   calculateStrategicScores,
   optimizePortfolio,
   processCSVData,
