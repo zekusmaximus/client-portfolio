@@ -32,7 +32,7 @@ const usePortfolioStore = create(
       
       // UI state
       selectedClient: null,
-      showEnhancementModal: false,
+      isModalOpen: false,
       currentView: 'dashboard', // 'dashboard', 'enhancement', 'ai', 'scenarios'
       
       // Actions
@@ -40,12 +40,13 @@ const usePortfolioStore = create(
 
       // Fetch clients from backend
       fetchClients: async () => {
-        const { isAuthenticated, clientsLoading, clients } = get();
-        if (!isAuthenticated || clientsLoading || (clients && clients.length > 0)) return;
+        const { isAuthenticated, clientsLoading } = get();
+        if (!isAuthenticated || clientsLoading) return;
         set({ clientsLoading: true });
         try {
-          const data = await apiClient.get('/api/clients');
-          set({ clients: data, clientsLoading: false });
+          const response = await apiClient.get('/api/data/clients');
+          const clients = response.clients || [];
+          set({ clients, clientsLoading: false });
         } catch (err) {
           console.error('Failed to fetch clients', err);
           set({ clientsLoading: false });
@@ -54,11 +55,43 @@ const usePortfolioStore = create(
       
       setOriginalClients: (clients) => set({ originalClients: clients }),
       
-      updateClient: (updatedClient) => set((state) => ({
-        clients: state.clients.map(client => 
-          client.id === updatedClient.id ? { ...client, ...updatedClient } : client
-        )
-      })),
+      // Add new client
+      addClient: async (clientData) => {
+        try {
+          const formattedData = get().formatClientForAPI(clientData);
+          const response = await apiClient.post('/api/data/clients', formattedData);
+          const newClient = response.client;
+          set((state) => ({
+            clients: [...state.clients, newClient],
+            selectedClient: null,
+            isModalOpen: false
+          }));
+          return newClient;
+        } catch (err) {
+          console.error('Failed to add client', err);
+          throw err;
+        }
+      },
+
+      // Update existing client
+      updateClient: async (clientId, clientData) => {
+        try {
+          const formattedData = get().formatClientForAPI(clientData);
+          const response = await apiClient.put(`/api/data/clients/${clientId}`, formattedData);
+          const updatedClient = response.client;
+          set((state) => ({
+            clients: state.clients.map(client => 
+              client.id === clientId ? updatedClient : client
+            ),
+            selectedClient: null,
+            isModalOpen: false
+          }));
+          return updatedClient;
+        } catch (err) {
+          console.error('Failed to update client', err);
+          throw err;
+        }
+      },
       
       setUploadState: (isUploading, error = null) => set({ 
         isUploading, 
@@ -79,14 +112,38 @@ const usePortfolioStore = create(
       })),
       
       setSelectedClient: (client) => set({ selectedClient: client }),
+
+      // Helper function to format client data for API
+      formatClientForAPI: (clientData) => {
+        return {
+          name: clientData.name || '',
+          status: clientData.status || 'Prospect',
+          practice_area: clientData.practice_area || [],
+          relationship_strength: clientData.relationship_strength || 5,
+          conflict_risk: clientData.conflict_risk || 'Medium',
+          renewal_probability: clientData.renewal_probability || 0.7,
+          strategic_fit_score: clientData.strategic_fit_score || 5,
+          notes: clientData.notes || '',
+          primary_lobbyist: clientData.primary_lobbyist || '',
+          client_originator: clientData.client_originator || '',
+          lobbyist_team: clientData.lobbyist_team || [],
+          interaction_frequency: clientData.interaction_frequency || '',
+          relationship_intensity: clientData.relationship_intensity || 5,
+          revenues: clientData.revenues || []
+        };
+      },
       
-      // Modal helpers for unified Client Card interface (Phase 3)
-      // Passing `null` opens the modal in “create” mode.
-      openClientModal: (client = null) => set({ selectedClient: client }),
+      // Modal helpers for unified Client interface
+      // Passing `null` opens the modal in "create" mode.
+      openClientModal: (client = null) => set({ 
+        selectedClient: client, 
+        isModalOpen: true 
+      }),
       // Clears the selection to close the modal.
-      closeClientModal: () => set({ selectedClient: null }),
-      
-      setShowEnhancementModal: (show) => set({ showEnhancementModal: show }),
+      closeClientModal: () => set({ 
+        selectedClient: null, 
+        isModalOpen: false 
+      }),
       
       setCurrentView: (view) => set({ currentView: view }),
 
@@ -142,7 +199,14 @@ const usePortfolioStore = create(
       
       getTotalRevenue: () => {
         const state = get();
-        return state.clients.reduce((sum, client) => sum + (client.averageRevenue || 0), 0);
+        return state.clients.reduce((sum, client) => {
+          if (client.revenues && Array.isArray(client.revenues)) {
+            const totalRevenue = client.revenues.reduce((revSum, rev) => 
+              revSum + (parseFloat(rev.revenue_amount) || 0), 0);
+            return sum + totalRevenue;
+          }
+          return sum + (client.averageRevenue || 0);
+        }, 0);
       },
       
       getTopClients: (limit = 10) => {
@@ -177,7 +241,9 @@ const usePortfolioStore = create(
         clients: state.clients,
         originalClients: state.originalClients,
         optimizationParams: state.optimizationParams,
-        currentView: state.currentView
+        currentView: state.currentView,
+        isModalOpen: state.isModalOpen,
+        selectedClient: state.selectedClient
       })
     }
   )
