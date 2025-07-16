@@ -33,18 +33,41 @@ const ClientListView = () => {
       ))
     )
     .sort((a, b) => {
-      let aValue = a[sortBy] || 0;
-      let bValue = b[sortBy] || 0;
-      
-      if (sortBy === 'name') {
-        aValue = a.name.toLowerCase();
-        bValue = b.name.toLowerCase();
+      let aValue, bValue;
+
+      // Handle different property names and types
+      switch (sortBy) {
+        case 'strategicValue':
+          aValue = a.strategicValue || 0;
+          bValue = b.strategicValue || 0;
+          break;
+        case 'averageRevenue':
+          aValue = a.averageRevenue || 0;
+          bValue = b.averageRevenue || 0;
+          break;
+        case 'name':
+          aValue = (a.name || '').toLowerCase();
+          bValue = (b.name || '').toLowerCase();
+          break;
+        default:
+          aValue = a[sortBy] || 0;
+          bValue = b[sortBy] || 0;
       }
-      
+
+      // For string comparison
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        if (sortOrder === 'asc') {
+          return aValue.localeCompare(bValue);
+        } else {
+          return bValue.localeCompare(aValue);
+        }
+      }
+
+      // For numeric comparison
       if (sortOrder === 'asc') {
-        return aValue > bValue ? 1 : -1;
+        return aValue - bValue;
       } else {
-        return aValue < bValue ? 1 : -1;
+        return bValue - aValue;
       }
     });
 

@@ -238,9 +238,9 @@ const ClientEnhancementForm = ({ onClose }) => {
   if (!isModalOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-900">
-        <CardHeader className="flex flex-row items-center justify-between">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+      <Card className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-900 shadow-2xl border border-gray-200 dark:border-gray-700">
+        <CardHeader className="flex flex-row items-center justify-between bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700">
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
             {isEditMode ? `Edit Client: ${client.name}` : 'Create New Client'}
@@ -250,7 +250,7 @@ const ClientEnhancementForm = ({ onClose }) => {
           </Button>
         </CardHeader>
         
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-6 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
           {/* Client Basic Information */}
           <div className="space-y-4">
             <div className="space-y-2">
