@@ -8,7 +8,7 @@ import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Select } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LOBBYISTS } from './constants';
 import { 
   X, 
@@ -18,39 +18,43 @@ import {
   Building,
   Heart,
   Shield,
-  Clock,
   TrendingUp,
   Target,
-  FileText
+  FileText,
+  DollarSign,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
-import { apiClient } from './api';
 
-const ClientEnhancementForm = ({ onClose, clientId = null }) => {
+const ClientEnhancementForm = ({ onClose }) => {
   const { 
-    clients, 
     selectedClient, 
-    updateClient, 
-    setSelectedClient,
-    getClientById 
+    isModalOpen,
+    addClient,
+    updateClient,
+    closeClientModal 
   } = usePortfolioStore();
 
-  // Get the client to edit
-  const client = clientId ? getClientById(clientId) : selectedClient;
+  // Determine if this is create or edit mode
+  const isEditMode = selectedClient !== null;
+  const client = selectedClient;
   
   const [formData, setFormData] = useState({
-    practiceArea: [],
-    relationshipStrength: 5,
-    conflictRisk: 'Medium',
-    primaryLobbyist: '',
-    clientOriginator: '',
-    lobbyistTeam: [],
-    interactionFrequency: 'As-Needed',
-    relationshipIntensity: 5,
-    crisisManagement: 'Low',
-    renewalProbability: 0.7,
-    strategicFitScore: 5,
-    notes: ''
+    name: '',
+    status: 'Prospect',
+    practice_area: [],
+    relationship_strength: 5,
+    conflict_risk: 'Medium',
+    primary_lobbyist: '',
+    client_originator: '',
+    lobbyist_team: [],
+    interaction_frequency: 'As-Needed',
+    relationship_intensity: 5,
+    renewal_probability: 0.7,
+    strategic_fit_score: 5,
+    notes: '',
+    revenues: []
   });
 
   const [isSaving, setIsSaving] = useState(false);
@@ -76,18 +80,38 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
   useEffect(() => {
     if (client) {
       setFormData({
-        practiceArea: client.practiceArea || [],
-        relationshipStrength: client.relationshipStrength || 5,
-        conflictRisk: client.conflictRisk || 'Medium',
-        primaryLobbyist: client.primaryLobbyist || '',
-        clientOriginator: client.clientOriginator || '',
-        lobbyistTeam: client.lobbyistTeam || [],
-        interactionFrequency: client.interactionFrequency || 'As-Needed',
-        relationshipIntensity: client.relationshipIntensity || 5,
-        crisisManagement: client.crisisManagement || 'Low',
-        renewalProbability: client.renewalProbability || 0.7,
-        strategicFitScore: client.strategicFitScore || 5,
-        notes: client.notes || ''
+        name: client.name || '',
+        status: client.status || 'Prospect',
+        practice_area: client.practice_area || [],
+        relationship_strength: client.relationship_strength || 5,
+        conflict_risk: client.conflict_risk || 'Medium',
+        primary_lobbyist: client.primary_lobbyist || '',
+        client_originator: client.client_originator || '',
+        lobbyist_team: client.lobbyist_team || [],
+        interaction_frequency: client.interaction_frequency || 'As-Needed',
+        relationship_intensity: client.relationship_intensity || 5,
+        renewal_probability: client.renewal_probability || 0.7,
+        strategic_fit_score: client.strategic_fit_score || 5,
+        notes: client.notes || '',
+        revenues: client.revenues || []
+      });
+    } else {
+      // Reset form for new client
+      setFormData({
+        name: '',
+        status: 'Prospect',
+        practice_area: [],
+        relationship_strength: 5,
+        conflict_risk: 'Medium',
+        primary_lobbyist: '',
+        client_originator: '',
+        lobbyist_team: [],
+        interaction_frequency: 'As-Needed',
+        relationship_intensity: 5,
+        renewal_probability: 0.7,
+        strategic_fit_score: 5,
+        notes: '',
+        revenues: []
       });
     }
   }, [client]);
@@ -95,9 +119,18 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
   const handlePracticeAreaChange = (area, checked) => {
     setFormData(prev => ({
       ...prev,
-      practiceArea: checked 
-        ? [...prev.practiceArea, area]
-        : prev.practiceArea.filter(a => a !== area)
+      practice_area: checked 
+        ? [...prev.practice_area, area]
+        : prev.practice_area.filter(a => a !== area)
+    }));
+  };
+
+  const handleLobbyistTeamChange = (lobbyist, checked) => {
+    setFormData(prev => ({
+      ...prev,
+      lobbyist_team: checked 
+        ? [...prev.lobbyist_team, lobbyist]
+        : prev.lobbyist_team.filter(l => l !== lobbyist)
     }));
   };
 
@@ -108,69 +141,95 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
     }));
   };
 
+  const handleRevenueChange = (index, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      revenues: prev.revenues.map((rev, i) => 
+        i === index ? { ...rev, [field]: value } : rev
+      )
+    }));
+  };
+
+  const addRevenueEntry = () => {
+    setFormData(prev => ({
+      ...prev,
+      revenues: [...prev.revenues, { year: '', revenue_amount: '' }]
+    }));
+  };
+
+  const removeRevenueEntry = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      revenues: prev.revenues.filter((_, i) => i !== index)
+    }));
+  };
+
   const validateForm = () => {
     const newErrors = {};
     
-    if (formData.practiceArea.length === 0) {
-      newErrors.practiceArea = 'Please select at least one practice area';
+    if (!formData.name.trim()) {
+      newErrors.name = 'Client name is required';
     }
     
-    // Additional validations can be added here as needed
+    if (formData.practice_area.length === 0) {
+      newErrors.practice_area = 'Please select at least one practice area';
+    }
+
+    // Validate revenue entries
+    formData.revenues.forEach((rev, index) => {
+      if (rev.year && !rev.revenue_amount) {
+        newErrors[`revenue_${index}`] = 'Revenue amount is required when year is specified';
+      }
+      if (rev.revenue_amount && !rev.year) {
+        newErrors[`revenue_${index}`] = 'Year is required when revenue amount is specified';
+      }
+    });
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSave = async () => {
-    if (!client || !validateForm()) return;
+    if (!validateForm()) return;
     
     setIsSaving(true);
     
     try {
-      // Update client with enhanced data
-      const updatedClient = {
-        ...client,
-        ...formData
+      // Clean up revenues - remove empty entries
+      const cleanRevenues = formData.revenues.filter(rev => 
+        rev.year && rev.revenue_amount
+      ).map(rev => ({
+        year: parseInt(rev.year),
+        revenue_amount: parseFloat(rev.revenue_amount)
+      }));
+
+      const clientData = {
+        ...formData,
+        revenues: cleanRevenues
       };
-      
-      // Send to backend for recalculation
-      const result = await apiClient.post('/data/update-client', {
-        clients,
-        updatedClient,
-      });
-      
-      if (result.success) {
-        // Update the store with recalculated data
-        usePortfolioStore.setState({ clients: result.clients });
-        onClose();
+
+      if (isEditMode) {
+        await updateClient(client.id, clientData);
       } else {
-        throw new Error('Server returned error');
+        await addClient(clientData);
       }
       
+      closeClientModal();
+      
     } catch (error) {
-      console.error('Error updating client:', error);
+      console.error('Error saving client:', error);
       setErrors({ general: 'Failed to save client data. Please try again.' });
     } finally {
       setIsSaving(false);
     }
   };
 
-  if (!client) {
-    return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <Card className="w-full max-w-md bg-white dark:bg-gray-900">
-          <CardContent className="pt-6">
-            <p className="text-center text-muted-foreground">
-              No client selected for enhancement.
-            </p>
-            <div className="mt-4 text-center">
-              <Button onClick={onClose}>Close</Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const handleClose = () => {
+    closeClientModal();
+    if (onClose) onClose();
+  };
+
+  if (!isModalOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -178,29 +237,46 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
-            Enhance Client: {client.name}
+            {isEditMode ? `Edit Client: ${client.name}` : 'Create New Client'}
           </CardTitle>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button variant="ghost" size="sm" onClick={handleClose}>
             <X className="h-4 w-4" />
           </Button>
         </CardHeader>
         
         <CardContent className="space-y-6">
-          {/* Client Overview */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-muted/30 rounded-lg">
-            <div>
-              <Label className="text-sm font-medium">Current Revenue</Label>
-              <p className="text-lg font-semibold">${(client.averageRevenue || 0).toLocaleString()}</p>
+          {/* Client Basic Information */}
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Client Name *</Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="Enter client name"
+              />
+              {errors.name && (
+                <p className="text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  {errors.name}
+                </p>
+              )}
             </div>
-            <div>
-              <Label className="text-sm font-medium">Contract Status</Label>
-              <Badge variant={client.status === 'IF' ? 'default' : 'secondary'}>
-                {client.status}
-              </Badge>
-            </div>
-            <div>
-              <Label className="text-sm font-medium">Strategic Value</Label>
-              <p className="text-lg font-semibold">{(client.strategicValue || 0).toFixed(1)}</p>
+
+            <div className="space-y-2">
+              <Label htmlFor="status">Status</Label>
+              <Select value={formData.status} onValueChange={(value) => setFormData(prev => ({ ...prev, status: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Prospect">Prospect</SelectItem>
+                  <SelectItem value="IF">In Force</SelectItem>
+                  <SelectItem value="P">Proposal</SelectItem>
+                  <SelectItem value="D">Done</SelectItem>
+                  <SelectItem value="H">Hold</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -210,10 +286,10 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
               <Building className="h-4 w-4" />
               Practice Areas *
             </Label>
-            {errors.practiceArea && (
+            {errors.practice_area && (
               <p className="text-sm text-red-500 flex items-center gap-1">
                 <AlertCircle className="h-3 w-3" />
-                {errors.practiceArea}
+                {errors.practice_area}
               </p>
             )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -221,7 +297,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
                 <div key={area} className="flex items-center space-x-2">
                   <Checkbox
                     id={area}
-                    checked={formData.practiceArea.includes(area)}
+                    checked={formData.practice_area.includes(area)}
                     onCheckedChange={(checked) => handlePracticeAreaChange(area, checked)}
                   />
                   <Label htmlFor={area} className="text-sm">{area}</Label>
@@ -229,7 +305,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
               ))}
             </div>
             <div className="flex flex-wrap gap-2 mt-2">
-              {formData.practiceArea.map((area) => (
+              {formData.practice_area.map((area) => (
                 <Badge key={area} variant="secondary">
                   {area}
                 </Badge>
@@ -237,15 +313,66 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
             </div>
           </div>
 
+          {/* Financials Section */}
+          <div className="space-y-4">
+            <Label className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4" />
+              Financials
+            </Label>
+            <div className="border rounded-lg p-4 space-y-3">
+              {formData.revenues.map((revenue, index) => (
+                <div key={index} className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <Input
+                      type="number"
+                      placeholder="Year (e.g., 2024)"
+                      value={revenue.year}
+                      onChange={(e) => handleRevenueChange(index, 'year', e.target.value)}
+                    />
+                  </div>
+                  <div className="flex-2">
+                    <Input
+                      type="number"
+                      placeholder="Revenue Amount"
+                      value={revenue.revenue_amount}
+                      onChange={(e) => handleRevenueChange(index, 'revenue_amount', e.target.value)}
+                    />
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => removeRevenueEntry(index)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                  {errors[`revenue_${index}`] && (
+                    <p className="text-sm text-red-500 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      {errors[`revenue_${index}`]}
+                    </p>
+                  )}
+                </div>
+              ))}
+              <Button 
+                variant="outline" 
+                onClick={addRevenueEntry}
+                className="w-full"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Year
+              </Button>
+            </div>
+          </div>
+
           {/* Relationship Strength */}
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <Heart className="h-4 w-4" />
-              Relationship Strength: {formData.relationshipStrength}/10
+              Relationship Strength: {formData.relationship_strength}/10
             </Label>
             <Slider
-              value={[formData.relationshipStrength]}
-              onValueChange={(value) => handleSliderChange('relationshipStrength', value)}
+              value={[formData.relationship_strength]}
+              onValueChange={(value) => handleSliderChange('relationship_strength', value)}
               max={10}
               min={1}
               step={1}
@@ -264,8 +391,8 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
               Conflict Risk
             </Label>
             <RadioGroup 
-              value={formData.conflictRisk} 
-              onValueChange={(value) => setFormData(prev => ({ ...prev, conflictRisk: value }))}
+              value={formData.conflict_risk} 
+              onValueChange={(value) => setFormData(prev => ({ ...prev, conflict_risk: value }))}
             >
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="Low" id="low" />
@@ -282,48 +409,46 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
             </RadioGroup>
           </div>
 
-          {/* Lobbyist & Origination Assignment */}
-          <div className="space-y-3">
+          {/* Lobbyist Assignment */}
+          <div className="space-y-4">
             <Label className="flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Lobbyist & Origination Assignment
+              Team Assignment
             </Label>
 
             {/* Primary Lobbyist */}
-            <div className="space-y-1">
+            <div className="space-y-2">
               <Label className="text-sm font-medium">Primary Lobbyist</Label>
-              <Select
-                value={formData.primaryLobbyist}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, primaryLobbyist: e.target.value }))
-                }
-                className="w-full border rounded-md p-2"
-              >
-                <option value="">Select...</option>
-                {LOBBYISTS.map((lob) => (
-                  <option key={lob} value={lob}>
-                    {lob}
-                  </option>
-                ))}
+              <Select value={formData.primary_lobbyist} onValueChange={(value) => setFormData(prev => ({ ...prev, primary_lobbyist: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select primary lobbyist" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None</SelectItem>
+                  {LOBBYISTS.map((lobbyist) => (
+                    <SelectItem key={lobbyist} value={lobbyist}>
+                      {lobbyist}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
 
             {/* Client Originator */}
-            <div className="space-y-1">
+            <div className="space-y-2">
               <Label className="text-sm font-medium">Client Originator</Label>
-              <Select
-                value={formData.clientOriginator}
-                onChange={(e) =>
-                  setFormData((prev) => ({ ...prev, clientOriginator: e.target.value }))
-                }
-                className="w-full border rounded-md p-2"
-              >
-                <option value="">Select...</option>
-                {LOBBYISTS.map((lob) => (
-                  <option key={lob} value={lob}>
-                    {lob}
-                  </option>
-                ))}
+              <Select value={formData.client_originator} onValueChange={(value) => setFormData(prev => ({ ...prev, client_originator: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select client originator" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None</SelectItem>
+                  {LOBBYISTS.map((lobbyist) => (
+                    <SelectItem key={lobbyist} value={lobbyist}>
+                      {lobbyist}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
 
@@ -331,97 +456,69 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
             <div className="space-y-2">
               <Label className="text-sm font-medium">Lobbyist Team</Label>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {LOBBYISTS.map((lob) => (
-                  <div key={lob} className="flex items-center space-x-2">
+                {LOBBYISTS.map((lobbyist) => (
+                  <div key={lobbyist} className="flex items-center space-x-2">
                     <Checkbox
-                      id={`team-${lob}`}
-                      checked={formData.lobbyistTeam.includes(lob)}
-                      onCheckedChange={(checked) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          lobbyistTeam: checked
-                            ? [...prev.lobbyistTeam, lob]
-                            : prev.lobbyistTeam.filter((l) => l !== lob),
-                        }))
-                      }
+                      id={`team-${lobbyist}`}
+                      checked={formData.lobbyist_team.includes(lobbyist)}
+                      onCheckedChange={(checked) => handleLobbyistTeamChange(lobbyist, checked)}
                     />
-                    <Label htmlFor={`team-${lob}`} className="text-sm">
-                      {lob}
+                    <Label htmlFor={`team-${lobbyist}`} className="text-sm">
+                      {lobbyist}
                     </Label>
                   </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {formData.lobbyist_team.map((lobbyist) => (
+                  <Badge key={lobbyist} variant="secondary">
+                    {lobbyist}
+                  </Badge>
                 ))}
               </div>
             </div>
           </div>
 
-          {/* Relationship & Engagement Metrics */}
+          {/* Interaction Frequency */}
           <div className="space-y-3">
-            <Label className="flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Relationship & Engagement Metrics
+            <Label className="text-sm font-medium">Interaction Frequency</Label>
+            <RadioGroup
+              value={formData.interaction_frequency}
+              onValueChange={(value) => setFormData(prev => ({ ...prev, interaction_frequency: value }))}
+            >
+              {['As-Needed', 'Quarterly', 'Monthly', 'Weekly', 'Daily'].map((freq) => (
+                <div key={freq} className="flex items-center space-x-2">
+                  <RadioGroupItem value={freq} id={`freq-${freq}`} />
+                  <Label htmlFor={`freq-${freq}`}>{freq}</Label>
+                </div>
+              ))}
+            </RadioGroup>
+          </div>
+
+          {/* Relationship Intensity */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">
+              Relationship Intensity: {formData.relationship_intensity}/10
             </Label>
-
-            {/* Interaction Frequency */}
-            <div className="space-y-1">
-              <Label className="text-sm font-medium">Interaction Frequency</Label>
-              <RadioGroup
-                value={formData.interactionFrequency}
-                onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, interactionFrequency: value }))
-                }
-              >
-                {['As-Needed', 'Quarterly', 'Monthly', 'Weekly', 'Daily'].map((freq) => (
-                  <div key={freq} className="flex items-center space-x-2">
-                    <RadioGroupItem value={freq} id={`freq-${freq}`} />
-                    <Label htmlFor={`freq-${freq}`}>{freq}</Label>
-                  </div>
-                ))}
-              </RadioGroup>
-            </div>
-
-            {/* Relationship Intensity */}
-            <div className="space-y-1">
-              <Label className="text-sm font-medium">
-                Relationship Intensity: {formData.relationshipIntensity}/10
-              </Label>
-              <Slider
-                value={[formData.relationshipIntensity]}
-                onValueChange={(value) => handleSliderChange('relationshipIntensity', value)}
-                max={10}
-                min={1}
-                step={1}
-                className="w-full"
-              />
-            </div>
-
-            {/* Crisis Management Needs */}
-            <div className="space-y-1">
-              <Label className="text-sm font-medium">Crisis Management Needs</Label>
-              <RadioGroup
-                value={formData.crisisManagement}
-                onValueChange={(value) =>
-                  setFormData((prev) => ({ ...prev, crisisManagement: value }))
-                }
-              >
-                {['Low', 'Medium', 'High'].map((lvl) => (
-                  <div key={lvl} className="flex items-center space-x-2">
-                    <RadioGroupItem value={lvl} id={`crisis-${lvl}`} />
-                    <Label htmlFor={`crisis-${lvl}`}>{lvl}</Label>
-                  </div>
-                ))}
-              </RadioGroup>
-            </div>
+            <Slider
+              value={[formData.relationship_intensity]}
+              onValueChange={(value) => handleSliderChange('relationship_intensity', value)}
+              max={10}
+              min={1}
+              step={1}
+              className="w-full"
+            />
           </div>
 
           {/* Renewal Probability */}
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
-              Renewal Probability: {Math.round(formData.renewalProbability * 100)}%
+              Renewal Probability: {Math.round(formData.renewal_probability * 100)}%
             </Label>
             <Slider
-              value={[formData.renewalProbability]}
-              onValueChange={(value) => handleSliderChange('renewalProbability', value)}
+              value={[formData.renewal_probability]}
+              onValueChange={(value) => handleSliderChange('renewal_probability', value)}
               max={1}
               min={0}
               step={0.05}
@@ -437,11 +534,11 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <Target className="h-4 w-4" />
-              Strategic Fit Score: {formData.strategicFitScore}/10
+              Strategic Fit Score: {formData.strategic_fit_score}/10
             </Label>
             <Slider
-              value={[formData.strategicFitScore]}
-              onValueChange={(value) => handleSliderChange('strategicFitScore', value)}
+              value={[formData.strategic_fit_score]}
+              onValueChange={(value) => handleSliderChange('strategic_fit_score', value)}
               max={10}
               min={1}
               step={1}
@@ -479,7 +576,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
 
           {/* Action Buttons */}
           <div className="flex justify-end gap-3 pt-4 border-t">
-            <Button variant="outline" onClick={onClose} disabled={isSaving}>
+            <Button variant="outline" onClick={handleClose} disabled={isSaving}>
               Cancel
             </Button>
             <Button onClick={handleSave} disabled={isSaving}>
@@ -491,7 +588,7 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
               ) : (
                 <>
                   <Save className="h-4 w-4 mr-2" />
-                  Save Changes
+                  {isEditMode ? 'Update Client' : 'Create Client'}
                 </>
               )}
             </Button>
@@ -503,4 +600,3 @@ const ClientEnhancementForm = ({ onClose, clientId = null }) => {
 };
 
 export default ClientEnhancementForm;
-
