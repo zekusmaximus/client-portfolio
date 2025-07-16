@@ -220,11 +220,17 @@ const usePortfolioStore = create(
       getTotalRevenue: () => {
         const state = get();
         return state.clients.reduce((sum, client) => {
-          if (client.revenues && Array.isArray(client.revenues)) {
-            const totalRevenue = client.revenues.reduce((revSum, rev) => 
-              revSum + (parseFloat(rev.revenue_amount) || 0), 0);
-            return sum + totalRevenue;
+          if (client.revenues && Array.isArray(client.revenues) && client.revenues.length > 0) {
+            // Find the revenue entry with the highest (most recent) year
+            const mostRecentRevenue = client.revenues.reduce((latest, current) => {
+              const currentYear = parseInt(current.year) || 0;
+              const latestYear = parseInt(latest.year) || 0;
+              return currentYear > latestYear ? current : latest;
+            });
+
+            return sum + (parseFloat(mostRecentRevenue.revenue_amount) || 0);
           }
+          // Fallback to averageRevenue if no revenues array exists
           return sum + (client.averageRevenue || 0);
         }, 0);
       },
