@@ -41,21 +41,23 @@ function formatStrategicValue(value) {
 }
 
 /**
- * Format revenue for display
+ * Format 2025 revenue for display
  */
 function formatRevenue(revenues) {
   if (!revenues || !Array.isArray(revenues) || revenues.length === 0) {
     return '$0';
   }
-  
-  const totalRevenue = revenues.reduce((sum, rev) => sum + (parseFloat(rev.revenue_amount) || 0), 0);
-  
-  if (totalRevenue >= 1000000) {
-    return `$${(totalRevenue / 1000000).toFixed(1)}M`;
-  } else if (totalRevenue >= 1000) {
-    return `$${(totalRevenue / 1000).toFixed(0)}K`;
+
+  // Find 2025 revenue specifically
+  const revenue2025 = revenues.find(rev => String(rev.year) === '2025');
+  const revenueAmount = parseFloat(revenue2025?.revenue_amount) || 0;
+
+  if (revenueAmount >= 1000000) {
+    return `$${(revenueAmount / 1000000).toFixed(1)}M`;
+  } else if (revenueAmount >= 1000) {
+    return `$${(revenueAmount / 1000).toFixed(0)}K`;
   } else {
-    return `$${totalRevenue.toFixed(0)}`;
+    return `$${revenueAmount.toFixed(0)}`;
   }
 }
 

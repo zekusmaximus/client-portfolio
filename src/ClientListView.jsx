@@ -172,8 +172,8 @@ const ClientListView = () => {
                 <div className="flex items-center gap-2">
                   <DollarSign className="h-4 w-4 text-green-500" />
                   <div>
-                    <p className="text-muted-foreground">Revenue</p>
-                    <p className="font-semibold">${(client.averageRevenue || 0).toLocaleString()}</p>
+                    <p className="text-muted-foreground">2025 Revenue</p>
+                    <p className="font-semibold">${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
                   </div>
                 </div>
 

@@ -67,8 +67,8 @@ const DashboardView = () => {
     // Practice area breakdown
     const practiceAreas = {};
     clients.forEach(client => {
-      const clientRevenue = parseFloat(client.averageRevenue) || 0;
-      
+      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client);
+
       if (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0) {
         client.practiceArea.forEach(area => {
           if (!practiceAreas[area]) {
@@ -96,9 +96,9 @@ const DashboardView = () => {
     };
     
     clients.forEach(client => {
-      const clientRevenue = parseFloat(client.averageRevenue) || 0;
+      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client);
       const clientStatus = client.status || 'H'; // Default to Hold if status is null
-      
+
       if (revenueByStatus.hasOwnProperty(clientStatus)) {
         revenueByStatus[clientStatus] += clientRevenue;
         countByStatus[clientStatus]++;
@@ -126,10 +126,7 @@ const DashboardView = () => {
     }).length;
 
     // Calculate totals with robust null handling
-    const totalRevenue = clients.reduce((sum, c) => {
-      const revenue = parseFloat(c.averageRevenue) || 0;
-      return sum + revenue;
-    }, 0);
+    const totalRevenue = usePortfolioStore.getState().getTotalRevenue();
 
     const averageStrategicValue = clients.length > 0 ? 
       clients.reduce((sum, c) => {
@@ -152,16 +149,19 @@ const DashboardView = () => {
 
 
   // Prepare data for charts
-  const scatterData = clients.map(client => ({
-    x: parseFloat(client.averageRevenue) || 0,
-    y: parseFloat(client.strategicValue) || 0,
-    name: client.name || 'Unnamed Client',
-    revenue: parseFloat(client.averageRevenue) || 0,
-    practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0)
-      ? client.practiceArea[0]
-      : 'Not Specified',
-    status: client.status || 'H'
-  }));
+  const scatterData = clients.map(client => {
+    const revenue = usePortfolioStore.getState().getClientRevenue(client);
+    return {
+      x: revenue,
+      y: parseFloat(client.strategicValue) || 0,
+      name: client.name || 'Unnamed Client',
+      revenue: revenue,
+      practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0)
+        ? client.practiceArea[0]
+        : 'Not Specified',
+      status: client.status || 'H'
+    };
+  });
 
   const pieData = analytics ? Object.entries(analytics.practiceAreas).map(([area, data]) => ({
     name: area,
@@ -462,7 +462,7 @@ const DashboardView = () => {
                   <tbody>
                     {analytics.topClients.map((client, index) => {
                       const strategicValue = parseFloat(client.strategicValue) || 0;
-                      const revenue = parseFloat(client.averageRevenue) || 0;
+                      const revenue = usePortfolioStore.getState().getClientRevenue(client);
 
                       // Determine strategic value badge variant based on value
                       const getStrategicValueVariant = (value) => {

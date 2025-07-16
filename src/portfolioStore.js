@@ -17,7 +17,7 @@ const usePortfolioStore = create(
           renewalProbability: 0.9,
           strategicFitScore: 9,
           strategicValue: 85.5,
-          averageRevenue: 150000,
+          revenues: [{ year: '2025', revenue_amount: '150000' }],
           notes: 'High-value pharmaceutical client with strong relationship'
         },
         {
@@ -30,7 +30,7 @@ const usePortfolioStore = create(
           renewalProbability: 0.8,
           strategicFitScore: 7,
           strategicValue: 72.3,
-          averageRevenue: 65000,
+          revenues: [{ year: '2025', revenue_amount: '65000' }],
           notes: 'Regional healthcare provider'
         },
         {
@@ -43,7 +43,7 @@ const usePortfolioStore = create(
           renewalProbability: 0.75,
           strategicFitScore: 8,
           strategicValue: 68.9,
-          averageRevenue: 95000,
+          revenues: [{ year: '2025', revenue_amount: '95000' }],
           notes: 'Major utility company'
         }
       ],
@@ -257,21 +257,20 @@ const usePortfolioStore = create(
         return state.clients.filter(client => client.status === status);
       },
       
+      // Helper function to get 2025 revenue from revenues array
+      getClientRevenue: (client) => {
+        if (client.revenues && Array.isArray(client.revenues) && client.revenues.length > 0) {
+          // Find 2025 revenue specifically
+          const revenue2025 = client.revenues.find(rev => String(rev.year) === '2025');
+          return parseFloat(revenue2025?.revenue_amount) || 0;
+        }
+        return 0;
+      },
+
       getTotalRevenue: () => {
         const state = get();
         return state.clients.reduce((sum, client) => {
-          if (client.revenues && Array.isArray(client.revenues) && client.revenues.length > 0) {
-            // Find the revenue entry with the highest (most recent) year
-            const mostRecentRevenue = client.revenues.reduce((latest, current) => {
-              const currentYear = parseInt(current.year) || 0;
-              const latestYear = parseInt(latest.year) || 0;
-              return currentYear > latestYear ? current : latest;
-            });
-
-            return sum + (parseFloat(mostRecentRevenue.revenue_amount) || 0);
-          }
-          // Fallback to averageRevenue if no revenues array exists
-          return sum + (client.averageRevenue || 0);
+          return sum + state.getClientRevenue(client);
         }, 0);
       },
       

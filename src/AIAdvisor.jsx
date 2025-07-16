@@ -98,7 +98,7 @@ const AIAdvisor = () => {
       const data = await apiClient.post('/claude/client-recommendations', {
         clientId: client.id,
         clientName: client.name,
-        clientRevenue: client.averageRevenue,
+        clientRevenue: usePortfolioStore.getState().getClientRevenue(client),
         portfolioSize: clients.length,
       });
 
@@ -364,7 +364,7 @@ const AIAdvisor = () => {
                       </Badge>
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      <p>Revenue: ${(client.averageRevenue || 0).toLocaleString()}</p>
+                      <p>2025 Revenue: ${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
                       <p>Strategic Value: {(client.strategicValue || 0).toFixed(1)}</p>
                       {client.practiceArea && client.practiceArea.length > 0 && (
                         <p>Practice Areas: {client.practiceArea.join(', ')}</p>

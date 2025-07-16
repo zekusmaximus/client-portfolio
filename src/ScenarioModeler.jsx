@@ -41,7 +41,7 @@ const ScenarioModeler = () => {
   const currentMetrics = useMemo(() => {
     if (!hasData) return null;
 
-    const totalRevenue = clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
+    const totalRevenue = usePortfolioStore.getState().getTotalRevenue();
     const avgStrategicValue = clients.reduce((sum, c) => sum + (c.strategicValue || 0), 0) / clients.length;
     const highRiskClients = clients.filter(c => c.conflictRisk === 'High').length;
 
@@ -63,7 +63,7 @@ const ScenarioModeler = () => {
     );
 
     const revenueAtRisk = affectedClients.reduce(
-      (sum, c) => sum + (c.averageRevenue || 0),
+      (sum, c) => sum + usePortfolioStore.getState().getClientRevenue(c),
       0
     );
 
@@ -113,7 +113,7 @@ const ScenarioModeler = () => {
       // Send only the necessary parameters to the backend
       const response = await apiClient.post('/scenarios/growth', {
         clientIds: clients.map(c => c.id),
-        currentRevenue: clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
+        currentRevenue: usePortfolioStore.getState().getTotalRevenue(),
         targetRevenue: scenarioParams.targetRevenue,
       });
 
