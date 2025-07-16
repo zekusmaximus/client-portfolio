@@ -223,10 +223,7 @@ const DashboardView = () => {
                     Retry Connection
                   </Button>
                 ) : (
-                  <Button variant="outline" size="lg" onClick={() => {
-                    console.log('Upload button clicked');
-                    setShowUpload(true);
-                  }}>
+                  <Button variant="outline" size="lg" onClick={() => setShowUpload(true)}>
                     <BarChart3 className="h-4 w-4 mr-2" />
                     Upload Portfolio Data
                   </Button>
@@ -235,6 +232,23 @@ const DashboardView = () => {
             </div>
           </CardContent>
         </Card>
+        
+        {/* Upload Modal - moved inside no-analytics return */}
+        {showUpload && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-semibold">Upload Client Data</h2>
+                  <Button variant="ghost" size="sm" onClick={() => setShowUpload(false)}>
+                    ×
+                  </Button>
+                </div>
+                <DataUploadManager />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -569,30 +583,6 @@ const DashboardView = () => {
           </Card>
         </TabsContent>
       </Tabs>
-      {/* Upload Modal */}
-      {showUpload && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-semibold">Upload Client Data</h2>
-                <Button variant="ghost" size="sm" onClick={() => {
-                  console.log('Close modal clicked');
-                  setShowUpload(false);
-                }}>
-                  ×
-                </Button>
-              </div>
-              <DataUploadManager />
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Debug showUpload state */}
-      <div className="fixed top-4 right-4 bg-red-500 text-white p-2 rounded z-50">
-        showUpload: {showUpload.toString()}
-      </div>
 
       {/* Modal hub */}
       <ClientCardModal
