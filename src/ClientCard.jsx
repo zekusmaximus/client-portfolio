@@ -3,11 +3,11 @@ import { Card, CardHeader, CardContent } from './components/ui/card';
 import { Badge } from './components/ui/badge';
 import usePortfolioStore from './portfolioStore';
 import { Button } from './components/ui/button';
-import { 
-  Pencil2Icon, 
-  PersonIcon, 
-  StarIcon, 
-  DollarSignIcon 
+import {
+  Pencil2Icon,
+  PersonIcon,
+  StarIcon,
+  ValueIcon
 } from '@radix-ui/react-icons';
 
 /**
@@ -125,7 +125,7 @@ export default function ClientCard({ client }) {
           {/* Revenue Information */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <DollarSignIcon className="w-3 h-3" />
+              <ValueIcon className="w-3 h-3" />
               <span>Revenue</span>
             </div>
             <span className="text-sm font-medium">{formatRevenue(revenues)}</span>
