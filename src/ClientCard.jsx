@@ -43,23 +43,15 @@ function formatStrategicValue(value) {
 }
 
 /**
- * Format 2025 revenue for display
+ * Format revenue for display
  */
-function formatRevenue(revenues) {
-  if (!revenues || !Array.isArray(revenues) || revenues.length === 0) {
-    return '$0';
-  }
-
-  // Find 2025 revenue specifically
-  const revenue2025 = revenues.find(rev => String(rev.year) === '2025');
-  const revenueAmount = parseFloat(revenue2025?.revenue_amount) || 0;
-
-  if (revenueAmount >= 1000000) {
-    return `$${(revenueAmount / 1000000).toFixed(1)}M`;
-  } else if (revenueAmount >= 1000) {
-    return `$${(revenueAmount / 1000).toFixed(0)}K`;
+function formatRevenue(revenue) {
+  if (revenue >= 1000000) {
+    return `$${(revenue / 1000000).toFixed(1)}M`;
+  } else if (revenue >= 1000) {
+    return `$${(revenue / 1000).toFixed(0)}K`;
   } else {
-    return `$${revenueAmount.toFixed(0)}`;
+    return `$${revenue.toFixed(0)}`;
   }
 }
 
@@ -80,6 +72,7 @@ function StatusDot({ status }) {
 export default function ClientCard({ client }) {
   const openClientModal = usePortfolioStore((s) => s.openClientModal);
   const deleteClient = usePortfolioStore((s) => s.deleteClient);
+  const getClientRevenue = usePortfolioStore((s) => s.getClientRevenue);
 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -102,20 +95,21 @@ export default function ClientCard({ client }) {
 
   const { 
     name, 
-    practice_area, 
+    practiceArea, 
     primary_lobbyist, 
     client_originator,
     lobbyist_team,
     status,
-    strategic_value,
+    strategicValue,
     revenues
   } = client;
 
-  const strategicValueNum = parseFloat(strategic_value) || 0;
+  const strategicValueNum = parseFloat(strategicValue) || 0;
+  const clientRevenue = getClientRevenue(client);
   const teamCount = lobbyist_team?.length || 0;
-  const practiceAreaText = Array.isArray(practice_area) && practice_area.length > 0 
-    ? practice_area.join(', ') 
-    : practice_area || 'Not Specified';
+  const practiceAreaText = Array.isArray(practiceArea) && practiceArea.length > 0 
+    ? practiceArea.join(', ') 
+    : practiceArea || 'Not Specified';
 
   return (
     <Card className="flex flex-col justify-between hover:shadow-md transition-shadow duration-200">
@@ -152,7 +146,7 @@ export default function ClientCard({ client }) {
               <ValueIcon className="w-3 h-3" />
               <span>Revenue</span>
             </div>
-            <span className="text-sm font-medium">{formatRevenue(revenues)}</span>
+            <span className="text-sm font-medium">{formatRevenue(clientRevenue)}</span>
           </div>
 
           {/* Team Information */}
