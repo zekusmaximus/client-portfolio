@@ -6,7 +6,47 @@ const usePortfolioStore = create(
   persist(
     (set, get) => ({
       // Client data
-      clients: [],
+      clients: [
+        {
+          id: 'client_1',
+          name: 'Pfizer',
+          status: 'IF',
+          practiceArea: ['Healthcare', 'Corporate'],
+          relationshipStrength: 8,
+          conflictRisk: 'Low',
+          renewalProbability: 0.9,
+          strategicFitScore: 9,
+          strategicValue: 85.5,
+          averageRevenue: 150000,
+          notes: 'High-value pharmaceutical client with strong relationship'
+        },
+        {
+          id: 'client_2',
+          name: 'Hartford Healthcare',
+          status: 'IF',
+          practiceArea: ['Healthcare'],
+          relationshipStrength: 7,
+          conflictRisk: 'Medium',
+          renewalProbability: 0.8,
+          strategicFitScore: 7,
+          strategicValue: 72.3,
+          averageRevenue: 65000,
+          notes: 'Regional healthcare provider'
+        },
+        {
+          id: 'client_3',
+          name: 'Eversource',
+          status: 'IF',
+          practiceArea: ['Energy', 'Municipal'],
+          relationshipStrength: 6,
+          conflictRisk: 'Medium',
+          renewalProbability: 0.75,
+          strategicFitScore: 8,
+          strategicValue: 68.9,
+          averageRevenue: 95000,
+          notes: 'Major utility company'
+        }
+      ],
       originalClients: [], // Keep original data for comparison
       clientsLoading: false,
       fetchError: null,

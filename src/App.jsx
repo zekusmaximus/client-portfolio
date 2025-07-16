@@ -8,6 +8,7 @@ import AIAdvisor from './AIAdvisor';
 import ScenarioModeler from './ScenarioModeler';
 import DataUploadManager from './DataUploadManager';
 import ClientListView from './ClientListView';
+import ClientEnhancementForm from './ClientEnhancementForm';
 import LoginPage from './LoginPage';
 import './App.css';
 
@@ -133,7 +134,8 @@ function App() {
         </div>
       </nav>
 
-      {/* ClientCardModal handled in DashboardView */}
+      {/* Client Enhancement Modal */}
+      <ClientEnhancementForm />
 
       {/* Footer */}
       <footer className="border-t bg-muted/30 mt-12">

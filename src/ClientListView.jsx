@@ -3,12 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { 
-  Users, 
-  Search, 
-  Edit, 
+import {
+  Users,
+  Search,
+  Edit,
   DollarSign,
-  Clock,
   Target,
   Shield,
   Building
@@ -16,10 +15,9 @@ import {
 import usePortfolioStore from './portfolioStore';
 
 const ClientListView = () => {
-  const { 
-    clients, 
-    setSelectedClient, 
-    setShowEnhancementModal 
+  const {
+    clients,
+    openClientModal
   } = usePortfolioStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -51,8 +49,7 @@ const ClientListView = () => {
     });
 
   const handleEditClient = (client) => {
-    setSelectedClient(client);
-    setShowEnhancementModal(true);
+    openClientModal(client);
   };
 
   const getStatusColor = (status) => {
@@ -121,7 +118,6 @@ const ClientListView = () => {
                 <option value="strategicValue">Strategic Value</option>
                 <option value="averageRevenue">Revenue</option>
                 <option value="name">Name</option>
-                <option value="timeCommitment">Time Commitment</option>
               </select>
               <Button
                 variant="outline"
@@ -178,7 +174,7 @@ const ClientListView = () => {
                     <p className="font-semibold">${(client.averageRevenue || 0).toLocaleString()}</p>
                   </div>
                 </div>
-                
+
                 <div className="flex items-center gap-2">
                   <Target className="h-4 w-4 text-purple-500" />
                   <div>
@@ -186,15 +182,7 @@ const ClientListView = () => {
                     <p className="font-semibold">{(client.strategicValue || 0).toFixed(1)}</p>
                   </div>
                 </div>
-                
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-blue-500" />
-                  <div>
-                    <p className="text-muted-foreground">Time/Month</p>
-                    <p className="font-semibold">{client.timeCommitment || 0}h</p>
-                  </div>
-                </div>
-                
+
                 <div className="flex items-center gap-2">
                   <Shield className="h-4 w-4 text-orange-500" />
                   <div>
