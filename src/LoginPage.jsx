@@ -28,16 +28,11 @@ const LoginPage = () => {
     setError(null);
 
     try {
-      const { token } = await apiClient.post('/api/auth/login', { username, password });
-
-      if (!token) {
-        throw new Error('Token not provided in response');
-      }
-
-      // Update global auth state
-      usePortfolioStore.getState().login(token);
-
-      // nothing else; App will re-render authenticated state
+      // Use the new login method from the store
+      await usePortfolioStore.getState().login(username, password);
+      
+      // Login successful - the store will update the authentication state
+      // and App.jsx will handle the navigation
     } catch (err) {
       const message =
         err?.response?.data?.message ||

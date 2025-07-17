@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import jwt_decode from 'jwt-decode';
 import { apiClient } from './api';
 const usePortfolioStore = create(
   persist(
@@ -29,7 +28,6 @@ const usePortfolioStore = create(
       // Authentication state
       isAuthenticated: false,
       user: null,
-      token: null,
       
       // UI state
       selectedClient: null,
@@ -181,39 +179,58 @@ const usePortfolioStore = create(
       setCurrentView: (view) => set({ currentView: view }),
 
       // Authentication actions
-      login: (token) => {
+      login: async (username, password) => {
         try {
-          const decoded = jwt_decode(token);
-          localStorage.setItem('authToken', token);
-          set({
-            token,
-            user: decoded,
-            isAuthenticated: true
-          });
+          const response = await apiClient.post('/auth/login', { username, password });
+          if (response.success && response.user) {
+            set({
+              user: response.user,
+              isAuthenticated: true
+            });
+            return response;
+          } else {
+            throw new Error('Login failed');
+          }
         } catch (err) {
-          console.error('Invalid JWT token', err);
+          console.error('Login error:', err);
+          throw err;
         }
       },
 
-      logout: () => {
-        localStorage.removeItem('authToken');
-        set({
-          token: null,
-          user: null,
-          isAuthenticated: false,
-          clients: [],
-          clientsLoading: false,
-          fetchError: null
-        });
+      logout: async () => {
+        try {
+          await apiClient.post('/auth/logout');
+        } catch (err) {
+          console.error('Logout error:', err);
+          // Continue with logout even if server call fails
+        } finally {
+          set({
+            user: null,
+            isAuthenticated: false,
+            clients: [],
+            clientsLoading: false,
+            fetchError: null
+          });
+        }
       },
 
-      checkAuth: () => {
-        const storedToken = localStorage.getItem('authToken');
-        if (storedToken) {
-          get().login(storedToken);
-        } else {
+      checkAuth: async () => {
+        try {
+          const response = await apiClient.get('/auth/me');
+          if (response.user) {
+            set({
+              user: response.user,
+              isAuthenticated: true
+            });
+          } else {
+            set({
+              user: null,
+              isAuthenticated: false
+            });
+          }
+        } catch (err) {
+          // If authentication check fails, user is not authenticated
           set({
-            token: null,
             user: null,
             isAuthenticated: false
           });

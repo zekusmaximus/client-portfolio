@@ -76,7 +76,7 @@ function App() {
                   </p>
                 </div>
               )}
-              <Button variant="outline" onClick={logout}>
+              <Button variant="outline" onClick={() => logout()}>
                 Logout
               </Button>
             </div>

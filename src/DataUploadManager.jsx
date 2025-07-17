@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Upload, FileText, CheckCircle, AlertCircle } from 'lucide-react';
 import { apiClient } from './api';
 import usePortfolioStore from './portfolioStore';
+import Papa from 'papaparse';
 
 const DataUploadManager = () => {
   const [file, setFile] = useState(null);
@@ -44,49 +45,55 @@ const DataUploadManager = () => {
       });
   };
 
-  const handleUpload = async () => {
-    if (!file) {
-      setError('Please select a file first');
-      return;
-    }
+const handleUpload = async () => {
+  if (!file) {
+    setError('Please select a file first');
+    return;
+  }
 
-    setIsUploading(true);
-    setError(null);
+  setIsUploading(true);
+  setError(null);
 
-    try {
-      // Read the file content
-      const fileContent = await file.text();
-      
-      // Parse CSV
-      const csvData = parseCSV(fileContent);
-      
-      if (csvData.length === 0) {
-        throw new Error('CSV file appears to be empty or invalid');
+  Papa.parse(file, {
+    header: true, // Automatically uses the first row as headers
+    skipEmptyLines: true,
+    transform: (value) => {
+      // This removes '$' and ',' from values before processing
+      return value.replace(/[$,]/g, ''); 
+    },
+    complete: async (results) => {
+      try {
+        if (!results.data || results.data.length === 0) {
+          throw new Error('CSV file appears to be empty or invalid');
+        }
+
+        // Send the clean, parsed data to the backend
+        const response = await apiClient.post('/api/data/process-csv', { csvData: results.data });
+
+        if (response.success) {
+          setUploadResult({
+            success: true,
+            clientCount: response.clients.length,
+            totalRevenue: response.summary.totalRevenue,
+            validation: response.validation
+          });
+          await fetchClients(); // Refresh client data in the store
+        } else {
+          throw new Error('Failed to process CSV data on the backend');
+        }
+      } catch (err) {
+        console.error('Upload error:', err);
+        setError(err.message || 'Failed to upload and process CSV file');
+      } finally {
+        setIsUploading(false);
       }
-
-      // Send to backend for processing
-      const response = await apiClient.post('/api/data/process-csv', { csvData });
-      
-      if (response.success) {
-        setUploadResult({
-          success: true,
-          clientCount: response.clients.length,
-          totalRevenue: response.summary.totalRevenue,
-          validation: response.validation
-        });
-        
-        // Refresh clients data
-        await fetchClients();
-      } else {
-        throw new Error('Failed to process CSV data');
-      }
-    } catch (err) {
-      console.error('Upload error:', err);
-      setError(err.message || 'Failed to upload and process CSV file');
-    } finally {
+    },
+    error: (err) => {
+      setError(err.message);
       setIsUploading(false);
     }
-  };
+  });
+};
 
   const expectedColumns = [
     'CLIENT',
