@@ -293,8 +293,33 @@ router.get('/clients', async (req, res) => {
       ORDER BY c.created_at DESC
     `, [req.user.userId]);
     
+    // Transform database fields to frontend-expected field names
+    const transformedClients = rows.map(client => {
+      // Build revenue object for 2023-2025
+      const revenue = { '2023': 0, '2024': 0, '2025': 0 };
+      if (Array.isArray(client.revenues)) {
+        client.revenues.forEach((r) => {
+          if (['2023', '2024', '2025'].includes(String(r.year))) {
+            revenue[r.year] = parseFloat(r.revenue_amount) || 0;
+          }
+        });
+      }
+
+      return {
+        ...client,
+        revenue,
+        // Transform database field names to frontend-expected names
+        practiceArea: client.practice_area || [],
+        relationshipStrength: client.relationship_strength || 5,
+        conflictRisk: client.conflict_risk || 'Medium',
+        renewalProbability: client.renewal_probability || 0.7,
+        strategicFitScore: client.strategic_fit_score || 5,
+        timeCommitment: client.time_commitment || 40,
+      };
+    });
+    
     // Calculate strategic scores for all clients before returning
-    const clientsWithScores = calculateStrategicScores(rows);
+    const clientsWithScores = calculateStrategicScores(transformedClients);
     
     res.json({
       success: true,
@@ -376,8 +401,33 @@ router.post('/clients', async (req, res) => {
       GROUP BY c.id
     `, [newClient.id, req.user.userId]);
 
+    // Transform database fields to frontend-expected field names
+    const transformedClients = rows.map(client => {
+      // Build revenue object for 2023-2025
+      const revenue = { '2023': 0, '2024': 0, '2025': 0 };
+      if (Array.isArray(client.revenues)) {
+        client.revenues.forEach((r) => {
+          if (['2023', '2024', '2025'].includes(String(r.year))) {
+            revenue[r.year] = parseFloat(r.revenue_amount) || 0;
+          }
+        });
+      }
+
+      return {
+        ...client,
+        revenue,
+        // Transform database field names to frontend-expected names
+        practiceArea: client.practice_area || [],
+        relationshipStrength: client.relationship_strength || 5,
+        conflictRisk: client.conflict_risk || 'Medium',
+        renewalProbability: client.renewal_probability || 0.7,
+        strategicFitScore: client.strategic_fit_score || 5,
+        timeCommitment: client.time_commitment || 40,
+      };
+    });
+
     // Calculate strategic scores for the new client
-    const clientsWithScores = calculateStrategicScores(rows);
+    const clientsWithScores = calculateStrategicScores(transformedClients);
 
     res.status(201).json({
       success: true,
@@ -475,8 +525,33 @@ router.put('/clients/:id', async (req, res) => {
       GROUP BY c.id
     `, [clientId, req.user.userId]);
 
+    // Transform database fields to frontend-expected field names
+    const transformedClients = rows.map(client => {
+      // Build revenue object for 2023-2025
+      const revenue = { '2023': 0, '2024': 0, '2025': 0 };
+      if (Array.isArray(client.revenues)) {
+        client.revenues.forEach((r) => {
+          if (['2023', '2024', '2025'].includes(String(r.year))) {
+            revenue[r.year] = parseFloat(r.revenue_amount) || 0;
+          }
+        });
+      }
+
+      return {
+        ...client,
+        revenue,
+        // Transform database field names to frontend-expected names
+        practiceArea: client.practice_area || [],
+        relationshipStrength: client.relationship_strength || 5,
+        conflictRisk: client.conflict_risk || 'Medium',
+        renewalProbability: client.renewal_probability || 0.7,
+        strategicFitScore: client.strategic_fit_score || 5,
+        timeCommitment: client.time_commitment || 40,
+      };
+    });
+
     // Calculate strategic scores for the updated client
-    const clientsWithScores = calculateStrategicScores(rows);
+    const clientsWithScores = calculateStrategicScores(transformedClients);
 
     res.json({
       success: true,
