@@ -288,9 +288,12 @@ router.get('/clients', async (req, res) => {
       ORDER BY c.created_at DESC
     `);
     
+    // Calculate strategic scores for all clients before returning
+    const clientsWithScores = calculateStrategicScores(rows);
+    
     res.json({
       success: true,
-      clients: rows
+      clients: clientsWithScores
     });
   } catch (error) {
     console.error('Error fetching clients:', error);
@@ -368,9 +371,12 @@ router.post('/clients', async (req, res) => {
       GROUP BY c.id
     `, [newClient.id]);
 
+    // Calculate strategic scores for the new client
+    const clientsWithScores = calculateStrategicScores(rows);
+
     res.status(201).json({
       success: true,
-      client: rows[0]
+      client: clientsWithScores[0]
     });
     
   } catch (error) {
@@ -464,9 +470,12 @@ router.put('/clients/:id', async (req, res) => {
       GROUP BY c.id
     `, [clientId]);
 
+    // Calculate strategic scores for the updated client
+    const clientsWithScores = calculateStrategicScores(rows);
+
     res.json({
       success: true,
-      client: rows[0]
+      client: clientsWithScores[0]
     });
     
   } catch (error) {
