@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { apiClient } from './api';
+import { getEnhancedClientCount } from './utils/clientUtils';
 
 const AIAdvisor = () => {
   const { clients } = usePortfolioStore();
@@ -177,7 +178,7 @@ const AIAdvisor = () => {
             </div>
             <div className="text-center">
               <p className="text-2xl font-bold">
-                {clients.filter(c => c.practiceArea && c.practiceArea.length > 0).length}
+                {getEnhancedClientCount(clients)}
               </p>
               <p className="text-sm text-muted-foreground">Enhanced Clients</p>
             </div>

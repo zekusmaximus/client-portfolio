@@ -33,16 +33,11 @@ function calculateStrategicScores(clients) {
 
     // Growth Score (CAGR normalised 0–10)
     const initialRevenue = parseFloat(client.revenue?.['2023']) || 1;
-    const finalRevenue = parseFloat(client.revenue?.['2025']) || 0;
+    const finalRevenue = parseFloat(client.revenue?.['2025']) || 1; // Changed from 0 to 1 to prevent 0 default
     const cagr = initialRevenue > 0 ? Math.pow(finalRevenue / initialRevenue, 1 / 2) - 1 : 0;
     const growthScore = Math.max(0, Math.min(10, (cagr + 0.5) * 10));
 
-    // Efficiency Score (Revenue / hour)
-    const timeCommitment = parseFloat(client.timeCommitment) || 1;
-    const efficiencyScore = timeCommitment > 0 ?
-      Math.min(10, (avgRevenue / timeCommitment) / 1000) : 0;
-
-    // Strategic Value (removed strategic fit score)
+    // Strategic Value (removed efficiency score, redistributed weights)
     const relationshipStrength = parseFloat(client.relationshipStrength) || 5;
     const renewalProbability = parseFloat(client.renewalProbability) || 0.5;
 
@@ -53,11 +48,10 @@ function calculateStrategicScores(clients) {
     }[client.conflictRisk] || 1;
 
     const strategicValue = (
-      (revenueScore * 0.35) +           // Increased from 0.30
-      (growthScore * 0.25) +           // Increased from 0.20
-      (relationshipStrength * 0.25) +  // Increased from 0.20
-      (renewalProbability * 10 * 0.10) + // Same weight
-      (efficiencyScore * 0.05)         // Same weight
+      (revenueScore * 0.45) +           // Increased from 0.35 (added 5% from efficiency + 5% from growth)
+      (growthScore * 0.20) +           // Decreased from 0.25 (moved 5% to revenue)
+      (relationshipStrength * 0.25) +  // Same weight
+      (renewalProbability * 10 * 0.10) // Same weight
     ) - conflictPenalty;
 
     return {
@@ -65,7 +59,6 @@ function calculateStrategicScores(clients) {
       averageRevenue: Math.round(avgRevenue),
       revenueScore: Math.round(revenueScore * 100) / 100,
       growthScore: Math.round(growthScore * 100) / 100,
-      efficiencyScore: Math.round(efficiencyScore * 100) / 100,
       strategicValue: Math.max(0, Math.round(strategicValue * 100) / 100),
     };
   });

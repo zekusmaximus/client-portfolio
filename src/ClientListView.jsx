@@ -12,9 +12,14 @@ import {
   Target,
   Shield,
   Building,
-  Trash2
+  Trash2,
+  User,
+  Clock,
+  Heart,
+  Zap
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
+import { isClientEnhanced, getEnhancedClientCount, getEnhancementRate } from './utils/clientUtils';
 
 const ClientListView = () => {
   const {
@@ -31,6 +36,8 @@ const ClientListView = () => {
 
   // Filter and sort clients
   const filteredAndSortedClients = useMemo(() => {
+    const { getClientRevenue } = usePortfolioStore.getState();
+    
     return clients
         .filter(client =>
           client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -39,8 +46,23 @@ const ClientListView = () => {
           ))
         )
         .sort((a, b) => {
-          const aValue = a[sortBy] || 0;
-          const bValue = b[sortBy] || 0;
+          let aValue, bValue;
+
+          // Handle different sort criteria
+          if (sortBy === 'name') {
+            aValue = a.name || '';
+            bValue = b.name || '';
+          } else if (sortBy === 'strategicValue') {
+            aValue = parseFloat(a.strategicValue) || 0;
+            bValue = parseFloat(b.strategicValue) || 0;
+          } else if (sortBy === 'averageRevenue') {
+            aValue = getClientRevenue(a) || 0;
+            bValue = getClientRevenue(b) || 0;
+          } else {
+            // Fallback for other fields
+            aValue = a[sortBy] || 0;
+            bValue = b[sortBy] || 0;
+          }
 
           if (sortOrder === 'asc') {
             if (sortBy === 'name') return aValue.localeCompare(bValue);
@@ -195,30 +217,22 @@ const ClientListView = () => {
               </div>
             </CardHeader>
             
-            <CardContent className="space-y-3">
-              {/* Key Metrics */}
-              <div className="grid grid-cols-2 gap-3 text-sm">
+            <CardContent className="space-y-4">
+              {/* Top Row - Revenue and Strategic Value */}
+              <div className="grid grid-cols-2 gap-3">
                 <div className="flex items-center gap-2">
                   <DollarSign className="h-4 w-4 text-green-500" />
                   <div>
-                    <p className="text-muted-foreground">2025 Revenue</p>
-                    <p className="font-semibold">${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">2025 Revenue</p>
+                    <p className="font-semibold text-sm">${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Target className="h-4 w-4 text-purple-500" />
                   <div>
-                    <p className="text-muted-foreground">Strategic Value</p>
-                    <p className="font-semibold">{(client.strategicValue || 0).toFixed(1)}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-orange-500" />
-                  <div>
-                    <p className="text-muted-foreground">Renewal</p>
-                    <p className="font-semibold">{Math.round((client.renewalProbability || 0) * 100)}%</p>
+                    <p className="text-xs text-muted-foreground">Strategic Value</p>
+                    <p className="font-semibold text-sm">{(client.strategicValue || 0).toFixed(1)}</p>
                   </div>
                 </div>
               </div>
@@ -245,6 +259,63 @@ const ClientListView = () => {
                 </div>
               )}
 
+              {/* Primary Lobbyist */}
+              {client.primary_lobbyist && (
+                <div className="flex items-center gap-2">
+                  <User className="h-4 w-4 text-blue-500" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Primary Lobbyist</p>
+                    <p className="font-medium text-sm">{client.primary_lobbyist}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Interaction Frequency */}
+              {client.interaction_frequency && (
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-orange-500" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Interaction Frequency</p>
+                    <p className="font-medium text-sm">{client.interaction_frequency}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Relationship Metrics */}
+              {(client.relationshipStrength || client.relationship_intensity) && (
+                <div>
+                  <div className="flex items-center gap-1 mb-2">
+                    <Heart className="h-3 w-3 text-red-500" />
+                    <span className="text-xs text-muted-foreground">Relationship Metrics</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    {client.relationshipStrength && (
+                      <div>
+                        <p className="text-xs text-muted-foreground">Strength</p>
+                        <div className="flex items-center gap-1">
+                          <div className="flex-1 bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-red-500 h-2 rounded-full transition-all duration-300"
+                              style={{ width: `${(client.relationshipStrength / 10) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium">{client.relationshipStrength}/10</span>
+                        </div>
+                      </div>
+                    )}
+                    {client.relationship_intensity && (
+                      <div>
+                        <p className="text-xs text-muted-foreground">Intensity</p>
+                        <div className="flex items-center gap-1">
+                          <Zap className="h-3 w-3 text-yellow-500" />
+                          <span className="text-xs font-medium">{client.relationship_intensity}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Enhancement Status */}
               <div className="pt-2 border-t">
                 <div className="flex items-center justify-between">
@@ -253,13 +324,13 @@ const ClientListView = () => {
                   </span>
                   <Badge 
                     variant={
-                      client.practiceArea && client.practiceArea.length > 0 
+                      isClientEnhanced(client) 
                         ? "default" 
                         : "secondary"
                     }
                     className="text-xs"
                   >
-                    {client.practiceArea && client.practiceArea.length > 0 
+                    {isClientEnhanced(client) 
                       ? "Enhanced" 
                       : "Basic"
                     }
@@ -292,13 +363,13 @@ const ClientListView = () => {
             </div>
             <div>
               <p className="text-2xl font-bold">
-                {clients.filter(c => c.practiceArea && c.practiceArea.length > 0).length}
+                {getEnhancedClientCount(clients)}
               </p>
               <p className="text-sm text-muted-foreground">Enhanced Clients</p>
             </div>
             <div>
               <p className="text-2xl font-bold">
-                {Math.round((clients.filter(c => c.practiceArea && c.practiceArea.length > 0).length / clients.length) * 100)}%
+                {getEnhancementRate(clients)}%
               </p>
               <p className="text-sm text-muted-foreground">Enhancement Rate</p>
             </div>

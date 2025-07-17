@@ -192,7 +192,7 @@ const usePortfolioStore = create(
         return {
           name: clientData.name || '',
           status: clientData.status || 'Prospect',
-          practice_area: clientData.practice_area || [],
+          practiceArea: clientData.practiceArea || [],
           relationship_strength: clientData.relationship_strength || 5,
           conflict_risk: clientData.conflict_risk || 'Medium',
           renewal_probability: clientData.renewal_probability || 0.7,

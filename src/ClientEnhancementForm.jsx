@@ -41,7 +41,7 @@ const ClientEnhancementForm = ({ onClose }) => {
   const [formData, setFormData] = useState({
     name: '',
     status: 'Prospect',
-    practice_area: [],
+    practiceArea: [],
     relationship_strength: 5,
     conflict_risk: 'Medium',
     primary_lobbyist: '',
@@ -85,7 +85,7 @@ const ClientEnhancementForm = ({ onClose }) => {
       setFormData({
         name: client.name || '',
         status: client.status || 'Prospect',
-        practice_area: client.practice_area || [],
+        practiceArea: client.practiceArea || [],
         relationship_strength: client.relationship_strength || 5,
         conflict_risk: client.conflict_risk || 'Medium',
         primary_lobbyist: client.primary_lobbyist || '',
@@ -102,7 +102,7 @@ const ClientEnhancementForm = ({ onClose }) => {
       setFormData({
         name: '',
         status: 'Prospect',
-        practice_area: [],
+        practiceArea: [],
         relationship_strength: 5,
         conflict_risk: 'Medium',
         primary_lobbyist: '',
@@ -120,9 +120,9 @@ const ClientEnhancementForm = ({ onClose }) => {
   const handlePracticeAreaChange = (area, checked) => {
     setFormData(prev => ({
       ...prev,
-      practice_area: checked 
-        ? [...prev.practice_area, area]
-        : prev.practice_area.filter(a => a !== area)
+      practiceArea: checked 
+        ? [...prev.practiceArea, area]
+        : prev.practiceArea.filter(a => a !== area)
     }));
   };
 
@@ -172,8 +172,8 @@ const ClientEnhancementForm = ({ onClose }) => {
       newErrors.name = 'Client name is required';
     }
     
-    if (formData.practice_area.length === 0) {
-      newErrors.practice_area = 'Please select at least one practice area';
+    if (formData.practiceArea.length === 0) {
+      newErrors.practiceArea = 'Please select at least one practice area';
     }
 
     // Validate revenue entries
@@ -287,10 +287,10 @@ const ClientEnhancementForm = ({ onClose }) => {
               <Building className="h-4 w-4" />
               Practice Areas *
             </Label>
-            {errors.practice_area && (
+            {errors.practiceArea && (
               <p className="text-sm text-red-500 flex items-center gap-1">
                 <AlertCircle className="h-3 w-3" />
-                {errors.practice_area}
+                {errors.practiceArea}
               </p>
             )}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -298,7 +298,7 @@ const ClientEnhancementForm = ({ onClose }) => {
                 <div key={area} className="flex items-center space-x-2">
                   <Checkbox
                     id={area}
-                    checked={formData.practice_area.includes(area)}
+                    checked={formData.practiceArea.includes(area)}
                     onCheckedChange={(checked) => handlePracticeAreaChange(area, checked)}
                   />
                   <Label htmlFor={area} className="text-sm">{area}</Label>
@@ -306,7 +306,7 @@ const ClientEnhancementForm = ({ onClose }) => {
               ))}
             </div>
             <div className="flex flex-wrap gap-2 mt-2">
-              {formData.practice_area.map((area) => (
+              {formData.practiceArea.map((area) => (
                 <Badge key={area} variant="secondary">
                   {area}
                 </Badge>

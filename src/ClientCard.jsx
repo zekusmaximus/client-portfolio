@@ -4,6 +4,7 @@ import { Badge } from './components/ui/badge';
 import usePortfolioStore from './portfolioStore';
 import { Button } from './components/ui/button';
 import ConfirmationDialog from './components/ui/confirmation-dialog';
+import { isClientEnhanced } from './utils/clientUtils';
 import {
   Pencil2Icon,
   PersonIcon,
@@ -169,6 +170,20 @@ export default function ClientCard({ client }) {
             </div>
             <Badge variant="outline" className="text-xs">
               {teamCount === 0 ? 'Not Assigned' : `${teamCount} ${teamCount === 1 ? 'member' : 'members'}`}
+            </Badge>
+          </div>
+
+          {/* Enhancement Status */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+              <StarIcon className="w-3 h-3" />
+              <span>Enhancement</span>
+            </div>
+            <Badge 
+              variant={isClientEnhanced(client) ? "default" : "secondary"} 
+              className="text-xs"
+            >
+              {isClientEnhanced(client) ? "Enhanced" : "Basic"}
             </Badge>
           </div>
 
