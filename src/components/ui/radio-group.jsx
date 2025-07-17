@@ -2,6 +2,10 @@ import React from 'react';
 import { clsx } from 'clsx';
 
 const RadioGroup = React.forwardRef(({ className, value, onValueChange, children, ...props }, ref) => {
+  const handleValueChange = (selectedValue) => {
+    onValueChange?.(selectedValue);
+  };
+
   return (
     <div
       ref={ref}
@@ -11,10 +15,19 @@ const RadioGroup = React.forwardRef(({ className, value, onValueChange, children
     >
       {React.Children.map(children, (child) => {
         if (React.isValidElement(child)) {
-          return React.cloneElement(child, {
-            checked: child.props.value === value,
-            onCheckedChange: () => onValueChange?.(child.props.value),
+          // Recursively update RadioGroupItem components within the child
+          const updatedChild = React.cloneElement(child, {
+            children: React.Children.map(child.props.children, (grandChild) => {
+              if (React.isValidElement(grandChild) && grandChild.type === RadioGroupItem) {
+                return React.cloneElement(grandChild, {
+                  checked: grandChild.props.value === value,
+                  onCheckedChange: handleValueChange,
+                });
+              }
+              return grandChild;
+            })
           });
+          return updatedChild;
         }
         return child;
       })}

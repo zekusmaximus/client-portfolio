@@ -374,6 +374,7 @@ const ClientEnhancementForm = ({ onClose }) => {
               Conflict Risk
             </Label>
             <RadioGroup 
+              key={`conflict-risk-${formData.conflict_risk}`}
               value={formData.conflict_risk} 
               onValueChange={(value) => setFormData(prev => ({ ...prev, conflict_risk: value }))}
             >
@@ -466,6 +467,7 @@ const ClientEnhancementForm = ({ onClose }) => {
           <div className="space-y-3">
             <Label className="text-sm font-medium">Interaction Frequency</Label>
             <RadioGroup
+              key={`interaction-freq-${formData.interaction_frequency}`}
               value={formData.interaction_frequency}
               onValueChange={(value) => setFormData(prev => ({ ...prev, interaction_frequency: value }))}
               className="flex flex-wrap gap-x-4 gap-y-2"
