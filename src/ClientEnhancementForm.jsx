@@ -176,7 +176,7 @@ const ClientEnhancementForm = ({ onClose }) => {
       newErrors.practiceArea = 'Please select at least one practice area';
     }
 
-    // Validate revenue entries
+    // Validate revenue entries - only validate if both year and amount are provided
     formData.revenues.forEach((rev, index) => {
       if (rev.year && !rev.revenue_amount) {
         newErrors[`revenue_${index}`] = 'Revenue amount is required when year is specified';
@@ -187,11 +187,22 @@ const ClientEnhancementForm = ({ onClose }) => {
     });
     
     setErrors(newErrors);
+    
+    // Log validation for debugging
+    if (Object.keys(newErrors).length > 0) {
+      console.log('Validation errors:', newErrors);
+    }
+    
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSave = async () => {
-    if (!validateForm()) return;
+    console.log('handleSave called, formData:', formData);
+    
+    if (!validateForm()) {
+      console.log('Validation failed, stopping save');
+      return;
+    }
     
     setIsSaving(true);
     
@@ -209,17 +220,23 @@ const ClientEnhancementForm = ({ onClose }) => {
         revenues: cleanRevenues
       };
 
+      console.log('Sending client data:', clientData);
+      console.log('Is edit mode:', isEditMode);
+
       if (isEditMode) {
+        console.log('Updating client:', client.id);
         await updateClient(client.id, clientData);
       } else {
+        console.log('Adding new client');
         await addClient(clientData);
       }
       
+      console.log('Save successful, closing modal');
       closeClientModal();
       
     } catch (error) {
       console.error('Error saving client:', error);
-      setErrors({ general: 'Failed to save client data. Please try again.' });
+      setErrors({ general: `Failed to save client data: ${error.message}` });
     } finally {
       setIsSaving(false);
     }

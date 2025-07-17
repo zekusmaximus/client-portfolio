@@ -8,7 +8,7 @@ if (!connectionString) {
 // Render requires SSL with “rejectUnauthorized” off
 const pool = new Pool({
   connectionString,
-  ssl: { rejectUnauthorized: false },
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
 pool.on('error', (err) => {

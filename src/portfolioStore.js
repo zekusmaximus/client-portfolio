@@ -45,7 +45,7 @@ const usePortfolioStore = create(
         if (clientsLoading) return;
         set({ clientsLoading: true, fetchError: null });
         try {
-          const response = await apiClient.get('/api/data/clients');
+          const response = await apiClient.get('/data/clients');
           const clients = response.clients || [];
           set({ clients, clientsLoading: false, fetchError: null });
         } catch (err) {
@@ -78,7 +78,7 @@ const usePortfolioStore = create(
       addClient: async (clientData) => {
         try {
           const formattedData = get().formatClientForAPI(clientData);
-          const response = await apiClient.post('/api/data/clients', formattedData);
+          const response = await apiClient.post('/data/clients', formattedData);
           // On success, re-fetch the entire list to ensure perfect sync with the DB
           await get().fetchClients();
           set({
@@ -96,7 +96,7 @@ const usePortfolioStore = create(
       updateClient: async (clientId, clientData) => {
         try {
           const formattedData = get().formatClientForAPI(clientData);
-          const response = await apiClient.put(`/api/data/clients/${clientId}`, formattedData);
+          const response = await apiClient.put(`/data/clients/${clientId}`, formattedData);
           // On success, re-fetch the entire list to ensure perfect sync with the DB
           await get().fetchClients();
           set({
@@ -113,7 +113,7 @@ const usePortfolioStore = create(
       // Delete existing client
       deleteClient: async (clientId) => {
         try {
-          await apiClient.del(`/api/clients/${clientId}`);
+          await apiClient.del(`/data/clients/${clientId}`);
           // On success, re-fetch the entire list to ensure perfect sync with the DB
           await get().fetchClients();
           set({
@@ -151,7 +151,7 @@ const usePortfolioStore = create(
         return {
           name: clientData.name || '',
           status: clientData.status || 'Prospect',
-          practiceArea: clientData.practiceArea || [],
+          practice_area: clientData.practiceArea || [],
           relationship_strength: clientData.relationship_strength || 5,
           conflict_risk: clientData.conflict_risk || 'Medium',
           renewal_probability: clientData.renewal_probability || 0.7,
