@@ -11,7 +11,10 @@ export default defineConfig({
     },
   },
   define: {
-    'process.env.VITE_API_BASE_URL': JSON.stringify('http://localhost:5000')
+    // Use environment variable if set, otherwise fallback to localhost for development
+    'process.env.VITE_API_BASE_URL': JSON.stringify(
+      process.env.VITE_API_BASE_URL || 'http://localhost:5000'
+    )
   }
 })
 
