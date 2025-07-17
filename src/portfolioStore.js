@@ -5,48 +5,8 @@ import { apiClient } from './api';
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
-      // Client data
-      clients: [
-        {
-          id: 'client_1',
-          name: 'Pfizer',
-          status: 'IF',
-          practiceArea: ['Healthcare', 'Corporate'],
-          relationshipStrength: 8,
-          conflictRisk: 'Low',
-          renewalProbability: 0.9,
-          strategicFitScore: 9,
-          strategicValue: 85.5,
-          revenues: [{ year: '2025', revenue_amount: '150000' }],
-          notes: 'High-value pharmaceutical client with strong relationship'
-        },
-        {
-          id: 'client_2',
-          name: 'Hartford Healthcare',
-          status: 'IF',
-          practiceArea: ['Healthcare'],
-          relationshipStrength: 7,
-          conflictRisk: 'Medium',
-          renewalProbability: 0.8,
-          strategicFitScore: 7,
-          strategicValue: 72.3,
-          revenues: [{ year: '2025', revenue_amount: '65000' }],
-          notes: 'Regional healthcare provider'
-        },
-        {
-          id: 'client_3',
-          name: 'Eversource',
-          status: 'IF',
-          practiceArea: ['Energy', 'Municipal'],
-          relationshipStrength: 6,
-          conflictRisk: 'Medium',
-          renewalProbability: 0.75,
-          strategicFitScore: 8,
-          strategicValue: 68.9,
-          revenues: [{ year: '2025', revenue_amount: '95000' }],
-          notes: 'Major utility company'
-        }
-      ],
+      // Client data - fetched from server, not persisted locally
+      clients: [],
       originalClients: [], // Keep original data for comparison
       clientsLoading: false,
       fetchError: null,
@@ -119,15 +79,15 @@ const usePortfolioStore = create(
         try {
           const formattedData = get().formatClientForAPI(clientData);
           const response = await apiClient.post('/api/data/clients', formattedData);
-          const newClient = response.client;
-          set((state) => ({
-            clients: [...state.clients, newClient],
+          // On success, re-fetch the entire list to ensure perfect sync with the DB
+          await get().fetchClients();
+          set({
             selectedClient: null,
             isModalOpen: false
-          }));
-          return newClient;
+          });
+          return response.client;
         } catch (err) {
-          console.error('Failed to add client', err);
+          console.error('Failed to add client:', err);
           throw err;
         }
       },
@@ -137,17 +97,15 @@ const usePortfolioStore = create(
         try {
           const formattedData = get().formatClientForAPI(clientData);
           const response = await apiClient.put(`/api/data/clients/${clientId}`, formattedData);
-          const updatedClient = response.client;
-          set((state) => ({
-            clients: state.clients.map(client =>
-              client.id === clientId ? updatedClient : client
-            ),
+          // On success, re-fetch the entire list to ensure perfect sync with the DB
+          await get().fetchClients();
+          set({
             selectedClient: null,
             isModalOpen: false
-          }));
-          return updatedClient;
+          });
+          return response.client;
         } catch (err) {
-          console.error('Failed to update client', err);
+          console.error('Failed to update client:', err);
           throw err;
         }
       },
@@ -156,13 +114,14 @@ const usePortfolioStore = create(
       deleteClient: async (clientId) => {
         try {
           await apiClient.del(`/api/clients/${clientId}`);
-          set((state) => ({
-            clients: state.clients.filter(client => client.id !== clientId),
+          // On success, re-fetch the entire list to ensure perfect sync with the DB
+          await get().fetchClients();
+          set({
             selectedClient: null,
             isModalOpen: false
-          }));
+          });
         } catch (err) {
-          console.error('Failed to delete client', err);
+          console.error('Failed to delete client:', err);
           throw err;
         }
       },
@@ -318,8 +277,8 @@ const usePortfolioStore = create(
     {
       name: 'portfolio-storage',
       partialize: (state) => ({
-        clients: state.clients,
-        originalClients: state.originalClients,
+        // Persist only non-authoritative, UI-specific state
+        // Removed clients and originalClients - these should come from server
         optimizationParams: state.optimizationParams,
         currentView: state.currentView,
         isModalOpen: state.isModalOpen,
