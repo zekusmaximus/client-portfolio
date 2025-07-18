@@ -10,6 +10,13 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LOBBYISTS } from './constants';
+import { 
+  validateClientForm, 
+  sanitizeFormData, 
+  getFieldError, 
+  validateRevenueEntry,
+  VALIDATION_RULES 
+} from './utils/validation';
 import {
   X,
   Users,
@@ -118,37 +125,52 @@ const ClientEnhancementForm = ({ onClose }) => {
   }, [client]);
 
   const handlePracticeAreaChange = (area, checked) => {
-    setFormData(prev => ({
-      ...prev,
-      practiceArea: checked 
-        ? [...prev.practiceArea, area]
-        : prev.practiceArea.filter(a => a !== area)
-    }));
+    const newPracticeArea = checked 
+      ? [...formData.practiceArea, area]
+      : formData.practiceArea.filter(a => a !== area);
+    
+    handleFieldChange('practiceArea', newPracticeArea);
   };
 
   const handleLobbyistTeamChange = (lobbyist, checked) => {
+    const newTeam = checked 
+      ? [...formData.lobbyist_team, lobbyist]
+      : formData.lobbyist_team.filter(l => l !== lobbyist);
+    
     setFormData(prev => ({
       ...prev,
-      lobbyist_team: checked 
-        ? [...prev.lobbyist_team, lobbyist]
-        : prev.lobbyist_team.filter(l => l !== lobbyist)
+      lobbyist_team: newTeam
     }));
   };
 
   const handleSliderChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: Array.isArray(value) ? value[0] : value
-    }));
+    const numericValue = Array.isArray(value) ? value[0] : value;
+    handleFieldChange(field, numericValue);
   };
 
   const handleRevenueChange = (index, field, value) => {
+    const updatedRevenues = formData.revenues.map((rev, i) => 
+      i === index ? { ...rev, [field]: value } : rev
+    );
+    
     setFormData(prev => ({
       ...prev,
-      revenues: prev.revenues.map((rev, i) => 
-        i === index ? { ...rev, [field]: value } : rev
-      )
+      revenues: updatedRevenues
     }));
+    
+    // Validate the specific revenue entry
+    const revenueErrors = validateRevenueEntry(updatedRevenues[index], index);
+    if (Object.keys(revenueErrors).length > 0) {
+      setErrors(prev => ({
+        ...prev,
+        [`revenue_${index}`]: Object.values(revenueErrors).join(', ')
+      }));
+    } else {
+      setErrors(prev => {
+        const { [`revenue_${index}`]: removed, ...rest } = prev;
+        return rest;
+      });
+    }
   };
 
   const addRevenueEntry = () => {
@@ -166,34 +188,26 @@ const ClientEnhancementForm = ({ onClose }) => {
   };
 
   const validateForm = () => {
-    const newErrors = {};
-    
-    if (!formData.name.trim()) {
-      newErrors.name = 'Client name is required';
-    }
-    
-    if (formData.practiceArea.length === 0) {
-      newErrors.practiceArea = 'Please select at least one practice area';
-    }
-
-    // Validate revenue entries - only validate if both year and amount are provided
-    formData.revenues.forEach((rev, index) => {
-      if (rev.year && !rev.revenue_amount) {
-        newErrors[`revenue_${index}`] = 'Revenue amount is required when year is specified';
-      }
-      if (rev.revenue_amount && !rev.year) {
-        newErrors[`revenue_${index}`] = 'Year is required when revenue amount is specified';
-      }
-    });
-    
-    setErrors(newErrors);
+    const validationErrors = validateClientForm(formData);
+    setErrors(validationErrors);
     
     // Log validation for debugging
-    if (Object.keys(newErrors).length > 0) {
-      console.log('Validation errors:', newErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      console.log('Validation errors:', validationErrors);
     }
     
-    return Object.keys(newErrors).length === 0;
+    return Object.keys(validationErrors).length === 0;
+  };
+
+  // Real-time validation for individual fields
+  const handleFieldChange = (fieldName, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [fieldName]: value
+    }));
+    
+    // Validate field in real-time
+    setErrors(prev => getFieldError(fieldName, value, prev));
   };
 
   const handleSave = async () => {
@@ -207,8 +221,11 @@ const ClientEnhancementForm = ({ onClose }) => {
     setIsSaving(true);
     
     try {
+      // Sanitize form data before sending
+      const sanitizedData = sanitizeFormData(formData);
+      
       // Clean up revenues - remove empty entries
-      const cleanRevenues = formData.revenues.filter(rev => 
+      const cleanRevenues = sanitizedData.revenues.filter(rev => 
         rev.year && rev.revenue_amount
       ).map(rev => ({
         year: parseInt(rev.year),
@@ -216,11 +233,11 @@ const ClientEnhancementForm = ({ onClose }) => {
       }));
 
       const clientData = {
-        ...formData,
+        ...sanitizedData,
         revenues: cleanRevenues
       };
 
-      console.log('Sending client data:', clientData);
+      console.log('Sending sanitized client data:', clientData);
       console.log('Is edit mode:', isEditMode);
 
       if (isEditMode) {
@@ -236,6 +253,24 @@ const ClientEnhancementForm = ({ onClose }) => {
       
     } catch (error) {
       console.error('Error saving client:', error);
+      
+      // Handle validation errors from backend
+      if (error.message.includes('Validation failed') || error.message.includes('400')) {
+        try {
+          const errorData = JSON.parse(error.message.split(' – ')[1]);
+          if (errorData.details) {
+            const backendErrors = {};
+            errorData.details.forEach(detail => {
+              backendErrors[detail.field] = detail.message;
+            });
+            setErrors(backendErrors);
+            return;
+          }
+        } catch (parseError) {
+          // If we can't parse the error, fall back to general error
+        }
+      }
+      
       setErrors({ general: `Failed to save client data: ${error.message}` });
     } finally {
       setIsSaving(false);
@@ -270,8 +305,9 @@ const ClientEnhancementForm = ({ onClose }) => {
               <Input
                 id="name"
                 value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                onChange={(e) => handleFieldChange('name', e.target.value)}
                 placeholder="Enter client name"
+                className={errors.name ? 'border-red-500 focus:border-red-500' : ''}
               />
               {errors.name && (
                 <p className="text-sm text-red-500 flex items-center gap-1">
@@ -282,19 +318,27 @@ const ClientEnhancementForm = ({ onClose }) => {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="status">Status</Label>
-              <Select value={formData.status} onValueChange={(value) => setFormData(prev => ({ ...prev, status: value }))}>
-                <SelectTrigger>
+              <Label htmlFor="status">Status *</Label>
+              <Select 
+                value={formData.status} 
+                onValueChange={(value) => handleFieldChange('status', value)}
+              >
+                <SelectTrigger className={errors.status ? 'border-red-500 focus:border-red-500' : ''}>
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="Active">Active</SelectItem>
                   <SelectItem value="Prospect">Prospect</SelectItem>
-                  <SelectItem value="IF">In Force</SelectItem>
-                  <SelectItem value="P">Proposal</SelectItem>
-                  <SelectItem value="D">Done</SelectItem>
-                  <SelectItem value="H">Hold</SelectItem>
+                  <SelectItem value="Inactive">Inactive</SelectItem>
+                  <SelectItem value="Former">Former</SelectItem>
                 </SelectContent>
               </Select>
+              {errors.status && (
+                <p className="text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  {errors.status}
+                </p>
+              )}
             </div>
           </div>
 
@@ -393,7 +437,7 @@ const ClientEnhancementForm = ({ onClose }) => {
             <RadioGroup 
               key={`conflict-risk-${formData.conflict_risk}`}
               value={formData.conflict_risk} 
-              onValueChange={(value) => setFormData(prev => ({ ...prev, conflict_risk: value }))}
+              onValueChange={(value) => handleFieldChange('conflict_risk', value)}
             >
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="Low" id="low" />
@@ -408,6 +452,12 @@ const ClientEnhancementForm = ({ onClose }) => {
                 <Label htmlFor="high">High - Significant conflict potential</Label>
               </div>
             </RadioGroup>
+            {errors.conflict_risk && (
+              <p className="text-sm text-red-500 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {errors.conflict_risk}
+              </p>
+            )}
           </div>
 
           {/* Lobbyist Assignment */}
@@ -420,8 +470,11 @@ const ClientEnhancementForm = ({ onClose }) => {
             {/* Primary Lobbyist */}
             <div className="space-y-2">
               <Label className="text-sm font-medium">Primary Lobbyist</Label>
-              <Select value={formData.primary_lobbyist} onValueChange={(value) => setFormData(prev => ({ ...prev, primary_lobbyist: value }))}>
-                <SelectTrigger>
+              <Select 
+                value={formData.primary_lobbyist} 
+                onValueChange={(value) => handleFieldChange('primary_lobbyist', value)}
+              >
+                <SelectTrigger className={errors.primary_lobbyist ? 'border-red-500 focus:border-red-500' : ''}>
                   <SelectValue placeholder="Select primary lobbyist..." />
                 </SelectTrigger>
                 <SelectContent>
@@ -433,13 +486,22 @@ const ClientEnhancementForm = ({ onClose }) => {
                   ))}
                 </SelectContent>
               </Select>
+              {errors.primary_lobbyist && (
+                <p className="text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  {errors.primary_lobbyist}
+                </p>
+              )}
             </div>
 
             {/* Client Originator */}
             <div className="space-y-2">
               <Label className="text-sm font-medium">Client Originator</Label>
-              <Select value={formData.client_originator} onValueChange={(value) => setFormData(prev => ({ ...prev, client_originator: value }))}>
-                <SelectTrigger>
+              <Select 
+                value={formData.client_originator} 
+                onValueChange={(value) => handleFieldChange('client_originator', value)}
+              >
+                <SelectTrigger className={errors.client_originator ? 'border-red-500 focus:border-red-500' : ''}>
                   <SelectValue placeholder="Select client originator..." />
                 </SelectTrigger>
                 <SelectContent>
@@ -451,6 +513,12 @@ const ClientEnhancementForm = ({ onClose }) => {
                   ))}
                 </SelectContent>
               </Select>
+              {errors.client_originator && (
+                <p className="text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  {errors.client_originator}
+                </p>
+              )}
             </div>
 
             {/* Lobbyist Team */}
@@ -482,11 +550,11 @@ const ClientEnhancementForm = ({ onClose }) => {
 
           {/* Interaction Frequency */}
           <div className="space-y-3">
-            <Label className="text-sm font-medium">Interaction Frequency</Label>
+            <Label className="text-sm font-medium">Interaction Frequency *</Label>
             <RadioGroup
               key={`interaction-freq-${formData.interaction_frequency}`}
               value={formData.interaction_frequency}
-              onValueChange={(value) => setFormData(prev => ({ ...prev, interaction_frequency: value }))}
+              onValueChange={(value) => handleFieldChange('interaction_frequency', value)}
               className="flex flex-wrap gap-x-4 gap-y-2"
             >
               {['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed'].map((freq) => (
@@ -496,12 +564,18 @@ const ClientEnhancementForm = ({ onClose }) => {
                 </div>
               ))}
             </RadioGroup>
+            {errors.interaction_frequency && (
+              <p className="text-sm text-red-500 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {errors.interaction_frequency}
+              </p>
+            )}
           </div>
 
           {/* Relationship Intensity */}
           <div className="space-y-3">
             <Label className="text-sm font-medium">
-              Relationship Intensity: {formData.relationship_intensity}/10
+              Relationship Intensity: {formData.relationship_intensity}/10 *
             </Label>
             <Slider
               value={[formData.relationship_intensity]}
@@ -511,13 +585,19 @@ const ClientEnhancementForm = ({ onClose }) => {
               step={1}
               className="w-full"
             />
+            {errors.relationship_intensity && (
+              <p className="text-sm text-red-500 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {errors.relationship_intensity}
+              </p>
+            )}
           </div>
 
           {/* Relationship Strength */}
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <Heart className="h-4 w-4" />
-              Relationship Strength: {formData.relationship_strength}/10
+              Relationship Strength: {formData.relationship_strength}/10 *
             </Label>
             <Slider
               value={[formData.relationship_strength]}
@@ -531,6 +611,12 @@ const ClientEnhancementForm = ({ onClose }) => {
               <span>Weak (1)</span>
               <span>Strong (10)</span>
             </div>
+            {errors.relationship_strength && (
+              <p className="text-sm text-red-500 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {errors.relationship_strength}
+              </p>
+            )}
           </div>
 
 
@@ -543,10 +629,17 @@ const ClientEnhancementForm = ({ onClose }) => {
             </Label>
             <Textarea
               value={formData.notes}
-              onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
+              onChange={(e) => handleFieldChange('notes', e.target.value)}
               placeholder="Additional notes about this client relationship, strategic considerations, etc."
               rows={4}
+              className={errors.notes ? 'border-red-500 focus:border-red-500' : ''}
             />
+            {errors.notes && (
+              <p className="text-sm text-red-500 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {errors.notes}
+              </p>
+            )}
           </div>
 
           {/* Error Message */}

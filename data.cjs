@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('./db.cjs');
 const auth = require('./middleware/auth.cjs');
+const { body, validationResult } = require('express-validator');
+const { sanitizeRequestBody } = require('./middleware/validation.cjs');
 const {
   processCSVData,
   validateClientData,
@@ -11,6 +13,7 @@ const {
 
 // Apply authentication middleware to all routes
 router.use(auth);
+router.use(sanitizeRequestBody);
 
 // Helper to calculate strategic value for a single client
 function calculateStrategicValue(client) {
@@ -41,8 +44,62 @@ function calculateStrategicValue(client) {
   return Math.max(0, Math.min(12, value));
 }
 
+// Validation for CSV processing
+const csvValidationRules = [
+  body('csvData')
+    .isArray({ min: 1 })
+    .withMessage('CSV data must be a non-empty array')
+    .custom((csvData) => {
+      if (!Array.isArray(csvData)) return true;
+      
+      // Validate each row has required structure
+      for (let i = 0; i < csvData.length; i++) {
+        const row = csvData[i];
+        if (!row || typeof row !== 'object') {
+          throw new Error(`Row ${i + 1}: Must be an object`);
+        }
+        
+        // Check for required fields (name is minimum requirement)
+        if (!row.name || typeof row.name !== 'string' || !row.name.trim()) {
+          throw new Error(`Row ${i + 1}: Name is required and must be a non-empty string`);
+        }
+        
+        // Validate name length and pattern
+        if (row.name.trim().length > 255) {
+          throw new Error(`Row ${i + 1}: Name must not exceed 255 characters`);
+        }
+        
+        if (!/^[a-zA-Z0-9\s\-\.,&'()]+$/.test(row.name.trim())) {
+          throw new Error(`Row ${i + 1}: Name contains invalid characters`);
+        }
+      }
+      
+      return true;
+    })
+];
+
+// Handle validation errors for CSV
+const handleCSVValidationErrors = (req, res, next) => {
+  const errors = validationResult(req);
+  
+  if (!errors.isEmpty()) {
+    const errorMessages = errors.array().map(error => ({
+      field: error.param,
+      message: error.msg,
+      value: error.value
+    }));
+    
+    return res.status(400).json({
+      error: 'CSV validation failed',
+      details: errorMessages
+    });
+  }
+  
+  next();
+};
+
 // POST /api/data/process-csv
-router.post('/process-csv', async (req, res) => {
+router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async (req, res) => {
   const client = db.pool.connect();
   
   try {
