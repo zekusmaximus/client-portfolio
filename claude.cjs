@@ -44,7 +44,7 @@ router.post('/strategic-advice', async (req, res) => {
     const prompt = createStrategicPrompt(portfolioSummary, query, context);
 
     const response = await anthropic.messages.create({
-      model: 'claude-3-sonnet-20240229',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 2000,
       temperature: 0.3,
       messages: [{ role: 'user', content: prompt }],
@@ -82,7 +82,7 @@ router.post('/analyze-portfolio', async (req, res) => {
     const analysisPrompt = createAnalysisPrompt(portfolioSummary);
 
     const response = await anthropic.messages.create({
-      model: 'claude-3-sonnet-20240229',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 2500,
       temperature: 0.2,
       messages: [{ role: 'user', content: analysisPrompt }],
@@ -130,7 +130,7 @@ router.post('/client-recommendations', async (req, res) => {
     const clientPrompt = createClientRecommendationPrompt(client, portfolioContext);
 
     const response = await anthropic.messages.create({
-      model: 'claude-3-sonnet-20240229',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 1500,
       temperature: 0.3,
       messages: [{ role: 'user', content: clientPrompt }],
