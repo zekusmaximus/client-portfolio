@@ -14,6 +14,22 @@ lerna-debug.log*
 .env.production.local
 .env.*.local
 
+# Keep example files but ignore actual env files
+!.env.*.example
+
+# SSL/TLS certificates and keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+ssl/
+certs/
+
+# Security reports
+security-report.json
+audit-results.json
+
 # Build outputs
 dist/
 build/

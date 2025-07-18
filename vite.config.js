@@ -3,18 +3,36 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
+export default defineConfig(({ mode }) => {
+  // Ensure HTTPS in production
+  const getApiBaseUrl = () => {
+    const envUrl = process.env.VITE_API_BASE_URL;
+    
+    if (mode === 'production') {
+      if (!envUrl) {
+        throw new Error('VITE_API_BASE_URL must be set for production builds');
+      }
+      // Enforce HTTPS for production
+      if (!envUrl.startsWith('https://')) {
+        throw new Error('Production API URL must use HTTPS protocol');
+      }
+      return envUrl;
+    }
+    
+    // Development fallback
+    return envUrl || 'http://localhost:5000';
+  };
+
+  return {
+    plugins: [react()],
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+      },
     },
-  },
-  define: {
-    // Use environment variable if set, otherwise fallback to localhost for development
-    'process.env.VITE_API_BASE_URL': JSON.stringify(
-      process.env.VITE_API_BASE_URL || 'http://localhost:5000'
-    )
-  }
+    define: {
+      'process.env.VITE_API_BASE_URL': JSON.stringify(getApiBaseUrl())
+    }
+  };
 })
 

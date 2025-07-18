@@ -1,7 +1,20 @@
 // src/api.js
 // Centralized API client utility for the frontend
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+// Get API base URL and validate HTTPS in production
+const getApiBaseUrl = () => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
+  
+  // Enforce HTTPS in production environment
+  if (import.meta.env.PROD && baseUrl && !baseUrl.startsWith('https://')) {
+    console.error('Security Warning: API URL must use HTTPS in production');
+    throw new Error('Insecure API configuration: HTTPS required in production');
+  }
+  
+  return baseUrl;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 /**
  * Simple wrapper around fetch for POST requests to the backend API.

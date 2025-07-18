@@ -6,8 +6,14 @@
     "start": "node server.cjs",
     "dev": "vite",
     "build": "vite build",
+    "build:prod": "NODE_ENV=production vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "security:audit": "npm audit",
+    "security:audit-fix": "npm audit fix",
+    "security:check": "node scripts/security-check.js",
+    "security:check-ssl": "node -e \"console.log('Checking SSL configuration...'); const url = process.env.VITE_API_BASE_URL; if (process.env.NODE_ENV === 'production' && url && !url.startsWith('https://')) { console.error('❌ Production API URL must use HTTPS'); process.exit(1); } else { console.log('✅ SSL configuration is valid'); }\"",
+    "deploy:check": "npm run security:check && npm run lint && npm run build:prod"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.5.0",
