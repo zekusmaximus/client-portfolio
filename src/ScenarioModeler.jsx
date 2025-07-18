@@ -217,7 +217,7 @@ const ScenarioModeler = () => {
             </CardHeader>
             <CardContent>
               <p className="text-muted-foreground mb-4">
-                Model the impact of attorney departure or retirement on your practice.
+                Model the impact of lobbyist departure or retirement on your practice.
               </p>
               
               {/* Departing Lobbyist Selection */}
