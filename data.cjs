@@ -147,49 +147,163 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     // Calculate strategic scores
     const clientsWithScores = calculateStrategicScores(clients);
     
-    // Save to database
+    // Save to database using upsert logic
     await (await client).query('BEGIN');
     
     const savedClients = [];
+    let updatedCount = 0;
+    let insertedCount = 0;
     
     for (const clientData of clientsWithScores) {
-      // Insert client record
-      const { rows: [newClient] } = await (await client).query(`
-        INSERT INTO clients (
-          name, status, practice_area, relationship_strength, conflict_risk,
-          renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-          client_originator, lobbyist_team, interaction_frequency, relationship_intensity
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        RETURNING *
-      `, [
-        clientData.name || '',
-        clientData.status || 'H',
-        clientData.practiceArea || [],
-        clientData.relationshipStrength || 5,
-        clientData.conflictRisk || 'Medium',
-        clientData.renewalProbability || 0.7,
-        clientData.strategicFitScore || 5,
-        clientData.notes || '',
-        clientData.primaryLobbyist || '',
-        clientData.clientOriginator || '',
-        clientData.lobbyistTeam || [],
-        clientData.interactionFrequency || '',
-        clientData.relationshipIntensity || 5
-      ]);
+      // Check if client exists by name (case-insensitive)
+      const { rows: existingClients } = await (await client).query(`
+        SELECT id, name, practice_area, relationship_strength, conflict_risk,
+               renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+               client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+        FROM clients 
+        WHERE LOWER(name) = LOWER($1) AND user_id = $2
+      `, [clientData.name || '', req.user.id]);
 
-      // Insert revenue records
+      let currentClient;
+      
+      if (existingClients.length > 0) {
+        // Client exists - UPDATE with CSV data, preserve manual enhancements
+        const existingClient = existingClients[0];
+        
+        // Preserve manual enhancements (only if they were manually set and differ from defaults)
+        const preservedPracticeArea = existingClient.practice_area && existingClient.practice_area.length > 0 
+          ? existingClient.practice_area 
+          : clientData.practiceArea || [];
+        
+        const preservedRelationshipStrength = existingClient.relationship_strength !== 5 
+          ? existingClient.relationship_strength 
+          : clientData.relationshipStrength || 5;
+        
+        const preservedConflictRisk = existingClient.conflict_risk !== 'Medium' 
+          ? existingClient.conflict_risk 
+          : clientData.conflictRisk || 'Medium';
+        
+        const preservedRenewalProbability = existingClient.renewal_probability !== 0.7 
+          ? existingClient.renewal_probability 
+          : clientData.renewalProbability || 0.7;
+        
+        const preservedStrategicFitScore = existingClient.strategic_fit_score !== 5 
+          ? existingClient.strategic_fit_score 
+          : clientData.strategicFitScore || 5;
+        
+        const preservedNotes = existingClient.notes && existingClient.notes.trim() !== '' 
+          ? existingClient.notes 
+          : clientData.notes || '';
+        
+        const preservedPrimaryLobbyist = existingClient.primary_lobbyist && existingClient.primary_lobbyist.trim() !== '' 
+          ? existingClient.primary_lobbyist 
+          : clientData.primaryLobbyist || '';
+        
+        const preservedClientOriginator = existingClient.client_originator && existingClient.client_originator.trim() !== '' 
+          ? existingClient.client_originator 
+          : clientData.clientOriginator || '';
+        
+        const preservedLobbyistTeam = existingClient.lobbyist_team && existingClient.lobbyist_team.length > 0 
+          ? existingClient.lobbyist_team 
+          : clientData.lobbyistTeam || [];
+        
+        const preservedInteractionFrequency = existingClient.interaction_frequency && existingClient.interaction_frequency.trim() !== '' 
+          ? existingClient.interaction_frequency 
+          : clientData.interactionFrequency || '';
+        
+        const preservedRelationshipIntensity = existingClient.relationship_intensity !== 5 
+          ? existingClient.relationship_intensity 
+          : clientData.relationshipIntensity || 5;
+
+        // Update existing client with CSV data but preserve manual enhancements
+        const { rows: [updatedClient] } = await (await client).query(`
+          UPDATE clients SET 
+            name = $1,
+            status = $2,
+            practice_area = $3,
+            relationship_strength = $4,
+            conflict_risk = $5,
+            renewal_probability = $6,
+            strategic_fit_score = $7,
+            notes = $8,
+            primary_lobbyist = $9,
+            client_originator = $10,
+            lobbyist_team = $11,
+            interaction_frequency = $12,
+            relationship_intensity = $13,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $14 AND user_id = $15
+          RETURNING *
+        `, [
+          clientData.name || '',
+          clientData.status || 'H',
+          preservedPracticeArea,
+          preservedRelationshipStrength,
+          preservedConflictRisk,
+          preservedRenewalProbability,
+          preservedStrategicFitScore,
+          preservedNotes,
+          preservedPrimaryLobbyist,
+          preservedClientOriginator,
+          preservedLobbyistTeam,
+          preservedInteractionFrequency,
+          preservedRelationshipIntensity,
+          existingClient.id,
+          req.user.id
+        ]);
+
+        currentClient = updatedClient;
+        updatedCount++;
+      } else {
+        // Client doesn't exist - INSERT new client
+        const { rows: [newClient] } = await (await client).query(`
+          INSERT INTO clients (
+            user_id, name, status, practice_area, relationship_strength, conflict_risk,
+            renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+            client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          RETURNING *
+        `, [
+          req.user.id,
+          clientData.name || '',
+          clientData.status || 'H',
+          clientData.practiceArea || [],
+          clientData.relationshipStrength || 5,
+          clientData.conflictRisk || 'Medium',
+          clientData.renewalProbability || 0.7,
+          clientData.strategicFitScore || 5,
+          clientData.notes || '',
+          clientData.primaryLobbyist || '',
+          clientData.clientOriginator || '',
+          clientData.lobbyistTeam || [],
+          clientData.interactionFrequency || '',
+          clientData.relationshipIntensity || 5
+        ]);
+
+        currentClient = newClient;
+        insertedCount++;
+      }
+
+      // Handle revenue updates - DELETE existing and INSERT new
       if (clientData.revenue) {
+        // Delete existing revenue records for this client
+        await (await client).query(`
+          DELETE FROM client_revenues 
+          WHERE client_id = $1
+        `, [currentClient.id]);
+
+        // Insert new revenue records from CSV
         for (const [year, amount] of Object.entries(clientData.revenue)) {
           if (amount && amount > 0) {
             await (await client).query(`
               INSERT INTO client_revenues (client_id, year, revenue_amount)
               VALUES ($1, $2, $3)
-            `, [newClient.id, parseInt(year), amount]);
+            `, [currentClient.id, parseInt(year), amount]);
           }
         }
       }
       
-      savedClients.push(newClient);
+      savedClients.push(currentClient);
     }
     
     await (await client).query('COMMIT');
@@ -200,6 +314,8 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       validation,
       summary: {
         totalClients: clientsWithScores.length,
+        updatedClients: updatedCount,
+        newClients: insertedCount,
         totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
         statusBreakdown: {
           'IF': clientsWithScores.filter(c => c.status === 'IF').length,
