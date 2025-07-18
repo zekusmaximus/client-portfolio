@@ -10,7 +10,14 @@
       "Bash(pkill:*)",
       "WebFetch(domain:client-portfolio-backend.onrender.com)",
       "Bash(npm start)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(true)",
+      "Bash(npm view:*)",
+      "Bash(npm update:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run create:admin:*)",
+      "Bash(psql:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

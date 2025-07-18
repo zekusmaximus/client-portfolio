@@ -6,19 +6,29 @@ const clientModel = require('./models/clientModel.cjs');
 const { generatePortfolioSummary } = require('./utils/strategic.cjs');
 
 // Initialize Anthropic client
-let anthropic;
+let anthropic = null;
+
 try {
   const { Anthropic } = require('@anthropic-ai/sdk');
   const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || process.env.OPENAI_API_KEY;
   
   if (!apiKey) {
     console.error('❌ No API key found. Set ANTHROPIC_API_KEY, CLAUDE_API_KEY, or OPENAI_API_KEY');
+    anthropic = null;
   } else {
     anthropic = new Anthropic({ apiKey });
     console.log('✅ Anthropic client initialized successfully');
   }
 } catch (error) {
-  console.error('❌ Failed to initialize Anthropic client:', error);
+  console.error('❌ Failed to initialize Anthropic client:', error.message);
+  anthropic = null;
+}
+
+// Validate client functionality
+if (anthropic && anthropic.messages && anthropic.messages.create) {
+  console.log('🎉 AI service ready');
+} else {
+  console.error('💥 AI service unavailable - check API key configuration');
 }
 
 // Apply JWT auth to all claude routes
@@ -33,7 +43,21 @@ router.use(authenticateToken);
 router.post('/strategic-advice', async (req, res) => {
   try {
     if (!anthropic) {
-      return res.status(500).json({ success: false, error: 'AI service not available' });
+      console.error('❌ Anthropic client not initialized in strategic-advice');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI service not available - Anthropic client not initialized',
+        details: process.env.NODE_ENV === 'development' ? 'Check API key configuration and server logs' : undefined
+      });
+    }
+    
+    if (!anthropic.messages || !anthropic.messages.create) {
+      console.error('❌ Anthropic client missing required methods in strategic-advice');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI service not available - Anthropic client malformed',
+        details: process.env.NODE_ENV === 'development' ? 'Client initialization incomplete' : undefined
+      });
     }
 
     const { query, context } = req.body || {};
@@ -78,9 +102,23 @@ router.post('/analyze-portfolio', async (req, res) => {
     // Check Anthropic client initialization
     if (!anthropic) {
       console.error('❌ Anthropic client not initialized');
-      return res.status(500).json({ success: false, error: 'AI service not available - API key missing or invalid' });
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI service not available - Anthropic client not initialized',
+        details: process.env.NODE_ENV === 'development' ? 'Check API key configuration and server logs' : undefined
+      });
     }
-    console.log('✅ Anthropic client available');
+    
+    if (!anthropic.messages || !anthropic.messages.create) {
+      console.error('❌ Anthropic client missing required methods');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI service not available - Anthropic client malformed',
+        details: process.env.NODE_ENV === 'development' ? 'Client initialization incomplete' : undefined
+      });
+    }
+    
+    console.log('✅ Anthropic client available and functional');
 
     // Check authentication
     const userId = req.user.userId;
@@ -175,7 +213,21 @@ router.post('/analyze-portfolio', async (req, res) => {
 router.post('/client-recommendations', async (req, res) => {
   try {
     if (!anthropic) {
-      return res.status(500).json({ success: false, error: 'AI service not available' });
+      console.error('❌ Anthropic client not initialized in client-recommendations');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI service not available - Anthropic client not initialized',
+        details: process.env.NODE_ENV === 'development' ? 'Check API key configuration and server logs' : undefined
+      });
+    }
+    
+    if (!anthropic.messages || !anthropic.messages.create) {
+      console.error('❌ Anthropic client missing required methods in client-recommendations');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI service not available - Anthropic client malformed',
+        details: process.env.NODE_ENV === 'development' ? 'Client initialization incomplete' : undefined
+      });
     }
 
     const { clientId, includePortfolio } = req.body || {};
