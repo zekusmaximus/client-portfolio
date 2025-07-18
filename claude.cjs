@@ -32,7 +32,7 @@ router.post('/strategic-advice', async (req, res) => {
     }
 
     const { query, context } = req.body || {};
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     // Fetch portfolio with metrics
     const clients = await clientModel.listWithMetrics(userId);
@@ -72,7 +72,7 @@ router.post('/analyze-portfolio', async (req, res) => {
       return res.status(500).json({ success: false, error: 'AI service not available' });
     }
 
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const clients = await clientModel.listWithMetrics(userId);
     if (!clients.length) {
       return res.status(400).json({ success: false, error: 'No clients found for user' });
@@ -115,7 +115,7 @@ router.post('/client-recommendations', async (req, res) => {
       return res.status(400).json({ success: false, error: 'clientId is required' });
     }
 
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const client = await clientModel.getWithMetrics(clientId, userId);
     if (!client) {
       return res.status(404).json({ success: false, error: 'Client not found' });
