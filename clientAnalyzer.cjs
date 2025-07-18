@@ -20,7 +20,7 @@ function decodeHTMLEntities(text) {
 
 /**
  * Derive contract status based on contract period and current date
- * @param {string} contractPeriod - Format: "M/D/YY-M/D/YY"
+ * @param {string} contractPeriod - Format: "M/D/YY-M/D/YY", "Expired M/D/YY", or "expires M/D/YY"
  * @returns {string} Status: 'IF' (In Force), 'D' (Done), 'P' (Proposal), 'H' (Hold)
  */
 function deriveContractStatus(contractPeriod) {
@@ -31,6 +31,25 @@ function deriveContractStatus(contractPeriod) {
   try {
     // Use current date: July 12, 2025 as specified in requirements
     const currentDate = new Date();
+    
+    // Handle "Expired" format
+    if (contractPeriod.toLowerCase().startsWith('expired')) {
+      return 'D'; // Done - already expired
+    }
+    
+    // Handle "expires DATE" format
+    if (contractPeriod.toLowerCase().startsWith('expires')) {
+      const dateMatch = contractPeriod.match(/expires\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
+      if (dateMatch) {
+        const expiryDate = new Date(dateMatch[1]);
+        if (!isNaN(expiryDate.getTime())) {
+          return expiryDate < currentDate ? 'D' : 'IF'; // Done if expired, In Force if still valid
+        }
+      }
+      return 'H'; // Hold if we can't parse the date
+    }
+    
+    // Handle standard "START-END" format
     const [startStr, endStr] = contractPeriod.split('-');
     
     if (!startStr || !endStr) {
@@ -119,13 +138,22 @@ function calculateStrategicScores(clients) {
     const revenues = client.revenues || [];
     const strategicValue = calculateStrategicValue(client, revenues);
     
-    // Calculate average revenue for display purposes
-    const totalRevenue = revenues.reduce((sum, rev) => sum + (parseFloat(rev.revenue_amount) || 0), 0);
-    const averageRevenue = revenues.length > 0 ? totalRevenue / revenues.length : 0;
+    // Use 2025 revenue as the primary revenue figure (most recent year)
+    let currentRevenue = 0;
+    
+    // Handle CSV format (client.revenue object)
+    if (client.revenue && typeof client.revenue === 'object') {
+      currentRevenue = parseFloat(client.revenue['2025']) || 0;
+    }
+    // Handle database format (client.revenues array)
+    else if (revenues.length > 0) {
+      const revenue2025 = revenues.find(rev => rev.year === 2025);
+      currentRevenue = revenue2025 ? parseFloat(revenue2025.revenue_amount) || 0 : 0;
+    }
     
     return {
       ...client,
-      averageRevenue: Math.round(averageRevenue),
+      averageRevenue: Math.round(currentRevenue), // Keep field name for compatibility but use 2025 revenue
       strategicValue: Math.round(strategicValue * 100) / 100
     };
   });
@@ -234,7 +262,14 @@ function validateClientData(clients) {
     }
     
     // Check for malformed contract periods
-    if (!client.contractPeriod || !client.contractPeriod.includes('-')) {
+    // Valid formats: "M/D/YY-M/D/YY", "Expired M/D/YY", "expires M/D/YY"
+    const hasValidFormat = client.contractPeriod && (
+      client.contractPeriod.includes('-') || 
+      client.contractPeriod.toLowerCase().startsWith('expired') ||
+      client.contractPeriod.toLowerCase().startsWith('expires')
+    );
+    
+    if (!hasValidFormat) {
       issues.push(`Client "${client.name}" has invalid contract period: "${client.contractPeriod}"`);
     }
     
