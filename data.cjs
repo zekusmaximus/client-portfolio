@@ -59,18 +59,18 @@ const csvValidationRules = [
           throw new Error(`Row ${i + 1}: Must be an object`);
         }
         
-        // Check for required fields (name is minimum requirement)
-        if (!row.name || typeof row.name !== 'string' || !row.name.trim()) {
-          throw new Error(`Row ${i + 1}: Name is required and must be a non-empty string`);
+        // Check for required fields (CLIENT is minimum requirement)
+        if (!row.CLIENT || typeof row.CLIENT !== 'string' || !row.CLIENT.trim()) {
+          throw new Error(`Row ${i + 1}: CLIENT is required and must be a non-empty string`);
         }
         
-        // Validate name length and pattern
-        if (row.name.trim().length > 255) {
-          throw new Error(`Row ${i + 1}: Name must not exceed 255 characters`);
+        // Validate CLIENT length and pattern
+        if (row.CLIENT.trim().length > 255) {
+          throw new Error(`Row ${i + 1}: CLIENT must not exceed 255 characters`);
         }
         
-        if (!/^[a-zA-Z0-9\s\-\.,&'()]+$/.test(row.name.trim())) {
-          throw new Error(`Row ${i + 1}: Name contains invalid characters`);
+        if (!/^[a-zA-Z0-9\s\-\.,&'()]+$/.test(row.CLIENT.trim())) {
+          throw new Error(`Row ${i + 1}: CLIENT contains invalid characters`);
         }
       }
       
