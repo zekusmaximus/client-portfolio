@@ -297,7 +297,7 @@ const DashboardView = () => {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">High Risk Clients</p>
+                <p className="text-sm font-medium text-muted-foreground">High Conflict Risk Clients</p>
                 <p className="text-2xl font-bold">{analytics.highRiskClients}</p>
               </div>
               <AlertTriangle className="h-8 w-8 text-red-500" />
@@ -496,7 +496,7 @@ const DashboardView = () => {
                                 client.conflictRisk === 'Medium' ? 'outline' : 'secondary'
                               }
                             >
-                              {client.conflictRisk || 'Medium'}
+                              {client.conflictRisk || 'Medium'} Conflict Risk
                             </Badge>
                           </td>
                         </tr>

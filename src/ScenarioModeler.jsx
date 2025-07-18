@@ -192,7 +192,7 @@ const ScenarioModeler = () => {
               </div>
               <div className="text-center">
                 <p className="text-lg font-bold">{currentMetrics.highRiskClients}</p>
-                <p className="text-xs text-muted-foreground">High Risk</p>
+                <p className="text-xs text-muted-foreground">High Conflict Risk</p>
               </div>
             </div>
           )}

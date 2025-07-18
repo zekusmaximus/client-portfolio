@@ -210,7 +210,7 @@ const ClientListView = () => {
                       variant="outline"
                       className={getRiskColor(client.conflictRisk)}
                     >
-                      {client.conflictRisk} Risk
+                      {client.conflictRisk} Conflict Risk
                     </Badge>
                   </div>
                 </div>
