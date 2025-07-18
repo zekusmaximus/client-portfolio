@@ -40,7 +40,7 @@ const AIAdvisor = () => {
       setError(null);
 
       // Extract only necessary client IDs for analysis, filtering out clients without valid IDs
-      const clientIds = clients.filter(c => c.id && c.id.trim() !== '').map(c => c.id.trim());
+      const clientIds = clients.filter(c => c.id && String(c.id).trim() !== '').map(c => String(c.id).trim());
       
       if (clientIds.length === 0) {
         throw new Error('No valid client IDs found. Please ensure clients are properly loaded.');
@@ -99,7 +99,7 @@ const AIAdvisor = () => {
     }
 
     // Validate client has a proper ID
-    if (!client.id || typeof client.id !== 'string' || client.id.trim() === '') {
+    if (!client.id || (typeof client.id !== 'string' && typeof client.id !== 'number') || String(client.id).trim() === '') {
       setError('Client is missing a valid ID. Please refresh the client list and try again.');
       return;
     }
@@ -117,7 +117,7 @@ const AIAdvisor = () => {
     try {
       // Only send the client ID and basic context, not the entire clients array
       const payload = {
-        clientId: client.id.trim(),
+        clientId: String(client.id).trim(),
         clientName: client.name.trim(),
         clientRevenue: usePortfolioStore.getState().getClientRevenue(client),
         portfolioSize: clients.length,
@@ -397,7 +397,7 @@ const AIAdvisor = () => {
               </p>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {clients.filter(client => client.id && client.name && client.id.trim() !== '').map((client) => (
+                {clients.filter(client => client.id && client.name && String(client.id).trim() !== '').map((client) => (
                   <div 
                     key={client.id} 
                     className="p-3 border rounded-lg hover:bg-muted/30 cursor-pointer transition-colors"
@@ -420,7 +420,7 @@ const AIAdvisor = () => {
                 ))}
               </div>
 
-              {clients.filter(client => client.id && client.name && client.id.trim() !== '').length === 0 && (
+              {clients.filter(client => client.id && client.name && String(client.id).trim() !== '').length === 0 && (
                 <div className="mt-4 p-4 bg-muted/30 rounded-lg text-center">
                   <AlertCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                   <p className="text-muted-foreground">
