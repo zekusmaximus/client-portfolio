@@ -8,7 +8,9 @@
       "Bash(npm run build:*)",
       "Bash(rm:*)",
       "Bash(pkill:*)",
-      "WebFetch(domain:client-portfolio-backend.onrender.com)"
+      "WebFetch(domain:client-portfolio-backend.onrender.com)",
+      "Bash(npm start)",
+      "Bash(curl:*)"
     ],
     "deny": []
   }

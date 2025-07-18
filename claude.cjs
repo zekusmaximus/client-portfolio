@@ -9,11 +9,16 @@ const { generatePortfolioSummary } = require('./utils/strategic.cjs');
 let anthropic;
 try {
   const { Anthropic } = require('@anthropic-ai/sdk');
-  anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY,
-  });
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || process.env.OPENAI_API_KEY;
+  
+  if (!apiKey) {
+    console.error('❌ No API key found. Set ANTHROPIC_API_KEY, CLAUDE_API_KEY, or OPENAI_API_KEY');
+  } else {
+    anthropic = new Anthropic({ apiKey });
+    console.log('✅ Anthropic client initialized successfully');
+  }
 } catch (error) {
-  console.error('Failed to initialize Anthropic client:', error);
+  console.error('❌ Failed to initialize Anthropic client:', error);
 }
 
 // Apply JWT auth to all claude routes
@@ -68,28 +73,87 @@ router.post('/strategic-advice', async (req, res) => {
 // Request body: {}
 router.post('/analyze-portfolio', async (req, res) => {
   try {
+    console.log('🔍 Starting portfolio analysis request');
+    
+    // Check Anthropic client initialization
     if (!anthropic) {
-      return res.status(500).json({ success: false, error: 'AI service not available' });
+      console.error('❌ Anthropic client not initialized');
+      return res.status(500).json({ success: false, error: 'AI service not available - API key missing or invalid' });
+    }
+    console.log('✅ Anthropic client available');
+
+    // Check authentication
+    const userId = req.user.userId;
+    console.log('📋 User ID from JWT:', userId);
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User ID not found in token' });
     }
 
-    const userId = req.user.userId;
-    const clients = await clientModel.listWithMetrics(userId);
+    // Fetch clients with detailed error handling
+    console.log('🔍 Fetching clients for user:', userId);
+    let clients;
+    try {
+      clients = await clientModel.listWithMetrics(userId);
+      console.log('✅ Successfully fetched clients:', clients.length);
+    } catch (dbError) {
+      console.error('❌ Database error fetching clients:', dbError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Database connection failed',
+        details: process.env.NODE_ENV === 'development' ? dbError.message : undefined
+      });
+    }
+
     if (!clients.length) {
+      console.log('⚠️ No clients found for user:', userId);
       return res.status(400).json({ success: false, error: 'No clients found for user' });
     }
 
-    const portfolioSummary = generatePortfolioSummary(clients);
+    // Generate portfolio summary
+    console.log('📊 Generating portfolio summary');
+    let portfolioSummary;
+    try {
+      portfolioSummary = generatePortfolioSummary(clients);
+      console.log('✅ Portfolio summary generated:', {
+        totalClients: portfolioSummary.totalClients,
+        totalRevenue: portfolioSummary.totalRevenue
+      });
+    } catch (summaryError) {
+      console.error('❌ Error generating portfolio summary:', summaryError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Failed to generate portfolio summary',
+        details: process.env.NODE_ENV === 'development' ? summaryError.message : undefined
+      });
+    }
+
+    // Create analysis prompt
+    console.log('📝 Creating analysis prompt');
     const analysisPrompt = createAnalysisPrompt(portfolioSummary);
 
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 2500,
-      temperature: 0.2,
-      messages: [{ role: 'user', content: analysisPrompt }],
-    });
+    // Call Anthropic API
+    console.log('🤖 Calling Anthropic API');
+    let response;
+    try {
+      response = await anthropic.messages.create({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 2500,
+        temperature: 0.2,
+        messages: [{ role: 'user', content: analysisPrompt }],
+      });
+      console.log('✅ Anthropic API call successful');
+    } catch (apiError) {
+      console.error('❌ Anthropic API error:', apiError);
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI analysis failed',
+        details: process.env.NODE_ENV === 'development' ? apiError.message : undefined
+      });
+    }
 
     const analysis = response.content[0].text;
 
+    console.log('✅ Portfolio analysis completed successfully');
     res.json({
       success: true,
       analysis,
@@ -97,8 +161,12 @@ router.post('/analyze-portfolio', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error analyzing portfolio:', error);
-    res.status(500).json({ success: false, error: 'Failed to analyze portfolio' });
+    console.error('❌ Unexpected error in portfolio analysis:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to analyze portfolio',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 

@@ -98,8 +98,33 @@ app.use('/api/claude', require('./claude.cjs'));
 app.use('/api/data', require('./data.cjs'));
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  const health = {
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    services: {}
+  };
+
+  // Check database connection
+  try {
+    await db.query('SELECT 1');
+    health.services.database = 'connected';
+  } catch (e) {
+    health.services.database = 'disconnected';
+    health.status = 'DEGRADED';
+  }
+
+  // Check Anthropic API key
+  const hasApiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || process.env.OPENAI_API_KEY;
+  if (hasApiKey) {
+    health.services.anthropic = 'configured';
+  } else {
+    health.services.anthropic = 'not configured';
+    if (health.status === 'OK') health.status = 'DEGRADED';
+  }
+
+  res.json(health);
 });
 
 // Serve React app for all other routes (commented out for now)
@@ -119,20 +144,28 @@ app.use((err, req, res, next) => {
 // Health check for DB on boot and initialize tables
 (async () => {
   try {
+    console.log('🔍 Testing database connection...');
     await db.query('SELECT 1');
     console.log('✅  PostgreSQL connection OK');
 
     // Initialize database tables
+    console.log('🔍 Initializing database tables...');
     const fs = require('fs');
     const path = require('path');
     const initScript = fs.readFileSync(path.join(__dirname, 'init-db.sql'), 'utf8');
     await db.query(initScript);
     console.log('✅  Database tables initialized');
   } catch (e) {
-    console.error('❌  Database initialization failed', e);
-    console.log('⚠️  Continuing without database for frontend testing...');
-    // Temporarily comment out process.exit for testing
-    // process.exit(1);
+    console.error('❌  Database initialization failed:', e.message);
+    console.error('Full error:', e);
+    
+    if (process.env.NODE_ENV === 'production') {
+      console.error('💥 Cannot start server without database in production');
+      process.exit(1);
+    } else {
+      console.log('⚠️  Development mode: Continuing without database...');
+      console.log('📝 Make sure your DATABASE_URL is correct in .env file');
+    }
   }
 })();
 
