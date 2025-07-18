@@ -30,6 +30,14 @@ certs/
 security-report.json
 audit-results.json
 
+# Client data files - DO NOT COMMIT
+*.csv
+client-data.*
+sample-data.csv
+sample-upload.csv
+upload-data.*
+*-data.csv
+
 # Build outputs
 dist/
 build/

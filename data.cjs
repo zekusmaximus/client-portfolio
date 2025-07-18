@@ -69,7 +69,16 @@ const csvValidationRules = [
           throw new Error(`Row ${i + 1}: CLIENT must not exceed 255 characters`);
         }
         
-        if (!/^[a-zA-Z0-9\s\-\.,&'()]+$/.test(row.CLIENT.trim())) {
+        // Decode HTML entities for validation
+        const decodedClient = row.CLIENT.trim()
+          .replace(/&amp;/g, '&')
+          .replace(/&#x27;/g, "'")
+          .replace(/&#x2F;/g, '/')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"');
+        
+        if (!/^[a-zA-Z0-9\s\-\.,&'()]+$/.test(decodedClient)) {
           throw new Error(`Row ${i + 1}: CLIENT contains invalid characters`);
         }
       }
