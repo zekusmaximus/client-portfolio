@@ -37,14 +37,12 @@ function App() {
     }
   }, [isAuthenticated]);
 
-  // Set default view based on data availability
+  // Set default view on initial load
   useEffect(() => {
-    if (isAuthenticated) {
-      if (!hasData && currentView !== 'data-upload') {
-        setCurrentView('data-upload');
-      }
+    if (isAuthenticated && !currentView) {
+      setCurrentView('data-upload');
     }
-  }, [isAuthenticated, hasData, currentView, setCurrentView]);
+  }, [isAuthenticated, currentView, setCurrentView]);
 
   // Gate the UI behind authentication
   if (!isAuthenticated) {

@@ -159,12 +159,25 @@ const AIAdvisor = () => {
   if (!hasData) {
     return (
       <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Brain className="h-5 w-5" />
+            AI Strategic Advisor
+          </CardTitle>
+        </CardHeader>
         <CardContent className="pt-6">
           <div className="text-center">
             <Brain className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">
-              No client data available. Please upload your portfolio data first to receive AI-powered strategic advice.
+            <p className="text-lg font-medium mb-2">Ready to provide AI-powered insights</p>
+            <p className="text-muted-foreground mb-4">
+              Once you have clients in your portfolio, I can analyze your data and provide strategic recommendations for portfolio optimization, client prioritization, and growth opportunities.
             </p>
+            <Button 
+              onClick={() => usePortfolioStore.getState().setCurrentView('client-details')}
+              variant="outline"
+            >
+              Add Clients to Get Started
+            </Button>
           </div>
         </CardContent>
       </Card>

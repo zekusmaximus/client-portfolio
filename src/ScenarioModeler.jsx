@@ -135,12 +135,25 @@ const ScenarioModeler = () => {
   if (!hasData) {
     return (
       <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Target className="h-5 w-5" />
+            Scenario Modeler
+          </CardTitle>
+        </CardHeader>
         <CardContent className="pt-6">
           <div className="text-center">
             <Target className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">
-              No client data available. Please upload your portfolio data first to model scenarios.
+            <p className="text-lg font-medium mb-2">Strategic Scenario Planning</p>
+            <p className="text-muted-foreground mb-4">
+              Model "what-if" scenarios to understand the impact of departures, capacity changes, and strategic shifts on your portfolio. Add clients to unlock scenario modeling capabilities.
             </p>
+            <Button 
+              onClick={() => usePortfolioStore.getState().setCurrentView('client-details')}
+              variant="outline"
+            >
+              Add Clients to Get Started
+            </Button>
           </div>
         </CardContent>
       </Card>

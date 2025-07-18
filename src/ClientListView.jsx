@@ -115,10 +115,26 @@ const ClientListView = () => {
   if (!clients || clients.length === 0) {
     return (
       <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Client Enhancement Center
+            </div>
+            <Button onClick={() => openClientModal(null)}>Add New Client</Button>
+          </CardTitle>
+        </CardHeader>
         <CardContent className="pt-6">
-          <p className="text-center text-muted-foreground">
-            No client data available. Please upload your portfolio data first.
-          </p>
+          <div className="text-center text-muted-foreground">
+            <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p className="text-lg font-medium mb-2">No clients yet</p>
+            <p className="mb-4">
+              Start building your portfolio by adding clients individually or uploading a CSV file.
+            </p>
+            <Button onClick={() => openClientModal(null)} variant="outline">
+              Add Your First Client
+            </Button>
+          </div>
         </CardContent>
       </Card>
     );
