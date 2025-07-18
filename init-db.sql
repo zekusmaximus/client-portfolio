@@ -48,7 +48,5 @@ CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
 CREATE INDEX IF NOT EXISTS idx_client_revenues_client_id ON client_revenues(client_id);
 CREATE INDEX IF NOT EXISTS idx_client_revenues_year ON client_revenues(year);
 
--- Insert a default admin user (password: 'admin123')
-INSERT INTO users (username, password_hash) 
-VALUES ('admin', '$2b$10$8K1p/a0dclsgIbLeEN8VPuOwQ5hCXEfhzBqeNNBkJrWKqnWDmOCiK')
-ON CONFLICT (username) DO NOTHING;
+-- No default users are created for security reasons
+-- Use the create-admin.cjs script to create your first administrator account
