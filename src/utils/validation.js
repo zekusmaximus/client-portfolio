@@ -18,7 +18,7 @@ export const VALIDATION_RULES = {
     required: true,
     minLength: 1,
     maxLength: 255,
-    pattern: /^[a-zA-Z0-9\s\-\.,&'()]+$/,
+    pattern: /^[a-zA-Z0-9\s\-\.,&'()\/]+$/,
     errorMessages: {
       required: 'Client name is required',
       minLength: 'Client name must be at least 1 character',

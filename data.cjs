@@ -15,6 +15,21 @@ const {
 router.use(auth);
 router.use(sanitizeRequestBody);
 
+// Helper function to decode HTML entities
+function decodeHTMLEntities(text) {
+  if (!text || typeof text !== 'string') return text;
+  
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
+    .replace(/&#x([a-fA-F0-9]+);/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 // Helper to calculate strategic value for a single client
 function calculateStrategicValue(client) {
   // 1. Convert qualitative fields
@@ -70,15 +85,9 @@ const csvValidationRules = [
         }
         
         // Decode HTML entities for validation
-        const decodedClient = row.CLIENT.trim()
-          .replace(/&amp;/g, '&')
-          .replace(/&#x27;/g, "'")
-          .replace(/&#x2F;/g, '/')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&quot;/g, '"');
+        const decodedClient = decodeHTMLEntities(row.CLIENT.trim());
         
-        if (!/^[a-zA-Z0-9\s\-\.,&'()]+$/.test(decodedClient)) {
+        if (!/^[a-zA-Z0-9\s\-\.,&'()\/]+$/.test(decodedClient)) {
           throw new Error(`Row ${i + 1}: CLIENT contains invalid characters`);
         }
       }
@@ -121,7 +130,16 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     }
 
     // Process the CSV data
-    const clients = processCSVData(csvData);
+    // First, decode HTML entities in the raw CSV data
+    const decodedCsvData = csvData.map(row => {
+      const decodedRow = {};
+      for (const [key, value] of Object.entries(row)) {
+        decodedRow[key] = typeof value === 'string' ? decodeHTMLEntities(value) : value;
+      }
+      return decodedRow;
+    });
+    
+    const clients = processCSVData(decodedCsvData);
     
     // Validate the processed data
     const validation = validateClientData(clients);

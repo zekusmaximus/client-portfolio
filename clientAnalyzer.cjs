@@ -3,6 +3,21 @@
  * Implements strategic value calculations and portfolio optimization algorithms
  */
 
+// Helper function to decode HTML entities
+function decodeHTMLEntities(text) {
+  if (!text || typeof text !== 'string') return text;
+  
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
+    .replace(/&#x([a-fA-F0-9]+);/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 /**
  * Derive contract status based on contract period and current date
  * @param {string} contractPeriod - Format: "M/D/YY-M/D/YY"
@@ -166,7 +181,7 @@ function processCSVData(csvData) {
   return csvData
     .filter(row => row.CLIENT && row.CLIENT.trim()) // Filter out empty rows
     .map(row => {
-      const clientName = row.CLIENT.trim();
+      const clientName = decodeHTMLEntities(row.CLIENT.trim());
       const contractPeriod = row['Contract Period'] || '';
       
       // Parse revenue data

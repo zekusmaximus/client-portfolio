@@ -20,7 +20,7 @@ const clientValidationRules = [
     .trim()
     .isLength({ min: 1, max: 255 })
     .withMessage('Client name must be between 1 and 255 characters')
-    .matches(/^[a-zA-Z0-9\s\-\.,&'()]+$/)
+    .matches(/^[a-zA-Z0-9\s\-\.,&'()\/]+$/)
     .withMessage('Client name contains invalid characters')
     .customSanitizer(sanitizeInput),
 
