@@ -57,10 +57,7 @@ const handleUpload = async () => {
   Papa.parse(file, {
     header: true, // Automatically uses the first row as headers
     skipEmptyLines: true,
-    transform: (value) => {
-      // This removes '$' and ',' from values before processing
-      return value.replace(/[$,]/g, ''); 
-    },
+    // Remove the transform function to let backend handle the parsing
     complete: async (results) => {
       try {
         if (!results.data || results.data.length === 0) {

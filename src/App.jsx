@@ -124,11 +124,11 @@ function App() {
             </TabsContent>
 
             <TabsContent value="ai" className="mt-6">
-              {hasData ? <AIAdvisor /> : <DashboardView />}
+              <AIAdvisor />
             </TabsContent>
 
             <TabsContent value="scenarios" className="mt-6">
-              {hasData ? <ScenarioModeler /> : <DashboardView />}
+              <ScenarioModeler />
             </TabsContent>
           </Tabs>
         </div>
