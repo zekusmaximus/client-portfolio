@@ -162,7 +162,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
                client_originator, lobbyist_team, interaction_frequency, relationship_intensity
         FROM clients 
         WHERE LOWER(name) = LOWER($1) AND user_id = $2
-      `, [clientData.name || '', req.user.id]);
+      `, [clientData.name || '', req.user.userId]);
 
       let currentClient;
       
@@ -249,7 +249,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           preservedInteractionFrequency,
           preservedRelationshipIntensity,
           existingClient.id,
-          req.user.id
+          req.user.userId
         ]);
 
         currentClient = updatedClient;
@@ -264,7 +264,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
           RETURNING *
         `, [
-          req.user.id,
+          req.user.userId,
           clientData.name || '',
           clientData.status || 'H',
           clientData.practiceArea || [],
