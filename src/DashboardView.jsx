@@ -105,21 +105,28 @@ const DashboardView = () => {
       const clientRevenue = usePortfolioStore.getState().getClientRevenue(client); // This already returns 2025 revenue only
       const clientStatus = client.status || 'Prospect'; // Default to Prospect if status is null
 
-      if (revenueByStatus.hasOwnProperty(clientStatus)) {
-        revenueByStatus[clientStatus] += clientRevenue;
-        countByStatus[clientStatus]++;
-      } else {
-        // Handle unexpected status values - map old status codes to new labels
-        const statusMapping = {
-          'IF': 'Active',
-          'P': 'Prospect', 
-          'D': 'Former',
-          'H': 'Inactive'
-        };
-        const mappedStatus = statusMapping[clientStatus] || 'Prospect';
-        revenueByStatus[mappedStatus] += clientRevenue;
-        countByStatus[mappedStatus]++;
-      }
+      // Always use the status mapping to ensure consistency between legacy codes and new labels
+      const statusMapping = {
+        // New status labels (pass through as-is)
+        'Active': 'Active',
+        'Prospect': 'Prospect', 
+        'Inactive': 'Inactive',
+        'Former': 'Former',
+        // Legacy status codes mapping
+        'IF': 'Active',
+        'P': 'Prospect', 
+        'D': 'Former',
+        'H': 'Inactive',
+        // Handle lowercase versions (just in case)
+        'active': 'Active',
+        'prospect': 'Prospect',
+        'inactive': 'Inactive',
+        'former': 'Former'
+      };
+      
+      const mappedStatus = statusMapping[clientStatus] || 'Prospect';
+      revenueByStatus[mappedStatus] += clientRevenue;
+      countByStatus[mappedStatus]++;
     });
 
     // Top clients by strategic value
@@ -383,16 +390,16 @@ const DashboardView = () => {
                 </ResponsiveContainer>
                 <div className="mt-4 grid grid-cols-4 gap-2 text-sm">
                   <div className="text-center">
-                    <Badge variant="default" className="bg-green-500">IF: In Force</Badge>
+                    <Badge variant="default" className="bg-green-500">Active</Badge>
                   </div>
                   <div className="text-center">
-                    <Badge variant="default" className="bg-blue-500">P: Proposal</Badge>
+                    <Badge variant="default" className="bg-blue-500">Prospect</Badge>
                   </div>
                   <div className="text-center">
-                    <Badge variant="secondary">D: Done</Badge>
+                    <Badge variant="secondary">Inactive</Badge>
                   </div>
                   <div className="text-center">
-                    <Badge variant="outline">H: Hold</Badge>
+                    <Badge variant="outline">Former</Badge>
                   </div>
                 </div>
               </CardContent>
