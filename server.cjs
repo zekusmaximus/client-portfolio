@@ -96,7 +96,7 @@ app.use('/api/scenarios', scenariosRouter);
 app.use(express.static(path.join(__dirname, '../frontend/build')));
 
 // API Routes
-app.use('/api/claude', require('./claude.cjs'));
+app.use('/api/claude', require('./claude.cjs').router);
 app.use('/api/data', require('./data.cjs'));
 
 // Health check endpoint
