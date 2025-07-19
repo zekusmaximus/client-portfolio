@@ -770,4 +770,6 @@ function calculateGrowthPotential(client) {
   return Math.min(score, 10);
 }
 
+
+
 module.exports = router;
