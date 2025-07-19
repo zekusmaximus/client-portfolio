@@ -49,18 +49,42 @@ app.use(securityHeaders);
 app.use(cors({
   origin: (origin, callback) => {
     if (process.env.NODE_ENV === 'production') {
-      const allowedOrigins = process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : [];
+      // Production origins
+      const allowedOrigins = [];
       
-      // Ensure production origins use HTTPS
-      const hasInsecureOrigin = allowedOrigins.some(url => url && !url.startsWith('https://'));
-      if (hasInsecureOrigin) {
-        console.error('Security Error: All production origins must use HTTPS');
-        return callback(new Error('Insecure origin configuration'));
+      // Add configured frontend URL if available
+      if (process.env.FRONTEND_URL) {
+        allowedOrigins.push(process.env.FRONTEND_URL);
+      }
+      
+      // For Render deployments, also allow the same-domain requests
+      // This handles cases where frontend and backend are served from same domain
+      if (process.env.RENDER_SERVICE_NAME || process.env.RENDER) {
+        // Allow requests from same origin (when frontend is served by same server)
+        if (!origin) {
+          return callback(null, true);
+        }
+        
+        // Allow requests from Render's onrender.com domain
+        if (origin.includes('.onrender.com')) {
+          return callback(null, true);
+        }
+      }
+      
+      // Ensure production origins use HTTPS (only if we have configured origins)
+      if (allowedOrigins.length > 0) {
+        const hasInsecureOrigin = allowedOrigins.some(url => url && !url.startsWith('https://'));
+        if (hasInsecureOrigin) {
+          console.error('Security Error: All production origins must use HTTPS');
+          return callback(new Error('Insecure origin configuration'));
+        }
       }
       
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
+        console.log(`CORS blocked origin: ${origin}`);
+        console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
         callback(new Error('Not allowed by CORS'));
       }
     } else {

@@ -30,7 +30,8 @@ const ScenarioModeler = () => {
   const [scenarioParams, setScenarioParams] = useState({
     targetRevenue: 500000,
     riskTolerance: 50,
-    timeHorizon: 12
+    timeHorizon: 12,
+    growthStrategy: 'organic'
   });
   const [results, setResults] = useState(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -110,11 +111,14 @@ const ScenarioModeler = () => {
     setIsCalculating(true);
 
     try {
-      // Send only the necessary parameters to the backend
+      // Send data in the expected format for the backend
       const response = await apiClient.post('/scenarios/growth', {
-        clientIds: clients.map(c => c.id),
-        currentRevenue: usePortfolioStore.getState().getTotalRevenue(),
-        targetRevenue: scenarioParams.targetRevenue,
+        scenarioData: {
+          targetRevenue: scenarioParams.targetRevenue,
+          timeHorizon: scenarioParams.timeHorizon || 12,
+          growthStrategy: scenarioParams.growthStrategy || 'organic'
+        },
+        portfolioId: 'default'
       });
 
       if (response.success) {
