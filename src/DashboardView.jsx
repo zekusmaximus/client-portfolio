@@ -54,6 +54,12 @@ const DashboardView = () => {
     'Financial': '#00ff88',
     'Other': '#8dd1e1',
     'Not Specified': '#d1d5db',
+    // New status labels that match client cards
+    'Active': '#22c55e',      // Green for active
+    'Prospect': '#3b82f6',    // Blue for prospects
+    'Inactive': '#6b7280',    // Gray for inactive
+    'Former': '#f59e0b',      // Orange for former
+    // Legacy status codes (for backward compatibility)
     'IF': '#22c55e',
     'P': '#3b82f6',
     'D': '#6b7280',
@@ -87,25 +93,32 @@ const DashboardView = () => {
       }
     });
 
-    // Revenue by status
+    // Revenue by status - using new status labels that match client cards
     const revenueByStatus = {
-      'IF': 0, 'P': 0, 'D': 0, 'H': 0
+      'Active': 0, 'Prospect': 0, 'Inactive': 0, 'Former': 0
     };
     const countByStatus = {
-      'IF': 0, 'P': 0, 'D': 0, 'H': 0
+      'Active': 0, 'Prospect': 0, 'Inactive': 0, 'Former': 0
     };
     
     clients.forEach(client => {
-      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client);
-      const clientStatus = client.status || 'H'; // Default to Hold if status is null
+      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client); // This already returns 2025 revenue only
+      const clientStatus = client.status || 'Prospect'; // Default to Prospect if status is null
 
       if (revenueByStatus.hasOwnProperty(clientStatus)) {
         revenueByStatus[clientStatus] += clientRevenue;
         countByStatus[clientStatus]++;
       } else {
-        // Handle unexpected status values
-        revenueByStatus['H'] += clientRevenue;
-        countByStatus['H']++;
+        // Handle unexpected status values - map old status codes to new labels
+        const statusMapping = {
+          'IF': 'Active',
+          'P': 'Prospect', 
+          'D': 'Former',
+          'H': 'Inactive'
+        };
+        const mappedStatus = statusMapping[clientStatus] || 'Prospect';
+        revenueByStatus[mappedStatus] += clientRevenue;
+        countByStatus[mappedStatus]++;
       }
     });
 
@@ -351,7 +364,7 @@ const DashboardView = () => {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <BarChart3 className="h-5 w-5" />
-                  Revenue by Contract Status
+                  2025 Revenue by Contract Status
                 </CardTitle>
               </CardHeader>
               <CardContent>

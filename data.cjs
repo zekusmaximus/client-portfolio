@@ -318,10 +318,10 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
         newClients: insertedCount,
         totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
         statusBreakdown: {
-          'IF': clientsWithScores.filter(c => c.status === 'IF').length,
-          'P': clientsWithScores.filter(c => c.status === 'P').length,
-          'D': clientsWithScores.filter(c => c.status === 'D').length,
-          'H': clientsWithScores.filter(c => c.status === 'H').length
+          'Active': clientsWithScores.filter(c => c.status === 'Active' || c.status === 'IF').length,
+          'Prospect': clientsWithScores.filter(c => c.status === 'Prospect' || c.status === 'P').length,
+          'Former': clientsWithScores.filter(c => c.status === 'Former' || c.status === 'D').length,
+          'Inactive': clientsWithScores.filter(c => c.status === 'Inactive' || c.status === 'H').length
         }
       }
     });
@@ -437,12 +437,28 @@ router.post('/analytics', (req, res) => {
       }
     });
     
-    // Revenue by status
+    // Revenue by status - using new status labels that match client cards
     const revenueByStatus = {
-      'IF': 0, 'P': 0, 'D': 0, 'H': 0
+      'Active': 0, 'Prospect': 0, 'Inactive': 0, 'Former': 0
     };
     clientsWithScores.forEach(client => {
-      revenueByStatus[client.status] += client.averageRevenue || 0;
+      const clientStatus = client.status;
+      
+      // Map old status codes to new labels if needed
+      const statusMapping = {
+        'IF': 'Active',
+        'P': 'Prospect', 
+        'D': 'Former',
+        'H': 'Inactive'
+      };
+      
+      const mappedStatus = statusMapping[clientStatus] || clientStatus || 'Prospect';
+      
+      if (revenueByStatus.hasOwnProperty(mappedStatus)) {
+        revenueByStatus[mappedStatus] += client.averageRevenue || 0; // averageRevenue already contains 2025 data only
+      } else {
+        revenueByStatus['Prospect'] += client.averageRevenue || 0; // Default fallback
+      }
     });
     
     // Top clients by strategic value
