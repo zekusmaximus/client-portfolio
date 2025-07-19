@@ -28,6 +28,10 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
+        "@/components": path.resolve(__dirname, "./src/components"),
+        "@/lib": path.resolve(__dirname, "./src/lib"),
+        "@/types": path.resolve(__dirname, "./src/types"),
+        "@/utils": path.resolve(__dirname, "./src/utils")
       },
     },
     define: {

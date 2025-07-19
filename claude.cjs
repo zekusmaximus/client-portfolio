@@ -5,6 +5,45 @@ const authenticateToken = require('./middleware/auth.cjs');
 const clientModel = require('./models/clientModel.cjs');
 const { generatePortfolioSummary } = require('./utils/strategic.cjs');
 
+const PROMPT_SETTINGS = {
+  portfolioAnalysis: {
+    temperature: 0.3,
+    max_tokens: 3000,
+    top_p: 0.9,
+    frequency_penalty: 0.2
+  },
+  strategicAdvice: {
+    temperature: 0.4,
+    max_tokens: 3500,
+    top_p: 0.92,
+    frequency_penalty: 0.3
+  },
+  clientRecommendations: {
+    temperature: 0.25,
+    max_tokens: 2500,
+    top_p: 0.88,
+    frequency_penalty: 0.2
+  },
+  successionScenario: {
+    temperature: 0.35,
+    max_tokens: 4000,
+    top_p: 0.9,
+    frequency_penalty: 0.25
+  },
+  capacityOptimization: {
+    temperature: 0.3,
+    max_tokens: 3500,
+    top_p: 0.9,
+    frequency_penalty: 0.2
+  },
+  growthModeling: {
+    temperature: 0.45,
+    max_tokens: 4500,
+    top_p: 0.93,
+    frequency_penalty: 0.3
+  }
+};
+
 // Initialize Anthropic client
 let anthropic = null;
 
@@ -751,6 +790,588 @@ Remember: Be specific, actionable, and realistic. Every recommendation should ha
 </response_structure>`;
 }
 
+function createSuccessionScenarioPrompt(scenarioData, portfolioSummary) {
+  const {
+    partnerName = 'Partner',
+    departureDate = 'Not specified',
+    transitionPeriod = 3,
+    affectedClients = [],
+    successorPartner = 'TBD',
+    retentionStrategy = 'Standard transition protocol',
+    riskMitigation = 'Standard measures'
+  } = scenarioData || {};
+
+  // Calculate succession metrics
+  const affectedRevenue = affectedClients.reduce((sum, client) => sum + (client.revenue || 0), 0);
+  const revenueImpact = portfolioSummary.totalRevenue > 0 ? (affectedRevenue / portfolioSummary.totalRevenue) * 100 : 0;
+  const clientCount = affectedClients.length;
+  const avgClientValue = clientCount > 0 ? affectedRevenue / clientCount : 0;
+
+  return `You are a senior succession planning consultant specializing in government relations law firms. You're analyzing a critical partner transition scenario that requires comprehensive strategic planning and risk mitigation.
+
+<succession_scenario>
+Departing Partner: ${partnerName}
+Departure Timeline: ${departureDate}
+Transition Period: ${transitionPeriod} months
+Successor Partner: ${successorPartner}
+
+FINANCIAL IMPACT ANALYSIS
+- Total Revenue at Risk: $${affectedRevenue.toLocaleString()}
+- Portfolio Impact: ${revenueImpact.toFixed(1)}% of total firm revenue
+- Affected Client Count: ${clientCount} clients
+- Average Client Value: $${avgClientValue.toLocaleString()}
+
+CLIENT PORTFOLIO ANALYSIS
+${affectedClients.map((client, i) => 
+  `${i + 1}. ${client.name || 'Client ' + (i + 1)}
+   - Annual Revenue: $${(client.revenue || 0).toLocaleString()}
+   - Relationship Strength: ${client.relationshipStrength || 'Unknown'}/10
+   - Strategic Value: ${client.strategicValue || 'Unknown'}/10
+   - Risk Level: ${client.riskLevel || 'Medium'}
+   - Practice Areas: ${client.practiceArea ? (Array.isArray(client.practiceArea) ? client.practiceArea.join(', ') : client.practiceArea) : 'Not specified'}`
+).join('\n\n')}
+
+TRANSITION STRATEGY
+- Retention Strategy: ${retentionStrategy}
+- Risk Mitigation: ${riskMitigation}
+- Knowledge Transfer Plan: ${scenarioData.knowledgeTransfer || 'To be developed'}
+
+FIRM CONTEXT
+- Total Portfolio: ${portfolioSummary.totalClients} clients, $${portfolioSummary.totalRevenue.toLocaleString()} revenue
+- Strategic Position: Average strategic value ${portfolioSummary.avgStrategicValue || 'Unknown'}/10
+- Risk Profile: ${Object.entries(portfolioSummary.riskProfile || {}).map(([level, count]) => `${level}: ${count}`).join(', ')}
+</succession_scenario>
+
+Provide a comprehensive succession analysis structured as follows:
+
+## EXECUTIVE SUMMARY
+[2-3 sentences capturing the critical succession risks and recommended strategy]
+
+## SUCCESSION RISK ASSESSMENT
+
+### Financial Impact Analysis
+- **Revenue Vulnerability**: [Quantified risk to affected revenue streams]
+- **Client Retention Probability**: [Estimated retention rates by client segment]
+- **Financial Recovery Timeline**: [Expected timeline to restore revenue levels]
+
+### Relationship Risk Matrix
+[For each affected client: relationship strength, succession risk, retention strategy]
+
+### Strategic Impact Assessment
+- **Practice Area Implications**: [How departure affects firm capabilities]
+- **Market Position Risk**: [Competitive vulnerabilities created]
+- **Internal Capability Gaps**: [Skills and relationships lost]
+
+## SUCCESSION STRATEGY FRAMEWORK
+
+### Transition Architecture
+1. **Pre-Departure Phase** (Months 1-${Math.max(1, transitionPeriod - 1)})
+   - Client Communication Strategy
+   - Relationship Transfer Protocols
+   - Knowledge Documentation Requirements
+
+2. **Active Transition Phase** (Month ${transitionPeriod})
+   - Client Introduction Process
+   - Service Continuity Assurance
+   - Performance Monitoring Systems
+
+3. **Post-Departure Stabilization** (Months ${transitionPeriod + 1}-${transitionPeriod + 6})
+   - Relationship Strengthening Initiatives
+   - Service Delivery Optimization
+   - Client Satisfaction Monitoring
+
+### Client-Specific Transition Plans
+[Customized approach for each high-value client based on relationship strength and strategic importance]
+
+## RISK MITIGATION STRATEGIES
+
+### Revenue Protection Measures
+- **Immediate Actions**: [Steps to secure revenue in transition]
+- **Client Retention Incentives**: [Specific measures to ensure continuity]
+- **Service Enhancement**: [How to exceed expectations during transition]
+
+### Relationship Preservation Tactics
+- **Stakeholder Mapping**: [Key relationships to protect and transfer]
+- **Communication Protocols**: [How and when to communicate changes]
+- **Trust Building Initiatives**: [Specific actions to maintain confidence]
+
+### Competitive Defense
+- **Market Intelligence**: [Monitoring competitor recruitment efforts]
+- **Client Engagement Intensity**: [Increased touchpoints during vulnerable period]
+- **Value Demonstration**: [Reinforcing firm capabilities beyond individual partner]
+
+## SUCCESSOR DEVELOPMENT PLAN
+
+### Capability Assessment
+- **Current Competencies**: [Successor's existing strengths]
+- **Development Needs**: [Skills and relationships to build]
+- **Support Requirements**: [Resources needed for success]
+
+### Accelerated Relationship Building
+- **Client Introduction Strategy**: [Systematic approach to relationship transfer]
+- **Credibility Building**: [How to establish successor as trusted advisor]
+- **Knowledge Transfer Protocol**: [Systematic capture and transfer of client intelligence]
+
+## IMPLEMENTATION ROADMAP
+
+### Critical Path Activities
+[Time-sensitive actions that must occur for successful transition]
+
+### 30-60-90 Day Milestones
+[Specific deliverables and success metrics for each phase]
+
+### Success Metrics Dashboard
+- **Client Retention Rate**: Target ≥${Math.max(85, 100 - Math.round(revenueImpact))}%
+- **Revenue Preservation**: Target ≥${Math.max(90, 100 - Math.round(revenueImpact/2))}%
+- **Relationship Strength**: Maintain average scores within 1 point
+- **Service Quality**: Client satisfaction ≥${Math.max(8, 10 - Math.round(revenueImpact/10))}%
+
+## CONTINGENCY PLANNING
+
+### Scenario-Based Responses
+- **Best Case**: [If transition exceeds expectations]
+- **Expected Case**: [Realistic outcome planning]
+- **Worst Case**: [Emergency response protocols]
+
+### Emergency Protocols
+[Specific actions if key clients signal departure intention]
+
+## ORGANIZATIONAL LEARNING
+
+### Knowledge Capture Systems
+[How to prevent future knowledge loss]
+
+### Succession Planning Improvements
+[Process enhancements for future transitions]
+
+### Institutional Resilience
+[Building firm capabilities beyond individual dependencies]
+
+Remember: Focus on actionable strategies with clear timelines, ownership, and success metrics. Every recommendation should have a specific implementation plan and measurable outcome.`;
+}
+
+function createCapacityScenarioPrompt(scenarioData, portfolioSummary) {
+  const {
+    currentUtilization = 85,
+    targetUtilization = 90,
+    additionalCapacity = 200,
+    timeframe = 12,
+    investmentBudget = 500000,
+    practiceAreaFocus = ['General Government Relations'],
+    expectedROI = 25
+  } = scenarioData || {};
+
+  // Calculate capacity metrics
+  const utilizationIncrease = targetUtilization - currentUtilization;
+  const capacityIncrease = (additionalCapacity / (portfolioSummary.totalRevenue || 1000000)) * 100;
+  const monthlyInvestment = investmentBudget / timeframe;
+  const avgRevenuePerHour = portfolioSummary.totalRevenue / (52 * 40 * portfolioSummary.totalClients || 1);
+
+  return `You are a senior capacity optimization consultant specializing in government relations law firms. You're developing a comprehensive capacity enhancement strategy that will maximize revenue potential while maintaining service quality.
+
+<capacity_scenario>
+Current State Analysis:
+- Current Utilization Rate: ${currentUtilization}%
+- Target Utilization Rate: ${targetUtilization}%
+- Utilization Gap: ${utilizationIncrease}% improvement needed
+- Current Portfolio: ${portfolioSummary.totalClients} clients, $${portfolioSummary.totalRevenue.toLocaleString()} revenue
+
+Capacity Enhancement Goals:
+- Additional Capacity Target: ${additionalCapacity} billable hours annually
+- Implementation Timeframe: ${timeframe} months
+- Investment Budget: $${investmentBudget.toLocaleString()}
+- Monthly Investment: $${monthlyInvestment.toLocaleString()}
+- Expected ROI: ${expectedROI}%
+
+Strategic Focus Areas:
+- Practice Area Concentration: ${Array.isArray(practiceAreaFocus) ? practiceAreaFocus.join(', ') : practiceAreaFocus}
+- Capacity Increase Impact: ${capacityIncrease.toFixed(1)}% expansion relative to current revenue base
+- Revenue Per Hour Target: $${avgRevenuePerHour.toFixed(0)}
+
+Current Portfolio Distribution:
+${Object.entries(portfolioSummary.practiceAreas || {})
+  .sort(([,a], [,b]) => b - a)
+  .map(([area, count]) => `- ${area}: ${count} clients (${((count / portfolioSummary.totalClients) * 100).toFixed(1)}%)`)
+  .join('\n')}
+
+Resource Allocation Context:
+- High-Value Clients (>$100k): ${portfolioSummary.topClients?.filter(c => c.revenue > 100000)?.length || 'Unknown'}
+- Strategic Clients (8+ rating): ${portfolioSummary.topClients?.filter(c => c.strategicValue >= 8)?.length || 'Unknown'}
+- Risk Profile: ${Object.entries(portfolioSummary.riskProfile || {}).map(([level, count]) => `${level}: ${count}`).join(', ')}
+</capacity_scenario>
+
+Provide a comprehensive capacity optimization analysis structured as follows:
+
+## EXECUTIVE SUMMARY
+[2-3 sentences capturing the capacity opportunity and recommended optimization strategy]
+
+## CAPACITY DIAGNOSTIC ASSESSMENT
+
+### Current State Analysis
+- **Utilization Efficiency**: [Analysis of current ${currentUtilization}% utilization and improvement potential]
+- **Bottleneck Identification**: [Key constraints limiting capacity optimization]
+- **Revenue Per Hour Analysis**: [Current efficiency at $${avgRevenuePerHour.toFixed(0)}/hour and improvement targets]
+
+### Capacity Gap Analysis
+- **Quantified Opportunity**: [${additionalCapacity} hours = $${(additionalCapacity * avgRevenuePerHour).toLocaleString()} potential revenue]
+- **Resource Requirements**: [People, systems, and infrastructure needed]
+- **Investment Efficiency**: [Cost per additional billable hour: $${(investmentBudget / additionalCapacity).toFixed(0)}]
+
+## OPTIMIZATION STRATEGY FRAMEWORK
+
+### Resource Deployment Strategy
+1. **Human Capital Enhancement**
+   - Partner Capacity: [Strategies to increase partner utilization from ${currentUtilization}% to ${targetUtilization}%]
+   - Associate Development: [Building leverage and capability for capacity multiplication]
+   - Support Staff Optimization: [Administrative efficiency to free up billable capacity]
+
+2. **Technology-Enabled Efficiency**
+   - Automation Opportunities: [Processes that can free up ${Math.round(additionalCapacity * 0.3)} hours annually]
+   - Knowledge Management: [Systems to accelerate delivery and reduce rework]
+   - Client Communication Tools: [Platforms to streamline client interaction]
+
+3. **Process Optimization**
+   - Service Delivery Streamlining: [Standardized approaches for common work types]
+   - Project Management Enhancement: [Better scope and timeline management]
+   - Quality Assurance Efficiency: [Maintaining standards while increasing throughput]
+
+### Practice Area Capacity Allocation
+${practiceAreaFocus.map((area, i) => 
+  `${i + 1}. **${area}** Capacity Enhancement
+   - Current Position: ${portfolioSummary.practiceAreas?.[area] || 0} clients
+   - Growth Target: [Specific capacity allocation for this practice area]
+   - Revenue Opportunity: [Estimated additional revenue potential]
+   - Resource Requirements: [Specific investments needed]`
+).join('\n\n')}
+
+## REVENUE OPTIMIZATION PATHWAY
+
+### Revenue Enhancement Strategy
+- **Current Revenue Base**: $${portfolioSummary.totalRevenue.toLocaleString()}
+- **Capacity-Driven Growth**: [${additionalCapacity} hours × $${avgRevenuePerHour.toFixed(0)}/hour = $${(additionalCapacity * avgRevenuePerHour).toLocaleString()}]
+- **Efficiency Improvements**: [Revenue gains from ${utilizationIncrease}% utilization increase]
+- **Total Revenue Potential**: [Combined impact of capacity and efficiency gains]
+
+### Client Optimization Strategy
+1. **High-Value Client Expansion**
+   - Current High-Value Relationships: [Analysis of clients with expansion potential]
+   - Service Line Extension: [Additional services to existing strategic clients]
+   - Relationship Deepening: [Strategies to increase wallet share]
+
+2. **New Client Acquisition Framework**
+   - Target Client Profile: [Ideal new clients to fill additional capacity]
+   - Acquisition Strategy: [How to attract and win target clients]
+   - Onboarding Optimization: [Efficient integration of new clients]
+
+### Pricing Strategy Enhancement
+- **Value-Based Pricing**: [Opportunities to price based on outcomes rather than hours]
+- **Premium Service Tiers**: [High-margin offerings for strategic clients]
+- **Efficiency Pricing**: [Passing through efficiency gains as competitive advantage]
+
+## IMPLEMENTATION ROADMAP
+
+### Phase 1: Foundation Building (Months 1-${Math.round(timeframe/3)})
+- **Investment**: $${(monthlyInvestment * Math.round(timeframe/3)).toLocaleString()}
+- **Key Activities**: [Infrastructure, hiring, and system implementation]
+- **Success Metrics**: [Baseline establishment and initial capacity gains]
+
+### Phase 2: Capacity Scaling (Months ${Math.round(timeframe/3)+1}-${Math.round(2*timeframe/3)})
+- **Investment**: $${(monthlyInvestment * Math.round(timeframe/3)).toLocaleString()}
+- **Key Activities**: [Client acquisition, service delivery optimization]
+- **Success Metrics**: [${Math.round(utilizationIncrease/2)}% utilization improvement, ${Math.round(additionalCapacity/2)} additional hours]
+
+### Phase 3: Optimization & Scale (Months ${Math.round(2*timeframe/3)+1}-${timeframe})
+- **Investment**: $${(monthlyInvestment * (timeframe - 2*Math.round(timeframe/3))).toLocaleString()}
+- **Key Activities**: [Full capacity utilization, premium service delivery]
+- **Success Metrics**: [${targetUtilization}% utilization, ${additionalCapacity} total additional hours]
+
+## RISK MANAGEMENT FRAMEWORK
+
+### Capacity Risks
+- **Utilization Risk**: [What if demand doesn't materialize for additional capacity?]
+- **Quality Risk**: [How to maintain service standards at higher utilization?]
+- **Talent Risk**: [Can we attract and retain necessary human capital?]
+
+### Financial Risk Mitigation
+- **ROI Protection**: [Ensuring ${expectedROI}% return through disciplined execution]
+- **Investment Recovery**: [Break-even analysis and recovery timeline]
+- **Scenario Planning**: [Financial outcomes under different utilization scenarios]
+
+### Market Risk Assessment
+- **Competitive Response**: [How competitors might react to capacity expansion]
+- **Economic Sensitivity**: [Impact of market downturns on utilization targets]
+- **Client Concentration**: [Managing risk of over-dependence on large clients]
+
+## SUCCESS METRICS & MONITORING
+
+### Financial KPIs
+- **Revenue Growth**: Target ${Math.round((additionalCapacity * avgRevenuePerHour / portfolioSummary.totalRevenue) * 100)}% increase
+- **Utilization Rate**: Progress from ${currentUtilization}% to ${targetUtilization}%
+- **Revenue Per Hour**: Maintain $${avgRevenuePerHour.toFixed(0)} minimum
+- **ROI Achievement**: Track toward ${expectedROI}% target
+
+### Operational KPIs
+- **Capacity Utilization**: ${additionalCapacity} additional billable hours annually
+- **Client Satisfaction**: Maintain ≥8.5 rating during expansion
+- **Quality Metrics**: Service delivery standards maintenance
+- **Team Performance**: Individual and team productivity measures
+
+### Strategic KPIs
+- **Market Share**: Position enhancement in target practice areas
+- **Client Mix**: Balance of strategic vs. revenue clients
+- **Competitive Position**: Relative market standing
+- **Organizational Capabilities**: New competency development
+
+## DECISION FRAMEWORKS
+
+### Go/No-Go Criteria
+[Specific metrics and conditions that determine investment continuation]
+
+### Pivot Points
+[Circumstances that would require strategy modification]
+
+### Success Thresholds
+[Milestones that indicate successful capacity optimization]
+
+Remember: Focus on measurable outcomes, realistic timelines, and sustainable growth that enhances rather than compromises service quality.`;
+}
+
+function createGrowthScenarioPrompt(scenarioData, portfolioSummary) {
+  const {
+    growthTarget = 25,
+    timeframe = 24,
+    growthVector = 'Organic Growth',
+    targetMarkets = ['Federal Government', 'State Government'],
+    investmentLevel = 750000,
+    newHires = 3,
+    marketConditions = 'Favorable',
+    competitivePosition = 'Strong'
+  } = scenarioData || {};
+
+  // Calculate growth metrics
+  const currentRevenue = portfolioSummary.totalRevenue || 0;
+  const targetRevenue = currentRevenue * (1 + growthTarget / 100);
+  const incrementalRevenue = targetRevenue - currentRevenue;
+  const monthlyGrowthTarget = (Math.pow(1 + growthTarget / 100, 1/timeframe) - 1) * 100;
+  const revenuePerEmployee = currentRevenue / Math.max(1, newHires + 5); // Assume 5 current employees
+
+  return `You are a senior growth strategy consultant specializing in government relations law firms. You're developing a comprehensive growth acceleration plan that will deliver sustainable revenue expansion while strengthening market position.
+
+<growth_scenario>
+Growth Objectives:
+- Growth Target: ${growthTarget}% over ${timeframe} months
+- Current Revenue: $${currentRevenue.toLocaleString()}
+- Target Revenue: $${targetRevenue.toLocaleString()}
+- Incremental Revenue: $${incrementalRevenue.toLocaleString()}
+- Monthly Growth Rate: ${monthlyGrowthTarget.toFixed(1)}%
+
+Growth Strategy Framework:
+- Primary Vector: ${growthVector}
+- Target Markets: ${Array.isArray(targetMarkets) ? targetMarkets.join(', ') : targetMarkets}
+- Investment Budget: $${investmentLevel.toLocaleString()}
+- Team Expansion: ${newHires} additional professionals
+- Revenue per Professional: $${revenuePerEmployee.toLocaleString()}
+
+Market Context:
+- Market Conditions: ${marketConditions}
+- Competitive Position: ${competitivePosition}
+- Current Portfolio: ${portfolioSummary.totalClients} clients
+- Average Client Value: $${(currentRevenue / portfolioSummary.totalClients).toLocaleString()}
+
+Current Portfolio Analysis:
+- Total Clients: ${portfolioSummary.totalClients}
+- Strategic Clients (8+ rating): ${portfolioSummary.topClients?.filter(c => c.strategicValue >= 8)?.length || 0}
+- High-Value Clients (>$100k): ${portfolioSummary.topClients?.filter(c => c.revenue > 100000)?.length || 0}
+- Practice Area Distribution: ${Object.entries(portfolioSummary.practiceAreas || {}).sort(([,a], [,b]) => b - a).slice(0, 3).map(([area, count]) => `${area} (${count})`).join(', ')}
+
+Growth Foundation:
+- Average Strategic Value: ${portfolioSummary.avgStrategicValue || 'Unknown'}/10
+- Risk Profile: ${Object.entries(portfolioSummary.riskProfile || {}).map(([level, count]) => `${level}: ${count}`).join(', ')}
+- Top Client Concentration: ${portfolioSummary.topClients?.slice(0, 5).reduce((sum, c) => sum + c.revenue, 0) || 0} (${((portfolioSummary.topClients?.slice(0, 5).reduce((sum, c) => sum + c.revenue, 0) || 0) / currentRevenue * 100).toFixed(1)}%)
+</growth_scenario>
+
+Provide a comprehensive growth strategy analysis structured as follows:
+
+## EXECUTIVE SUMMARY
+[2-3 sentences capturing the growth opportunity, strategy, and expected outcomes]
+
+## GROWTH OPPORTUNITY ASSESSMENT
+
+### Market Analysis
+- **Total Addressable Market**: [Size and characteristics of target government relations market]
+- **Market Growth Trends**: [Industry growth rates and driving factors in ${marketConditions.toLowerCase()} conditions]
+- **Competitive Landscape**: [Key competitors and our ${competitivePosition.toLowerCase()} position relative to them]
+- **White Space Identification**: [Unserved or underserved market segments]
+
+### Internal Growth Capacity
+- **Current Capability Assessment**: [Existing strengths that support ${growthTarget}% growth]
+- **Resource Scalability**: [How current resources can accommodate growth]
+- **Competitive Advantages**: [Unique positioning for growth acceleration]
+- **Growth Readiness Score**: [Assessment of organizational readiness for expansion]
+
+### Growth Vector Analysis
+**${growthVector} Strategy Deep Dive:**
+${growthVector === 'Organic Growth' ? `
+- **Client Expansion**: [Opportunities to grow existing relationships]
+- **Service Line Extension**: [New services for current clients]
+- **Market Penetration**: [Deeper engagement in current markets]
+- **Geographic Expansion**: [New jurisdictions or regions]
+` : growthVector === 'Acquisition' ? `
+- **Acquisition Targets**: [Potential firms or practices to acquire]
+- **Integration Strategy**: [How to successfully merge capabilities]
+- **Synergy Realization**: [Expected cost and revenue synergies]
+- **Cultural Integration**: [Managing organizational change]
+` : `
+- **Strategic Partnerships**: [Key alliance opportunities]
+- **Joint Ventures**: [Collaborative growth initiatives]
+- **Network Effects**: [Leveraging partner relationships]
+- **Platform Strategy**: [Building ecosystem capabilities]
+`}
+
+## GROWTH STRATEGY FRAMEWORK
+
+### Revenue Growth Architecture
+1. **Client Portfolio Expansion**
+   - Existing Client Growth: [${Math.round(incrementalRevenue * 0.4).toLocaleString()} target from current clients]
+   - New Client Acquisition: [${Math.round(incrementalRevenue * 0.6).toLocaleString()} target from new relationships]
+   - Client Value Optimization: [Strategies to increase average client value from $${(currentRevenue / portfolioSummary.totalClients).toLocaleString()}]
+
+2. **Service Offering Enhancement**
+${targetMarkets.map((market, i) => 
+  `   - **${market} Practice**: [Specific growth strategies and revenue targets]
+     • Current Position: [Market share and capability assessment]
+     • Growth Opportunity: [Specific expansion plans and targets]
+     • Investment Required: [Resources needed for market expansion]`
+).join('\n\n')}
+
+3. **Capability Building Strategy**
+   - Team Expansion: [${newHires} strategic hires across key practice areas]
+   - Skill Development: [Training and development for ${growthTarget}% growth capacity]
+   - Technology Investment: [Systems to support expanded operations]
+   - Infrastructure Scaling: [Operational capabilities for larger firm]
+
+### Market Penetration Strategy
+- **Target Client Identification**: [Specific prospects aligned with growth targets]
+- **Value Proposition Development**: [Differentiated positioning for target markets]
+- **Go-to-Market Execution**: [Sales and marketing strategies for client acquisition]
+- **Competitive Positioning**: [How to leverage ${competitivePosition.toLowerCase()} market position]
+
+## FINANCIAL GROWTH MODEL
+
+### Revenue Projection Framework
+- **Year 1**: $${(currentRevenue * (1 + (growthTarget/100) * (12/timeframe))).toLocaleString()} (${(growthTarget * 12/timeframe).toFixed(1)}% growth)
+- **Year 2**: $${targetRevenue.toLocaleString()} (${growthTarget}% total growth achieved)
+- **Monthly Progression**: [${monthlyGrowthTarget.toFixed(1)}% compound monthly growth rate]
+
+### Investment Allocation Strategy
+- **Human Capital** (${Math.round((investmentLevel * 0.6)/1000)}k): [${newHires} new hires at $${Math.round(investmentLevel * 0.6 / newHires / 1000)}k average]
+- **Business Development** (${Math.round((investmentLevel * 0.25)/1000)}k): [Marketing, sales, and client acquisition]
+- **Technology & Infrastructure** (${Math.round((investmentLevel * 0.15)/1000)}k): [Systems and operational capabilities]
+
+### ROI Analysis
+- **Investment**: $${investmentLevel.toLocaleString()} over ${timeframe} months
+- **Incremental Revenue**: $${incrementalRevenue.toLocaleString()} annually at full growth
+- **ROI**: ${((incrementalRevenue - investmentLevel/2) / investmentLevel * 100).toFixed(0)}% (assuming ${Math.round(100/2)}% margin on incremental revenue)
+- **Payback Period**: [${Math.round(investmentLevel / (incrementalRevenue/12))} months]
+
+## EXECUTION ROADMAP
+
+### Phase 1: Foundation (Months 1-${Math.round(timeframe/3)})
+**Investment**: $${Math.round(investmentLevel/3).toLocaleString()}
+**Key Activities**:
+- Strategic hiring (${Math.round(newHires/2)} professionals)
+- Market research and client identification
+- Service offering development
+- Infrastructure setup
+
+**Success Metrics**:
+- ${Math.round(growthTarget/3)}% revenue growth
+- ${Math.round(portfolioSummary.totalClients * 0.2)} new client prospects identified
+- Team capacity increased by ${Math.round(newHires/2)} professionals
+
+### Phase 2: Acceleration (Months ${Math.round(timeframe/3)+1}-${Math.round(2*timeframe/3)})
+**Investment**: $${Math.round(investmentLevel/3).toLocaleString()}
+**Key Activities**:
+- Full team deployment (remaining ${Math.ceil(newHires/2)} hires)
+- Aggressive client acquisition
+- Service delivery optimization
+- Market presence expansion
+
+**Success Metrics**:
+- ${Math.round(2*growthTarget/3)}% cumulative revenue growth
+- ${Math.round(portfolioSummary.totalClients * 0.4)} new client engagements
+- ${targetMarkets.length} market penetration milestones achieved
+
+### Phase 3: Optimization (Months ${Math.round(2*timeframe/3)+1}-${timeframe})
+**Investment**: $${Math.round(investmentLevel/3).toLocaleString()}
+**Key Activities**:
+- Client relationship deepening
+- Service portfolio optimization
+- Competitive positioning strengthening
+- Sustainable growth systems implementation
+
+**Success Metrics**:
+- ${growthTarget}% total revenue growth achieved
+- Average client value increase to $${Math.round((targetRevenue / (portfolioSummary.totalClients * 1.3)) / 1000)}k
+- Market leadership position in ${Math.min(2, targetMarkets.length)} practice areas
+
+## RISK MANAGEMENT & CONTINGENCIES
+
+### Growth Risk Assessment
+1. **Market Risks**
+   - Economic Downturn: [Impact on ${marketConditions.toLowerCase()} market conditions]
+   - Regulatory Changes: [Government relations market disruption potential]
+   - Competitive Response: [How competitors might counter our growth]
+
+2. **Execution Risks**
+   - Talent Acquisition: [Ability to hire ${newHires} quality professionals]
+   - Client Acquisition: [Converting prospects into ${Math.round(incrementalRevenue / 150000)} new clients]
+   - Service Delivery: [Maintaining quality during rapid growth]
+
+3. **Financial Risks**
+   - Cash Flow: [Managing $${investmentLevel.toLocaleString()} investment over ${timeframe} months]
+   - ROI Realization: [Ensuring profitable growth rather than growth at any cost]
+   - Client Concentration: [Avoiding over-dependence on large new clients]
+
+### Contingency Planning
+- **Scenario A** (Conservative): ${Math.round(growthTarget * 0.7)}% growth with ${Math.round(investmentLevel * 0.8).toLocaleString()} investment
+- **Scenario B** (Aggressive): ${Math.round(growthTarget * 1.3)}% growth with ${Math.round(investmentLevel * 1.2).toLocaleString()} investment
+- **Exit Strategy**: [How to scale back if market conditions deteriorate]
+
+## SUCCESS METRICS & MONITORING
+
+### Financial KPIs
+- **Revenue Growth**: Monthly tracking toward ${growthTarget}% target
+- **Client Acquisition**: Target ${Math.round(incrementalRevenue / 150000)} new clients over ${timeframe} months
+- **Average Client Value**: Increase from $${Math.round(currentRevenue / portfolioSummary.totalClients / 1000)}k to $${Math.round(targetRevenue / (portfolioSummary.totalClients * 1.3) / 1000)}k
+- **Profitability**: Maintain margins while investing in growth
+
+### Market KPIs
+- **Market Share**: Progress in ${targetMarkets.join(' and ')} markets
+- **Brand Recognition**: Awareness and positioning metrics
+- **Competitive Position**: Relative standing against key competitors
+- **Client Satisfaction**: Maintain ≥8.5 rating during growth phase
+
+### Operational KPIs
+- **Team Productivity**: Revenue per professional tracking
+- **Service Delivery**: Quality metrics during scale-up
+- **Client Retention**: Maintain ≥95% retention during growth
+- **Pipeline Development**: Healthy prospect flow for sustained growth
+
+## STRATEGIC DECISION POINTS
+
+### Investment Gates
+[Key milestones that determine continued investment in growth strategy]
+
+### Pivot Triggers
+[Market or performance conditions that would require strategy modification]
+
+### Success Celebrations
+[Achievement milestones that validate growth strategy effectiveness]
+
+Remember: Balance ambitious growth targets with sustainable execution, ensuring that rapid expansion strengthens rather than compromises the firm's market position and service quality.`;
+}
+
 // Helper functions
 function calculateRiskScore(client) {
   let score = 5; // baseline
@@ -772,4 +1393,13 @@ function calculateGrowthPotential(client) {
 
 
 
-module.exports = router;
+module.exports = {
+  router,
+  PROMPT_SETTINGS,
+  createAnalysisPrompt,
+  createStrategicPrompt,
+  createClientRecommendationPrompt,
+  createSuccessionScenarioPrompt,
+  createCapacityScenarioPrompt,
+  createGrowthScenarioPrompt
+};
