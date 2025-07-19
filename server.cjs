@@ -86,9 +86,11 @@ app.use('/api/auth', authRouter);
 // Stage 3 routers
 const clientsRouter = require('./routes/clients.cjs');
 const revenuesRouter = require('./routes/revenues.cjs');
+const scenariosRouter = require('./routes/scenarios.cjs');
 
 app.use('/api/clients', clientsRouter);
 app.use('/api/revenues', revenuesRouter);
+app.use('/api/scenarios', scenariosRouter);
 
 // Serve static files from React build
 app.use(express.static(path.join(__dirname, '../frontend/build')));
