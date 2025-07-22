@@ -251,10 +251,11 @@ const usePortfolioStore = create(
         const state = get();
         const partnerMap = new Map();
         
+        // First pass: collect primary clients
         state.clients.forEach(client => {
           const lobbyistName = client.primary_lobbyist || 'Unassigned';
           const revenue = state.getClientRevenue(client);
-          const strategicValue = client.strategic_value || 0;
+          const strategicValue = client.strategicValue || 0;
           const practiceArea = Array.isArray(client.practice_area) ? client.practice_area : [client.practice_area].filter(Boolean);
           
           if (!partnerMap.has(lobbyistName)) {
@@ -263,6 +264,7 @@ const usePortfolioStore = create(
               name: lobbyistName,
               isDeparting: false,
               clients: [],
+              teamMemberClients: [],
               totalRevenue: 0,
               clientCount: 0,
               totalStrategicValue: 0,
@@ -278,11 +280,41 @@ const usePortfolioStore = create(
           practiceArea.forEach(area => partner.practiceAreas.add(area));
         });
         
+        // Second pass: collect team member clients (where they're not primary)
+        state.clients.forEach(client => {
+          const lobbyistTeam = Array.isArray(client.lobbyist_team) ? client.lobbyist_team : [];
+          const primaryLobbyist = client.primary_lobbyist || 'Unassigned';
+          
+          lobbyistTeam.forEach(teamMemberName => {
+            // Skip if this is the same as primary lobbyist
+            if (teamMemberName === primaryLobbyist) return;
+            
+            // Create partner entry if doesn't exist
+            if (!partnerMap.has(teamMemberName)) {
+              partnerMap.set(teamMemberName, {
+                id: `partner_${teamMemberName.toLowerCase().replace(/\s+/g, '_')}`,
+                name: teamMemberName,
+                isDeparting: false,
+                clients: [],
+                teamMemberClients: [],
+                totalRevenue: 0,
+                clientCount: 0,
+                totalStrategicValue: 0,
+                practiceAreas: new Set()
+              });
+            }
+            
+            const partner = partnerMap.get(teamMemberName);
+            partner.teamMemberClients.push(client.id);
+          });
+        });
+        
         const partners = Array.from(partnerMap.values()).map(partner => ({
           ...partner,
           avgStrategicValue: partner.clientCount > 0 ? partner.totalStrategicValue / partner.clientCount : 0,
           capacityUsed: Math.min(100, (partner.clientCount / 15) * 100), // Assuming 15 clients = 100% capacity
-          practiceAreas: Array.from(partner.practiceAreas)
+          practiceAreas: Array.from(partner.practiceAreas),
+          teamMemberClients: partner.teamMemberClients
         }));
         
         set({ partners });

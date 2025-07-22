@@ -28,12 +28,14 @@ const PartnerDeepDive = ({ partner, onClose }) => {
   const partnerData = useMemo(() => {
     if (!partner || !clients?.length) return {
       partnerClients: [],
+      teamMemberClients: [],
       practiceAreaChartData: [],
       revenueAnalysis: [],
       monthlyWorkload: []
     };
 
     const partnerClients = partner.clients?.map(clientId => getClientById(clientId)).filter(Boolean) || [];
+    const teamMemberClients = partner.teamMemberClients?.map(clientId => getClientById(clientId)).filter(Boolean) || [];
     
     // Practice area breakdown
     const practiceAreaData = {};
@@ -68,6 +70,7 @@ const PartnerDeepDive = ({ partner, onClose }) => {
 
     return {
       partnerClients,
+      teamMemberClients,
       practiceAreaChartData,
       revenueAnalysis,
       monthlyWorkload
@@ -184,37 +187,81 @@ const PartnerDeepDive = ({ partner, onClose }) => {
             )}
           </TabsContent>
 
-          <TabsContent value="clients" className="px-6">
-            {partnerData.partnerClients.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                No clients assigned to this partner
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Client Name</TableHead>
-                    <TableHead>Revenue</TableHead>
-                    <TableHead>Strategic Value</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {partnerData.partnerClients.map((client) => (
-                    <TableRow key={client.id}>
-                      <TableCell className="font-medium">{formatClientName(client.name)}</TableCell>
-                      <TableCell>{formatRevenue(getClientRevenue(client))}</TableCell>
-                      <TableCell className={getStrategicValueColor(client.strategic_value || 0)}>
-                        {client.strategic_value?.toFixed(1) || '0.0'}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{client.status || 'Unknown'}</Badge>
-                      </TableCell>
+          <TabsContent value="clients" className="px-6 space-y-6">
+            {/* Primary Clients */}
+            <div>
+              <h3 className="text-lg font-semibold mb-3">Primary Clients ({partnerData.partnerClients.length})</h3>
+              {partnerData.partnerClients.length === 0 ? (
+                <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg">
+                  No clients assigned as primary
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Client Name</TableHead>
+                      <TableHead>Revenue</TableHead>
+                      <TableHead>Strategic Value</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+                  </TableHeader>
+                  <TableBody>
+                    {partnerData.partnerClients.map((client) => (
+                      <TableRow key={client.id}>
+                        <TableCell className="font-medium">{formatClientName(client.name)}</TableCell>
+                        <TableCell>{formatRevenue(getClientRevenue(client))}</TableCell>
+                        <TableCell className={getStrategicValueColor(client.strategicValue || 0)}>
+                          {client.strategicValue?.toFixed(1) || '0.0'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{client.status || 'Unknown'}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+
+            {/* Team Member Clients */}
+            <div>
+              <h3 className="text-lg font-semibold mb-3">Team Member Clients ({partnerData.teamMemberClients.length})</h3>
+              <p className="text-sm text-gray-600 mb-3">
+                Clients where this partner is part of the team but not the primary lobbyist. These don't count toward totals but indicate additional workload.
+              </p>
+              {partnerData.teamMemberClients.length === 0 ? (
+                <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg">
+                  No team member assignments
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Client Name</TableHead>
+                      <TableHead>Primary Lobbyist</TableHead>
+                      <TableHead>Revenue</TableHead>
+                      <TableHead>Strategic Value</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {partnerData.teamMemberClients.map((client) => (
+                      <TableRow key={client.id} className="bg-blue-50">
+                        <TableCell className="font-medium">{formatClientName(client.name)}</TableCell>
+                        <TableCell className="text-sm text-gray-600">{client.primary_lobbyist || 'Unassigned'}</TableCell>
+                        <TableCell>{formatRevenue(getClientRevenue(client))}</TableCell>
+                        <TableCell className={getStrategicValueColor(client.strategicValue || 0)}>
+                          {client.strategicValue?.toFixed(1) || '0.0'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{client.status || 'Unknown'}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="revenue" className="px-6 space-y-4">
