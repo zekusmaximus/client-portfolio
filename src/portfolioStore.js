@@ -34,6 +34,15 @@ const usePortfolioStore = create(
       isModalOpen: false,
       currentView: 'data-upload', // 'data-upload', 'dashboard', 'client-details', 'ai', 'scenarios'
       
+      // Partnership state
+      partners: [],
+      selectedPartner: null,
+      partnershipTransition: { 
+        departingPartners: [], 
+        redistributionModel: 'balanced', 
+        customAssignments: {} 
+      },
+      
       // Actions
       setClients: (clients) => set({ clients }),
 
@@ -236,6 +245,54 @@ const usePortfolioStore = create(
           });
         }
       },
+
+      // Partnership actions
+      fetchPartners: () => {
+        const state = get();
+        const partnerMap = new Map();
+        
+        state.clients.forEach(client => {
+          const lobbyistName = client.primary_lobbyist || 'Unassigned';
+          const revenue = state.getClientRevenue(client);
+          const strategicValue = client.strategic_value || 0;
+          const practiceArea = Array.isArray(client.practice_area) ? client.practice_area : [client.practice_area].filter(Boolean);
+          
+          if (!partnerMap.has(lobbyistName)) {
+            partnerMap.set(lobbyistName, {
+              id: `partner_${lobbyistName.toLowerCase().replace(/\s+/g, '_')}`,
+              name: lobbyistName,
+              isDeparting: false,
+              clients: [],
+              totalRevenue: 0,
+              clientCount: 0,
+              totalStrategicValue: 0,
+              practiceAreas: new Set()
+            });
+          }
+          
+          const partner = partnerMap.get(lobbyistName);
+          partner.clients.push(client.id);
+          partner.totalRevenue += revenue;
+          partner.clientCount += 1;
+          partner.totalStrategicValue += strategicValue;
+          practiceArea.forEach(area => partner.practiceAreas.add(area));
+        });
+        
+        const partners = Array.from(partnerMap.values()).map(partner => ({
+          ...partner,
+          avgStrategicValue: partner.clientCount > 0 ? partner.totalStrategicValue / partner.clientCount : 0,
+          capacityUsed: Math.min(100, (partner.clientCount / 15) * 100), // Assuming 15 clients = 100% capacity
+          practiceAreas: Array.from(partner.practiceAreas)
+        }));
+        
+        set({ partners });
+      },
+      
+      setSelectedPartner: (partner) => set({ selectedPartner: partner }),
+      
+      updatePartnershipTransition: (updates) => set((state) => ({
+        partnershipTransition: { ...state.partnershipTransition, ...updates }
+      })),
       
       // Computed getters
       getClientById: (id) => {

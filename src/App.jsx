@@ -9,6 +9,7 @@ import ScenarioModeler from './ScenarioModeler';
 import DataUploadManager from './DataUploadManager';
 import ClientListView from './ClientListView';
 import ClientEnhancementForm from './ClientEnhancementForm';
+import PartnershipAnalytics from './PartnershipAnalytics';
 import LoginPage from './LoginPage';
 import './App.css';
 
@@ -86,7 +87,7 @@ function App() {
       <nav className="border-b bg-muted/30">
         <div className="container mx-auto px-4">
           <Tabs value={currentView} onValueChange={setCurrentView} className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="data-upload" className="flex items-center gap-2">
                 <Upload className="h-4 w-4" />
                 Data Upload
@@ -98,6 +99,10 @@ function App() {
               <TabsTrigger value="client-details" className="flex items-center gap-2">
                 <Users className="h-4 w-4" />
                 Client Details
+              </TabsTrigger>
+              <TabsTrigger value="partnership" className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Partnership
               </TabsTrigger>
               <TabsTrigger value="ai" className="flex items-center gap-2">
                 <Brain className="h-4 w-4" />
@@ -119,6 +124,10 @@ function App() {
 
             <TabsContent value="client-details" className="mt-6">
               <ClientListView />
+            </TabsContent>
+
+            <TabsContent value="partnership" className="mt-6">
+              <PartnershipAnalytics />
             </TabsContent>
 
             <TabsContent value="ai" className="mt-6">
