@@ -1,6 +1,7 @@
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { formatPartnerName } from '../utils/textUtils';
 
 const PartnerCard = ({ partner, onPartnerClick, onPartnerRightClick }) => {
   const formatRevenue = (revenue) => {
@@ -26,7 +27,7 @@ const PartnerCard = ({ partner, onPartnerClick, onPartnerRightClick }) => {
     >
       <CardHeader>
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">{partner.name}</h3>
+          <h3 className="text-lg font-semibold">{formatPartnerName(partner.name)}</h3>
           {partner.isDeparting && (
             <Badge variant="destructive">Departing</Badge>
           )}

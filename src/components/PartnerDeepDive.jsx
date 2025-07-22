@@ -20,6 +20,7 @@ import {
 } from 'recharts';
 import { AlertTriangle } from 'lucide-react';
 import usePortfolioStore from '../portfolioStore';
+import { formatClientName, formatPartnerName } from '../utils/textUtils';
 
 const PartnerDeepDive = ({ partner, onClose }) => {
   const { clients, getClientById, getClientRevenue } = usePortfolioStore();
@@ -93,7 +94,7 @@ const PartnerDeepDive = ({ partner, onClose }) => {
     <Sheet open={!!partner} onOpenChange={onClose}>
       <SheetContent className="w-[600px] sm:max-w-full">
         <SheetHeader>
-          <SheetTitle>{partner.name}'s Portfolio</SheetTitle>
+          <SheetTitle>{formatPartnerName(partner.name)}'s Portfolio</SheetTitle>
           <SheetClose onClick={onClose} />
         </SheetHeader>
         
@@ -201,7 +202,7 @@ const PartnerDeepDive = ({ partner, onClose }) => {
                 <TableBody>
                   {partnerData.partnerClients.map((client) => (
                     <TableRow key={client.id}>
-                      <TableCell className="font-medium">{client.name}</TableCell>
+                      <TableCell className="font-medium">{formatClientName(client.name)}</TableCell>
                       <TableCell>{formatRevenue(getClientRevenue(client))}</TableCell>
                       <TableCell className={getStrategicValueColor(client.strategic_value || 0)}>
                         {client.strategic_value?.toFixed(1) || '0.0'}

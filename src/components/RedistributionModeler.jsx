@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Brain, AlertTriangle } from 'lucide-react';
 import usePortfolioStore from '../portfolioStore';
+import { formatClientName, formatPartnerName } from '../utils/textUtils';
 
 const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading }) => {
   const {
@@ -129,7 +130,7 @@ const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading })
                 <div key={assignment.partnerId} className="border rounded-lg p-4">
                   <div className="flex justify-between items-start mb-2">
                     <div>
-                      <h4 className="font-medium">{assignment.partnerName}</h4>
+                      <h4 className="font-medium">{formatPartnerName(assignment.partnerName)}</h4>
                       <div className="text-sm text-gray-600">
                         +{assignment.assignedClients.length} clients • {formatRevenue(assignment.targetRevenue)} revenue
                       </div>
@@ -146,7 +147,7 @@ const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading })
                     <div className="flex flex-wrap gap-1 mt-2">
                       {assignment.assignedClients.slice(0, 5).map((client, index) => (
                         <Badge key={client.id || index} variant="outline" className="text-xs">
-                          {client.name}
+                          {formatClientName(client.name)}
                         </Badge>
                       ))}
                       {assignment.assignedClients.length > 5 && (
@@ -191,14 +192,14 @@ const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading })
                       >
                         <div className="flex justify-between items-start">
                           <div>
-                            <div className="font-medium text-sm">{client.name}</div>
+                            <div className="font-medium text-sm">{formatClientName(client.name)}</div>
                             <div className="text-xs text-gray-600">
-                              {formatRevenue(getClientRevenue(client))} • {client.originalPartner}
+                              {formatRevenue(getClientRevenue(client))} • {formatPartnerName(client.originalPartner)}
                             </div>
                           </div>
                           {isAssigned && (
                             <Badge variant="secondary" className="text-xs">
-                              → {assignedPartner?.name}
+                              → {formatPartnerName(assignedPartner?.name)}
                             </Badge>
                           )}
                         </div>
@@ -214,7 +215,7 @@ const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading })
                 {selectedClient ? (
                   <div className="space-y-2">
                     <div className="p-2 bg-blue-50 border border-blue-200 rounded text-sm">
-                      Selected: <strong>{selectedClient.name}</strong>
+                      Selected: <strong>{formatClientName(selectedClient.name)}</strong>
                     </div>
                     {remainingPartners.map((partner) => {
                       const currentAssignments = Object.values(partnershipTransition.customAssignments || {})
@@ -227,7 +228,7 @@ const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading })
                           onClick={() => handlePartnerAssign(partner.id)}
                         >
                           <div className="flex justify-between items-center">
-                            <span className="font-medium">{partner.name}</span>
+                            <span className="font-medium">{formatPartnerName(partner.name)}</span>
                             <Badge variant="outline" className="text-xs">
                               +{currentAssignments} assigned
                             </Badge>

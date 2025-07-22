@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ArrowRight } from 'lucide-react';
 import usePortfolioStore from '../portfolioStore';
+import { formatClientName, formatPartnerName } from '../utils/textUtils';
 
 const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
   const { getClientRevenue } = usePortfolioStore();
@@ -120,7 +121,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
 
                 return (
                   <div key={partner.id} className="bg-white p-4 rounded-lg border">
-                    <div className="font-medium text-lg mb-2">{partner.name}</div>
+                    <div className="font-medium text-lg mb-2">{formatPartnerName(partner.name)}</div>
                     <div className="text-sm text-gray-600 mb-3">
                       {partnerClients.length} total clients
                     </div>
@@ -137,7 +138,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
                               key={client.id}
                               className="text-xs p-2 bg-green-50 border border-green-200 rounded"
                             >
-                              <div className="font-medium">{client.name}</div>
+                              <div className="font-medium">{formatClientName(client.name)}</div>
                               <div className="text-gray-600">
                                 {formatRevenue(getClientRevenue(client))}
                               </div>
@@ -164,7 +165,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
                               key={client.id}
                               className="text-xs p-2 bg-red-50 border border-red-200 rounded"
                             >
-                              <div className="font-medium">{client.name}</div>
+                              <div className="font-medium">{formatClientName(client.name)}</div>
                               <div className="text-gray-600">
                                 {formatRevenue(getClientRevenue(client))}
                               </div>
@@ -230,7 +231,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
 
                 return (
                   <div key={partner.id} className="bg-white p-4 rounded-lg border">
-                    <div className="font-medium text-lg mb-2">{partner.name}</div>
+                    <div className="font-medium text-lg mb-2">{formatPartnerName(partner.name)}</div>
                     <div className="text-sm text-gray-600 mb-3">
                       Current: {partner.clientCount} clients
                     </div>
@@ -255,7 +256,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
                                   key={client.id}
                                   className="p-1 bg-blue-50 border border-blue-200 rounded"
                                 >
-                                  <span className="font-medium">{client.name}</span>
+                                  <span className="font-medium">{formatClientName(client.name)}</span>
                                   <span className="text-gray-600 ml-1">
                                     ({formatRevenue(getClientRevenue(client))})
                                   </span>

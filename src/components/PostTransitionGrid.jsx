@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import usePortfolioStore from '../portfolioStore';
+import { formatClientName, formatPartnerName } from '../utils/textUtils';
 
 const PostTransitionGrid = ({ partners, model, clients, customAssignments = {} }) => {
   const { getClientRevenue } = usePortfolioStore();
@@ -159,7 +160,7 @@ const PostTransitionGrid = ({ partners, model, clients, customAssignments = {} }
           >
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">{projectedPartner.name}</CardTitle>
+                <CardTitle className="text-lg">{formatPartnerName(projectedPartner.name)}</CardTitle>
                 {projectedPartner.isOverloaded && (
                   <Badge variant="destructive" className="text-xs">
                     <AlertTriangle className="h-3 w-3 mr-1" />
@@ -216,7 +217,7 @@ const PostTransitionGrid = ({ partners, model, clients, customAssignments = {} }
                           key={clientId} 
                           className="bg-green-100 text-green-800 text-xs"
                         >
-                          {client.name}
+                          {formatClientName(client.name)}
                         </Badge>
                       ) : null;
                     })}
