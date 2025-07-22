@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Brain, AlertTriangle } from 'lucide-react';
 import usePortfolioStore from '../portfolioStore';
 
-const RedistributionModeler = ({ model, onModelChange }) => {
+const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading }) => {
   const {
     partners,
     partnershipTransition,
@@ -251,12 +251,17 @@ const RedistributionModeler = ({ model, onModelChange }) => {
 
         {/* AI Optimization Button */}
         <div className="pt-4 border-t">
-          <Button className="w-full" variant="outline">
+          <Button 
+            className="w-full" 
+            variant="outline"
+            onClick={onRequestAI}
+            disabled={aiLoading || departingPartners.length === 0 || remainingPartners.length === 0}
+          >
             <Brain className="h-4 w-4 mr-2" />
-            AI Optimization Coming Soon
+            {aiLoading ? 'Optimizing...' : 'AI Optimize Redistribution'}
           </Button>
           <p className="text-xs text-gray-500 mt-2 text-center">
-            Future feature: Use AI to optimize redistribution based on client needs, partner expertise, and capacity
+            Use AI to optimize redistribution based on client needs, partner expertise, and capacity constraints
           </p>
         </div>
 
