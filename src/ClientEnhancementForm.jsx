@@ -31,6 +31,7 @@ import {
   Trash2
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
+import { formatClientName } from './utils/textUtils';
 
 const ClientEnhancementForm = ({ onClose }) => {
   const { 
@@ -290,7 +291,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         <CardHeader className="flex flex-row items-center justify-between bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700">
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
-            {isEditMode ? `Edit Client: ${client.name}` : 'Create New Client'}
+            {isEditMode ? `Edit Client: ${formatClientName(client.name)}` : 'Create New Client'}
           </CardTitle>
           <Button variant="ghost" size="sm" onClick={handleClose}>
             <X className="h-4 w-4" />

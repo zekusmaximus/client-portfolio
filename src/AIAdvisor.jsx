@@ -15,6 +15,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
+import { formatClientName } from './utils/textUtils';
 import { apiClient } from './api';
 import { getEnhancedClientCount } from './utils/clientUtils';
 
@@ -404,7 +405,7 @@ const AIAdvisor = () => {
                     onClick={() => handleClientRecommendations(client)}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-semibold">{client.name}</h4>
+                      <h4 className="font-semibold">{formatClientName(client.name)}</h4>
                       <Badge variant={client.status === 'IF' ? 'default' : 'secondary'}>
                         {client.status}
                       </Badge>

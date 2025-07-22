@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { isClientEnhanced, getEnhancedClientCount, getEnhancementRate } from './utils/clientUtils';
+import { formatClientName } from './utils/textUtils';
 
 const ClientListView = () => {
   const {
@@ -50,7 +51,7 @@ const ClientListView = () => {
     return clients
         .filter(client => {
           // Text search filter
-          const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          const matchesSearch = formatClientName(client.name).toLowerCase().includes(searchTerm.toLowerCase()) ||
             (client.practiceArea && client.practiceArea.some(area =>
               area.toLowerCase().includes(searchTerm.toLowerCase())
             ));
@@ -229,7 +230,7 @@ const ClientListView = () => {
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="font-semibold text-lg">{client.name}</h3>
+                  <h3 className="font-semibold text-lg">{formatClientName(client.name)}</h3>
                   <div className="flex items-center gap-2 mt-1">
                     <Badge 
                       variant="secondary" 
@@ -429,7 +430,7 @@ const ClientListView = () => {
         open={!!deleteDialogClient}
         onOpenChange={(open) => !open && setDeleteDialogClient(null)}
         title="Delete Client"
-        description={deleteDialogClient ? `Are you sure you want to delete "${deleteDialogClient.name}"? This action cannot be undone and will permanently remove all client data including revenue records.` : ''}
+        description={deleteDialogClient ? `Are you sure you want to delete "${formatClientName(deleteDialogClient.name)}"? This action cannot be undone and will permanently remove all client data including revenue records.` : ''}
         confirmText="Delete Client"
         cancelText="Cancel"
         onConfirm={handleDeleteClient}

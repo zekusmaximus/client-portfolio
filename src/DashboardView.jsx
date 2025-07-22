@@ -29,6 +29,7 @@ import {
   Legend
 } from 'recharts';
 import usePortfolioStore from './portfolioStore';
+import { formatClientName } from './utils/textUtils';
 
 import ClientCardModal from './ClientCardModal';
 import DataUploadManager from './DataUploadManager';
@@ -176,7 +177,7 @@ const DashboardView = () => {
     return {
       x: revenue,
       y: parseFloat(client.strategicValue) || 0,
-      name: client.name || 'Unnamed Client',
+      name: formatClientName(client.name) || 'Unnamed Client',
       revenue: revenue,
       practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0)
         ? client.practiceArea[0]
@@ -502,7 +503,7 @@ const DashboardView = () => {
                       return (
                         <tr key={client.id || index} className="border-b hover:bg-muted/50">
                           <td className="p-2 font-medium">{index + 1}</td>
-                          <td className="p-2">{client.name || 'Unnamed Client'}</td>
+                          <td className="p-2">{formatClientName(client.name) || 'Unnamed Client'}</td>
                           <td className="p-2">
                             <Badge variant={getStrategicValueVariant(strategicValue)}>
                               {strategicValue.toFixed(1)}
