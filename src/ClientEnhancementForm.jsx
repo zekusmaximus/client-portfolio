@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Slider } from '@/components/ui/slider';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -28,10 +29,44 @@ import {
   FileText,
   DollarSign,
   Plus,
-  Trash2
+  Trash2,
+  HelpCircle
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
+
+// Helper functions for relationship metrics
+const getRelationshipStrengthLabel = (value) => {
+  if (value <= 2) return "Personal Relationship";
+  if (value <= 4) return "Individual-Dependent";
+  if (value <= 6) return "Mixed Loyalty";
+  if (value <= 8) return "Institutional Ties";
+  return "Firm-Anchored";
+};
+
+const getRelationshipStrengthRisk = (value) => {
+  if (value <= 2) return { level: "HIGH", color: "text-red-600" };
+  if (value <= 4) return { level: "MEDIUM-HIGH", color: "text-red-500" };
+  if (value <= 6) return { level: "MEDIUM", color: "text-yellow-600" };
+  if (value <= 8) return { level: "LOW-MEDIUM", color: "text-green-500" };
+  return { level: "LOW", color: "text-green-600" };
+};
+
+const getRelationshipIntensityLabel = (value) => {
+  if (value <= 2) return "Minimal Contact";
+  if (value <= 4) return "Periodic Touch";
+  if (value <= 6) return "Regular Engagement";
+  if (value <= 8) return "High Touch";
+  return "Mission Critical";
+};
+
+const getRelationshipIntensityComplexity = (value) => {
+  if (value <= 2) return { level: "Simple transition", color: "text-green-600" };
+  if (value <= 4) return { level: "Standard transition", color: "text-green-500" };
+  if (value <= 6) return { level: "Moderate complexity", color: "text-yellow-600" };
+  if (value <= 8) return { level: "Complex transition", color: "text-red-500" };
+  return { level: "Critical planning required", color: "text-red-600" };
+};
 
 const ClientEnhancementForm = ({ onClose }) => {
   const { 
@@ -299,6 +334,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         </CardHeader>
         
         <CardContent className="space-y-6 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+        <TooltipProvider>
           {/* Client Basic Information */}
           <div className="space-y-4">
             <div className="space-y-2">
@@ -575,17 +611,51 @@ const ClientEnhancementForm = ({ onClose }) => {
 
           {/* Relationship Intensity */}
           <div className="space-y-3">
-            <Label className="text-sm font-medium">
+            <Label className="flex items-center gap-2 text-sm font-medium">
               Relationship Intensity: {formData.relationship_intensity}/10 *
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-sm p-3">
+                  <div className="space-y-2">
+                    <p className="font-medium">How operationally critical and frequently engaged is this relationship?</p>
+                    <div className="space-y-1 text-sm">
+                      <p><strong>1-2:</strong> Minimal Contact (Simple transition)</p>
+                      <p><strong>3-4:</strong> Periodic Touch (Standard transition)</p>
+                      <p><strong>5-6:</strong> Regular Engagement (Moderate complexity)</p>
+                      <p><strong>7-8:</strong> High Touch (Complex transition)</p>
+                      <p><strong>9-10:</strong> Mission Critical (Critical planning required)</p>
+                    </div>
+                    <div className="pt-2 border-t space-y-1 text-xs">
+                      <p><strong>Low (2):</strong> Annual compliance filing client with minimal ongoing needs</p>
+                      <p><strong>High (8):</strong> Real-time crisis management, daily strategic consultation</p>
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
             </Label>
-            <Slider
-              value={[formData.relationship_intensity]}
-              onValueChange={(value) => handleSliderChange('relationship_intensity', value)}
-              max={10}
-              min={1}
-              step={1}
-              className="w-full"
-            />
+            <div className="space-y-2">
+              <Slider
+                value={[formData.relationship_intensity]}
+                onValueChange={(value) => handleSliderChange('relationship_intensity', value)}
+                max={10}
+                min={1}
+                step={1}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Minimal (1-2)</span>
+                <span>Regular (5-6)</span>
+                <span>Mission Critical (9-10)</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">{getRelationshipIntensityLabel(formData.relationship_intensity)}</span>
+                <span className={`font-medium ${getRelationshipIntensityComplexity(formData.relationship_intensity).color}`}>
+                  Transition: {getRelationshipIntensityComplexity(formData.relationship_intensity).level}
+                </span>
+              </div>
+            </div>
             {errors.relationship_intensity && (
               <p className="text-sm text-red-500 flex items-center gap-1">
                 <AlertCircle className="h-3 w-3" />
@@ -599,18 +669,48 @@ const ClientEnhancementForm = ({ onClose }) => {
             <Label className="flex items-center gap-2">
               <Heart className="h-4 w-4" />
               Relationship Strength: {formData.relationship_strength}/10 *
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-4 w-4 text-muted-foreground cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-sm p-3">
+                  <div className="space-y-2">
+                    <p className="font-medium">How deeply rooted is this relationship with the firm vs. an individual?</p>
+                    <div className="space-y-1 text-sm">
+                      <p><strong>1-2:</strong> Personal Relationship (HIGH succession risk)</p>
+                      <p><strong>3-4:</strong> Individual-Dependent (MEDIUM-HIGH risk)</p>
+                      <p><strong>5-6:</strong> Mixed Loyalty (MEDIUM risk)</p>
+                      <p><strong>7-8:</strong> Institutional Ties (LOW-MEDIUM risk)</p>
+                      <p><strong>9-10:</strong> Firm-Anchored (LOW risk)</p>
+                    </div>
+                    <div className="pt-2 border-t space-y-1 text-xs">
+                      <p><strong>Low (2):</strong> CEO only talks to the primary lobbyist</p>
+                      <p><strong>High (8):</strong> Multiple firm contacts, views firm as strategic partner</p>
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
             </Label>
-            <Slider
-              value={[formData.relationship_strength]}
-              onValueChange={(value) => handleSliderChange('relationship_strength', value)}
-              max={10}
-              min={1}
-              step={1}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Weak (1)</span>
-              <span>Strong (10)</span>
+            <div className="space-y-2">
+              <Slider
+                value={[formData.relationship_strength]}
+                onValueChange={(value) => handleSliderChange('relationship_strength', value)}
+                max={10}
+                min={1}
+                step={1}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Personal (1-2)</span>
+                <span>Mixed (5-6)</span>
+                <span>Firm-Anchored (9-10)</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">{getRelationshipStrengthLabel(formData.relationship_strength)}</span>
+                <span className={`font-medium ${getRelationshipStrengthRisk(formData.relationship_strength).color}`}>
+                  Succession Risk: {getRelationshipStrengthRisk(formData.relationship_strength).level}
+                </span>
+              </div>
             </div>
             {errors.relationship_strength && (
               <p className="text-sm text-red-500 flex items-center gap-1">
@@ -672,6 +772,7 @@ const ClientEnhancementForm = ({ onClose }) => {
               )}
             </Button>
           </div>
+        </TooltipProvider>
         </CardContent>
       </Card>
     </div>
