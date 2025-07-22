@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ConfirmationDialog from './components/ui/confirmation-dialog';
 import {
   Users,
@@ -24,6 +25,8 @@ import { isClientEnhanced, getEnhancedClientCount, getEnhancementRate } from './
 const ClientListView = () => {
   const {
     clients,
+    partners,
+    fetchPartners,
     openClientModal,
     deleteClient
   } = usePortfolioStore();
@@ -31,20 +34,34 @@ const ClientListView = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('strategicValue');
   const [sortOrder, setSortOrder] = useState('desc');
+  const [partnerFilter, setPartnerFilter] = useState('all');
   const [deleteDialogClient, setDeleteDialogClient] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Fetch partners when component mounts
+  useMemo(() => {
+    fetchPartners();
+  }, [fetchPartners]);
 
   // Filter and sort clients
   const filteredAndSortedClients = useMemo(() => {
     const { getClientRevenue } = usePortfolioStore.getState();
     
     return clients
-        .filter(client =>
-          client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (client.practiceArea && client.practiceArea.some(area =>
-            area.toLowerCase().includes(searchTerm.toLowerCase())
-          ))
-        )
+        .filter(client => {
+          // Text search filter
+          const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (client.practiceArea && client.practiceArea.some(area =>
+              area.toLowerCase().includes(searchTerm.toLowerCase())
+            ));
+          
+          // Partner filter
+          const matchesPartner = partnerFilter === 'all' || 
+            client.primary_lobbyist === partnerFilter ||
+            (!client.primary_lobbyist && partnerFilter === 'unassigned');
+          
+          return matchesSearch && matchesPartner;
+        })
         .sort((a, b) => {
           let aValue, bValue;
 
@@ -72,7 +89,7 @@ const ClientListView = () => {
             return bValue - aValue;
           }
         });
-  }, [clients, searchTerm, sortBy, sortOrder]);
+  }, [clients, searchTerm, sortBy, sortOrder, partnerFilter]);
 
   const handleEditClient = (client) => {
     openClientModal(client);
@@ -169,6 +186,20 @@ const ClientListView = () => {
                 className="pl-10"
               />
             </div>
+            <Select value={partnerFilter} onValueChange={setPartnerFilter}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Filter by partner" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Partners</SelectItem>
+                <SelectItem value="unassigned">Unassigned</SelectItem>
+                {partners?.map(partner => (
+                  <SelectItem key={partner.id} value={partner.name}>
+                    {partner.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="flex gap-2">
               <select
                 value={sortBy}

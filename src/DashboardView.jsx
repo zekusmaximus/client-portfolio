@@ -41,6 +41,8 @@ const DashboardView = () => {
     openClientModal,
     closeClientModal,
     retryFetchClients,
+    getPartnershipHealth,
+    setCurrentView
   } = usePortfolioStore();
   const [selectedTab, setSelectedTab] = useState('overview');
   const [showUpload, setShowUpload] = useState(false);
@@ -313,14 +315,20 @@ const DashboardView = () => {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card 
+          className="cursor-pointer hover:shadow-lg transition-shadow"
+          onClick={() => setCurrentView('partnership')}
+        >
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">High Conflict Risk Clients</p>
-                <p className="text-2xl font-bold">{analytics.highRiskClients}</p>
+                <p className="text-sm font-medium text-muted-foreground">Partnership Health</p>
+                <p className="text-2xl font-bold">{getPartnershipHealth()}%</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Click for detailed analysis
+                </p>
               </div>
-              <AlertTriangle className="h-8 w-8 text-red-500" />
+              <Users className="h-8 w-8 text-green-500" />
             </div>
           </CardContent>
         </Card>
