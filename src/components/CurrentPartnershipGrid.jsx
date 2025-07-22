@@ -1,6 +1,6 @@
 import PartnerCard from './PartnerCard';
 
-const CurrentPartnershipGrid = ({ partners, onPartnerClick }) => {
+const CurrentPartnershipGrid = ({ partners, onPartnerClick, onPartnerRightClick }) => {
   const calculateSummaryMetrics = () => {
     return partners.reduce((acc, partner) => {
       acc.totalRevenue += partner.totalRevenue;
@@ -57,6 +57,7 @@ const CurrentPartnershipGrid = ({ partners, onPartnerClick }) => {
             key={partner.id}
             partner={partner}
             onPartnerClick={onPartnerClick}
+            onPartnerRightClick={onPartnerRightClick}
           />
         ))}
       </div>

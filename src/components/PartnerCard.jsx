@@ -2,7 +2,7 @@ import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 
-const PartnerCard = ({ partner, onPartnerClick }) => {
+const PartnerCard = ({ partner, onPartnerClick, onPartnerRightClick }) => {
   const formatRevenue = (revenue) => {
     if (revenue >= 1000000) {
       return `$${(revenue / 1000000).toFixed(1)}M`;
@@ -22,6 +22,7 @@ const PartnerCard = ({ partner, onPartnerClick }) => {
         partner.isDeparting ? 'border-red-500' : ''
       }`}
       onClick={() => onPartnerClick(partner)}
+      onContextMenu={(e) => onPartnerRightClick?.(partner, e)}
     >
       <CardHeader>
         <div className="flex items-center justify-between">

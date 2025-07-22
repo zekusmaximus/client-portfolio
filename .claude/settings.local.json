@@ -17,7 +17,8 @@
       "Bash(npm install:*)",
       "Bash(npm run create:admin:*)",
       "Bash(psql:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

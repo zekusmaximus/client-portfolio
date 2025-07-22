@@ -293,6 +293,151 @@ const usePortfolioStore = create(
       updatePartnershipTransition: (updates) => set((state) => ({
         partnershipTransition: { ...state.partnershipTransition, ...updates }
       })),
+
+      // Mark partner as departing
+      markPartnerDeparting: (partnerId) => set((state) => ({
+        partners: state.partners.map(partner =>
+          partner.id === partnerId ? { ...partner, isDeparting: true } : partner
+        ),
+        partnershipTransition: {
+          ...state.partnershipTransition,
+          departingPartners: [...state.partnershipTransition.departingPartners, partnerId]
+        }
+      })),
+
+      // Calculate redistribution preview
+      calculateRedistribution: (model) => {
+        const state = get();
+        const departingPartners = state.partners.filter(p => p.isDeparting);
+        const remainingPartners = state.partners.filter(p => !p.isDeparting);
+        
+        if (departingPartners.length === 0 || remainingPartners.length === 0) return [];
+
+        const allDepartingClients = departingPartners.flatMap(p => p.clients);
+        const departingClientsData = allDepartingClients.map(clientId => state.getClientById(clientId)).filter(Boolean);
+        
+        let redistribution = [];
+
+        switch (model) {
+          case 'balanced':
+            const totalRevenue = departingClientsData.reduce((sum, client) => sum + state.getClientRevenue(client), 0);
+            const revenuePerPartner = totalRevenue / remainingPartners.length;
+            
+            redistribution = remainingPartners.map(partner => ({
+              partnerId: partner.id,
+              partnerName: partner.name,
+              assignedClients: [],
+              targetRevenue: revenuePerPartner,
+              currentCapacity: partner.capacityUsed
+            }));
+            
+            // Assign clients to achieve balanced revenue
+            let currentRevenues = redistribution.map(() => 0);
+            departingClientsData.forEach(client => {
+              const clientRevenue = state.getClientRevenue(client);
+              const targetIndex = currentRevenues.reduce((minIndex, revenue, index) => 
+                revenue < currentRevenues[minIndex] ? index : minIndex, 0);
+              
+              redistribution[targetIndex].assignedClients.push(client);
+              currentRevenues[targetIndex] += clientRevenue;
+            });
+            break;
+
+          case 'expertise':
+            redistribution = remainingPartners.map(partner => ({
+              partnerId: partner.id,
+              partnerName: partner.name,
+              assignedClients: [],
+              targetRevenue: 0,
+              currentCapacity: partner.capacityUsed
+            }));
+            
+            departingClientsData.forEach(client => {
+              const clientAreas = Array.isArray(client.practice_area) ? client.practice_area : [client.practice_area].filter(Boolean);
+              
+              // Find partner with matching expertise
+              let bestMatch = redistribution[0];
+              let maxMatch = 0;
+              
+              redistribution.forEach(partner => {
+                const originalPartner = remainingPartners.find(p => p.id === partner.partnerId);
+                const commonAreas = clientAreas.filter(area => originalPartner.practiceAreas.includes(area));
+                if (commonAreas.length > maxMatch) {
+                  maxMatch = commonAreas.length;
+                  bestMatch = partner;
+                }
+              });
+              
+              bestMatch.assignedClients.push(client);
+              bestMatch.targetRevenue += state.getClientRevenue(client);
+            });
+            break;
+
+          case 'relationship':
+            redistribution = remainingPartners.map(partner => ({
+              partnerId: partner.id,
+              partnerName: partner.name,
+              assignedClients: [],
+              targetRevenue: 0,
+              currentCapacity: partner.capacityUsed
+            }));
+            
+            departingClientsData.forEach(client => {
+              const lobbyistTeam = Array.isArray(client.lobbyist_team) ? client.lobbyist_team : [];
+              
+              // Find partner in client's team
+              let bestMatch = redistribution.find(partner => 
+                lobbyistTeam.includes(partner.partnerName)
+              );
+              
+              if (!bestMatch) {
+                // Fallback to balanced distribution
+                bestMatch = redistribution.reduce((min, partner) => 
+                  partner.assignedClients.length < min.assignedClients.length ? partner : min
+                );
+              }
+              
+              bestMatch.assignedClients.push(client);
+              bestMatch.targetRevenue += state.getClientRevenue(client);
+            });
+            break;
+
+          case 'custom':
+            const customAssignments = state.partnershipTransition.customAssignments;
+            redistribution = remainingPartners.map(partner => ({
+              partnerId: partner.id,
+              partnerName: partner.name,
+              assignedClients: [],
+              targetRevenue: 0,
+              currentCapacity: partner.capacityUsed
+            }));
+            
+            departingClientsData.forEach(client => {
+              const assignedPartnerId = customAssignments[client.id];
+              if (assignedPartnerId) {
+                const targetPartner = redistribution.find(p => p.partnerId === assignedPartnerId);
+                if (targetPartner) {
+                  targetPartner.assignedClients.push(client);
+                  targetPartner.targetRevenue += state.getClientRevenue(client);
+                }
+              }
+            });
+            break;
+        }
+
+        return redistribution;
+      },
+
+      // Set custom client assignment
+      setCustomAssignment: (clientId, partnerId) => set((state) => ({
+        partnershipTransition: {
+          ...state.partnershipTransition,
+          customAssignments: {
+            ...state.partnershipTransition.customAssignments,
+            [clientId]: partnerId
+          }
+        }
+      })),
       
       // Computed getters
       getClientById: (id) => {
