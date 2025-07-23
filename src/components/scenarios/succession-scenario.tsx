@@ -9,15 +9,19 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import ImpactAnalysisWorkbench from '../succession/ImpactAnalysisWorkbench';
 import ClientReviewInterface from '../succession/ClientReviewInterface';
+import TransitionPlanManager from '../succession/TransitionPlanManager';
+import usePortfolioStore from '../../portfolioStore';
 
 interface SuccessionScenarioProps {
   portfolioId?: string;
+  initialStage?: 'impact' | 'mitigation' | 'implementation';
 }
 
-const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) => {
+const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId, initialStage = 'impact' }) => {
   // Workflow state
-  const [currentStage, setCurrentStage] = useState<'impact' | 'mitigation' | 'implementation'>('impact');
+  const [currentStage, setCurrentStage] = useState<'impact' | 'mitigation' | 'implementation'>(initialStage);
   const [stage1Data, setStage1Data] = useState<any>(null);
+  const [stage2Data, setStage2Data] = useState<any>(null);
   
   // Form state for Stage 2 & 3
   const [partnerName, setPartnerName] = useState('');
@@ -54,16 +58,24 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
     setCurrentStage('impact');
   };
 
+  const handleBackToStage2 = () => {
+    setCurrentStage('mitigation');
+  };
+
   const handleProceedToStage3 = (transitionPlans: any) => {
-    setStage1Data({ ...stage1Data, transitionPlans });
+    const stage2Data = { ...stage1Data, transitionPlans };
+    setStage2Data(stage2Data);
     setCurrentStage('implementation');
+    
+    // Initialize transitions in the store for Stage 3
+    usePortfolioStore.getState().initializeTransitionsFromPlans(stage2Data);
   };
 
   const renderProgressStepper = () => {
     const stages = [
       { key: 'impact', label: 'Impact Analysis', completed: stage1Data !== null },
-      { key: 'mitigation', label: 'Client Review & Triage', completed: stage1Data?.transitionPlans !== undefined },
-      { key: 'implementation', label: 'Implementation', completed: false }
+      { key: 'mitigation', label: 'Client Review & Triage', completed: stage2Data !== null },
+      { key: 'implementation', label: 'Transition Execution', completed: false }
     ];
 
     return (
@@ -424,16 +436,24 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
         </>
       )}
 
-      {/* Stage 3: Implementation Planning */}
-      {currentStage === 'implementation' && (
+      {/* Stage 3: Transition Execution */}
+      {currentStage === 'implementation' && stage2Data && (
+        <TransitionPlanManager
+          stage2Data={stage2Data}
+          onBackToStage2={handleBackToStage2}
+        />
+      )}
+
+      {/* Stage 3: Fallback for no data */}
+      {currentStage === 'implementation' && !stage2Data && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
-              <span>Stage 3: Implementation Planning</span>
+              <span>Stage 3: Transition Execution</span>
               <div className="flex items-center gap-2">
                 <Button variant="outline" onClick={() => setCurrentStage('mitigation')}>
                   <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back to Mitigation
+                  Back to Review
                 </Button>
                 <Badge variant="outline">Stage 3 of 3</Badge>
               </div>
@@ -441,11 +461,13 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
           </CardHeader>
           <CardContent>
             <div className="text-center py-12">
-              <h3 className="text-lg font-semibold mb-2">Implementation Planning</h3>
+              <h3 className="text-lg font-semibold mb-2">No Execution Data</h3>
               <p className="text-gray-600 mb-4">
-                Create detailed implementation timeline and action plans based on your mitigation strategy.
+                Complete Stage 2 (Client Review & Triage) to access transition execution management.
               </p>
-              <Badge variant="secondary">Coming Soon</Badge>
+              <Button onClick={() => setCurrentStage('mitigation')}>
+                Go to Stage 2
+              </Button>
             </div>
           </CardContent>
         </Card>

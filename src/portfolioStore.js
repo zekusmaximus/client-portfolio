@@ -53,6 +53,22 @@ const usePortfolioStore = create(
         selectedDepartingPartners: []
       },
       
+      // Execution state
+      activeTransitions: [], // Array of active transition objects
+      transitionTasks: [], // Array of task objects
+      communicationLog: [], // Array of communication records
+      executionMetrics: {
+        totalTransitions: 0,
+        completedTransitions: 0,
+        inProgressTransitions: 0,
+        atRiskTransitions: 0,
+        delayedTransitions: 0,
+        successRate: 0,
+        retentionRate: 0,
+        avgTransitionDays: 0
+      },
+      executionAlerts: [],
+      
       // Actions
       setClients: (clients) => {
         const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
@@ -762,6 +778,163 @@ const usePortfolioStore = create(
           },
           transitionPlans: {}
         });
+      },
+
+      // Execution management actions
+      setActiveTransitions: (transitions) => {
+        set({ activeTransitions: transitions });
+        get().updateExecutionMetrics();
+      },
+
+      addActiveTransition: (transition) => {
+        const current = get().activeTransitions;
+        set({ activeTransitions: [...current, transition] });
+        get().updateExecutionMetrics();
+      },
+
+      updateTransition: (transitionId, updates) => {
+        const current = get().activeTransitions;
+        set({
+          activeTransitions: current.map(t => 
+            t.clientId === transitionId ? { ...t, ...updates } : t
+          )
+        });
+        get().updateExecutionMetrics();
+      },
+
+      setTransitionTasks: (tasks) => {
+        set({ transitionTasks: tasks });
+      },
+
+      addTransitionTask: (task) => {
+        const current = get().transitionTasks;
+        set({ transitionTasks: [...current, task] });
+      },
+
+      updateTransitionTask: (taskId, updates) => {
+        const current = get().transitionTasks;
+        set({
+          transitionTasks: current.map(task => 
+            task.id === taskId ? { ...task, ...updates } : task
+          )
+        });
+      },
+
+      deleteTransitionTask: (taskId) => {
+        const current = get().transitionTasks;
+        set({ transitionTasks: current.filter(task => task.id !== taskId) });
+      },
+
+      addCommunication: (communication) => {
+        const current = get().communicationLog;
+        set({ communicationLog: [...current, communication] });
+      },
+
+      getCommunicationsForClient: (clientId) => {
+        const communications = get().communicationLog;
+        return communications.filter(comm => comm.clientId === clientId);
+      },
+
+      addExecutionAlert: (alert) => {
+        const current = get().executionAlerts;
+        set({ executionAlerts: [...current, { ...alert, id: Date.now().toString() }] });
+      },
+
+      dismissExecutionAlert: (alertId) => {
+        const current = get().executionAlerts;
+        set({ executionAlerts: current.filter(alert => alert.id !== alertId) });
+      },
+
+      updateExecutionMetrics: () => {
+        const { activeTransitions } = get();
+        const totalTransitions = activeTransitions.length;
+        const completedTransitions = activeTransitions.filter(t => t.status === 'completed').length;
+        const inProgressTransitions = activeTransitions.filter(t => t.status === 'in-progress').length;
+        const atRiskTransitions = activeTransitions.filter(t => t.status === 'at-risk').length;
+        const delayedTransitions = activeTransitions.filter(t => t.status === 'delayed').length;
+
+        const successRate = totalTransitions > 0 ? Math.round((completedTransitions / totalTransitions) * 100) : 0;
+        
+        // Calculate average transition days
+        const completedWithDays = activeTransitions.filter(t => t.status === 'completed' && t.actualDays);
+        const avgTransitionDays = completedWithDays.length > 0 
+          ? Math.round(completedWithDays.reduce((sum, t) => sum + t.actualDays, 0) / completedWithDays.length)
+          : 0;
+
+        set({
+          executionMetrics: {
+            totalTransitions,
+            completedTransitions,
+            inProgressTransitions,
+            atRiskTransitions,
+            delayedTransitions,
+            successRate,
+            retentionRate: 95, // This could be calculated based on actual client retention
+            avgTransitionDays
+          }
+        });
+      },
+
+      getTasksByStatus: (status) => {
+        const tasks = get().transitionTasks;
+        return tasks.filter(task => task.status === status);
+      },
+
+      getTasksForClient: (clientId) => {
+        const tasks = get().transitionTasks;
+        return tasks.filter(task => task.clientId === clientId);
+      },
+
+      getOverdueTasks: () => {
+        const tasks = get().transitionTasks;
+        const now = new Date();
+        return tasks.filter(task => 
+          task.status !== 'completed' && new Date(task.dueDate) < now
+        );
+      },
+
+      initializeTransitionsFromPlans: (stage2Data) => {
+        if (!stage2Data?.transitionPlans) return;
+
+        const approvedPlans = Object.entries(stage2Data.transitionPlans)
+          .filter(([_, plan]) => plan.status === 'approved');
+
+        const transitions = approvedPlans.map(([clientId, plan]) => {
+          const client = stage2Data.affectedClients?.find(c => c.id === clientId);
+          return {
+            clientId,
+            clientName: client?.name || 'Unknown Client',
+            successionRisk: client?.successionRisk || 5,
+            successorPartner: plan.successorPartner || 'TBD',
+            timelineDays: plan.timelineDays || 30,
+            startDate: new Date().toISOString().split('T')[0],
+            endDate: new Date(Date.now() + (plan.timelineDays || 30) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            status: 'in-progress',
+            progress: 0,
+            tasks: plan.tasks || []
+          };
+        });
+
+        const tasks = transitions.flatMap(transition => 
+          transition.tasks.map((taskTitle, index) => ({
+            id: `${transition.clientId}-${index}`,
+            title: taskTitle,
+            description: `Task for ${transition.clientName}`,
+            assignee: transition.successorPartner,
+            dueDate: new Date(Date.now() + (index + 1) * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            priority: index === 0 ? 'high' : 'medium',
+            status: 'pending',
+            clientId: transition.clientId,
+            category: 'communication'
+          }))
+        );
+
+        set({ 
+          activeTransitions: transitions,
+          transitionTasks: tasks
+        });
+        
+        get().updateExecutionMetrics();
       }
     }),
     {
