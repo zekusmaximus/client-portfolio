@@ -154,6 +154,30 @@ app.get('/api/health', async (req, res) => {
   res.json(health);
 });
 
+// Debug endpoint to check database contents (NO AUTH REQUIRED)
+app.get('/api/debug', async (req, res) => {
+  try {
+    const [usersResult, clientsResult, tablesResult] = await Promise.all([
+      db.query('SELECT COUNT(*) as count FROM users'),
+      db.query('SELECT COUNT(*) as count FROM clients'), 
+      db.query('SELECT table_name FROM information_schema.tables WHERE table_schema = \'public\'')
+    ]);
+
+    res.json({
+      database: 'connected',
+      tables: tablesResult.rows.map(r => r.table_name),
+      userCount: parseInt(usersResult.rows[0].count),
+      clientCount: parseInt(clientsResult.rows[0].count),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Database query failed',
+      message: error.message
+    });
+  }
+});
+
 // Serve React app for all other routes (commented out for now)
 // app.get('/*', (req, res) => {
 //   res.sendFile(path.join(__dirname, '../frontend/build/index.html'));
