@@ -21,6 +21,7 @@ import {
 import usePortfolioStore from './portfolioStore';
 import { LOBBYISTS } from './constants';
 import { apiClient } from './api';
+import SuccessionScenario from './components/scenarios/succession-scenario';
 
 const ScenarioModeler = () => {
   const { clients } = usePortfolioStore();
@@ -212,125 +213,7 @@ const ScenarioModeler = () => {
 
         {/* Succession Planning Tab */}
         <TabsContent value="succession" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Succession Planning Scenario
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground mb-4">
-                Model the impact of lobbyist departure or retirement on your practice.
-              </p>
-              
-              {/* Departing Lobbyist Selection */}
-              <div className="space-y-4">
-                <Label>Select departing lobbyists:</Label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {LOBBYISTS.map((lob) => (
-                    <div key={lob} className="flex items-center space-x-2">
-                      <Checkbox
-                        id={`lob-${lob}`}
-                        checked={departingLobbyists.includes(lob)}
-                        onCheckedChange={() =>
-                          setDepartingLobbyists((prev) =>
-                            prev.includes(lob)
-                              ? prev.filter((l) => l !== lob)
-                              : [...prev, lob]
-                          )
-                        }
-                      />
-                      <label htmlFor={`lob-${lob}`} className="text-sm flex-1 cursor-pointer">
-                        {lob}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Departure Analysis Results */}
-              {departureAnalysis && (
-                <div className="space-y-6 pt-6">
-                  {/* Summary */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="text-center p-4 bg-muted/30 rounded-lg">
-                      <p className="text-2xl font-bold text-red-600">
-                        {formatCurrency(departureAnalysis.revenueAtRisk)}
-                      </p>
-                      <p className="text-sm text-muted-foreground flex justify-center items-center gap-1">
-                        <DollarSign className="h-4 w-4" /> Revenue at Risk
-                      </p>
-                    </div>
-                    <div className="text-center p-4 bg-muted/30 rounded-lg">
-                      <p className="text-2xl font-bold">
-                        {departureAnalysis.orphanedClients.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground flex justify-center items-center gap-1">
-                        <AlertTriangle className="h-4 w-4" /> Orphaned Clients
-                      </p>
-                    </div>
-                    <div className="text-center p-4 bg-muted/30 rounded-lg">
-                      <p className="text-2xl font-bold text-orange-600">
-                        {departureAnalysis.highAttentionClients.length}
-                      </p>
-                      <p className="text-sm text-muted-foreground flex justify-center items-center gap-1">
-                        <Flame className="h-4 w-4" /> High-Attention
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Orphaned Clients */}
-                  <div className="space-y-2">
-                    <h4 className="font-semibold flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4" /> Orphaned Clients
-                    </h4>
-                    {departureAnalysis.orphanedClients.length === 0 ? (
-                      <p className="text-muted-foreground text-sm">None</p>
-                    ) : (
-                      <ul className="space-y-1">
-                        {departureAnalysis.orphanedClients.map((c) => (
-                          <li key={c.id} className="flex items-center gap-2">
-                            <span>{c.name}</span>
-                            {departureAnalysis.highAttentionClientIds.includes(c.id) && (
-                              <Badge variant="destructive" className="flex items-center gap-1">
-                                <Flame className="h-3 w-3" /> High
-                              </Badge>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  {/* Transition Plan */}
-                  <div className="space-y-2">
-                    <h4 className="font-semibold flex items-center gap-2">
-                      <Users className="h-4 w-4" /> Transition Plan
-                    </h4>
-                    {departureAnalysis.transitionPlan.length === 0 ? (
-                      <p className="text-muted-foreground text-sm">No transitions required</p>
-                    ) : (
-                      <ul className="space-y-1">
-                        {departureAnalysis.transitionPlan.map((item, idx) => (
-                          <li key={idx} className="flex items-center gap-2">
-                            <span>{item.client.name}</span>
-                            <ArrowRight className="h-3 w-3" />
-                            <Badge>{item.newLobbyist}</Badge>
-                            {departureAnalysis.highAttentionClientIds.includes(item.client.id) && (
-                              <Badge variant="destructive" className="flex items-center gap-1">
-                                <Flame className="h-3 w-3" /> High
-                              </Badge>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <SuccessionScenario portfolioId="default" />
         </TabsContent>
 
 

@@ -1,18 +1,24 @@
 import React, { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ArrowLeft, CheckCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import ImpactAnalysisWorkbench from '../succession/ImpactAnalysisWorkbench';
 
 interface SuccessionScenarioProps {
   portfolioId?: string;
 }
 
 const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) => {
-  // Form state
+  // Workflow state
+  const [currentStage, setCurrentStage] = useState<'impact' | 'mitigation' | 'implementation'>('impact');
+  const [stage1Data, setStage1Data] = useState<any>(null);
+  
+  // Form state for Stage 2 & 3
   const [partnerName, setPartnerName] = useState('');
   const [departureDate, setDepartureDate] = useState('');
   const [transitionPeriod, setTransitionPeriod] = useState(3);
@@ -29,6 +35,70 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
   const [aiInsights, setAiInsights] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Stage transition handlers
+  const handleProceedToStage2 = (analysisData: any) => {
+    setStage1Data(analysisData);
+    setCurrentStage('mitigation');
+    
+    // Pre-populate form data from analysis
+    if (analysisData.selectedPartners.length > 0) {
+      const firstPartner = analysisData.selectedPartners[0]; // Could enhance to handle multiple
+      setPartnerName(firstPartner);
+    }
+    setAffectedClients(analysisData.affectedClients);
+  };
+
+  const handleBackToStage1 = () => {
+    setCurrentStage('impact');
+  };
+
+  const handleProceedToStage3 = () => {
+    setCurrentStage('implementation');
+  };
+
+  const renderProgressStepper = () => {
+    const stages = [
+      { key: 'impact', label: 'Impact Analysis', completed: stage1Data !== null },
+      { key: 'mitigation', label: 'Mitigation Planning', completed: false },
+      { key: 'implementation', label: 'Implementation', completed: false }
+    ];
+
+    return (
+      <Card className="mb-6">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            {stages.map((stage, index) => (
+              <div key={stage.key} className="flex items-center">
+                <div className={`flex items-center gap-2 ${
+                  currentStage === stage.key ? 'text-blue-600 font-medium' : 
+                  stage.completed ? 'text-green-600' : 'text-gray-400'
+                }`}>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${
+                    currentStage === stage.key ? 'border-blue-600 bg-blue-50' :
+                    stage.completed ? 'border-green-600 bg-green-50' : 'border-gray-300'
+                  }`}>
+                    {stage.completed ? (
+                      <CheckCircle className="h-4 w-4" />
+                    ) : (
+                      <span className="text-sm font-medium">{index + 1}</span>
+                    )}
+                  </div>
+                  <span className="text-sm">{stage.label}</span>
+                </div>
+                {index < stages.length - 1 && (
+                  <div className={`w-12 h-px mx-4 ${
+                    stages[index + 1].completed || currentStage === stages[index + 1].key 
+                      ? 'bg-blue-300' : 'bg-gray-300'
+                  }`} />
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   const formatAIResponse = (response: string): string => {
     // Convert markdown headers to HTML
@@ -188,11 +258,31 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Partner Succession Scenario</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {/* Progress Stepper */}
+      {renderProgressStepper()}
+
+      {/* Stage 1: Impact Analysis */}
+      {currentStage === 'impact' && (
+        <ImpactAnalysisWorkbench onProceedToStage2={handleProceedToStage2} />
+      )}
+
+      {/* Stage 2: Mitigation Planning */}
+      {currentStage === 'mitigation' && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <span>Stage 2: Mitigation Planning</span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={handleBackToStage1}>
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Back to Analysis
+                  </Button>
+                  <Badge variant="outline">Stage 2 of 3</Badge>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="partnerName">Departing Partner Name</Label>
@@ -310,14 +400,48 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
             ))}
           </div>
 
-          <Button onClick={handleRunScenario} className="w-full">
-            Run Succession Scenario Analysis
-          </Button>
+          <div className="flex gap-4">
+            <Button onClick={handleRunScenario} className="flex-1">
+              Generate Mitigation Strategy
+            </Button>
+            <Button onClick={handleProceedToStage3} variant="outline">
+              Skip to Implementation
+            </Button>
+          </div>
         </CardContent>
       </Card>
+        </>
+      )}
 
-      {/* Mathematical Results Display */}
-      {results && (
+      {/* Stage 3: Implementation Planning */}
+      {currentStage === 'implementation' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span>Stage 3: Implementation Planning</span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => setCurrentStage('mitigation')}>
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Back to Mitigation
+                </Button>
+                <Badge variant="outline">Stage 3 of 3</Badge>
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-12">
+              <h3 className="text-lg font-semibold mb-2">Implementation Planning</h3>
+              <p className="text-gray-600 mb-4">
+                Create detailed implementation timeline and action plans based on your mitigation strategy.
+              </p>
+              <Badge variant="secondary">Coming Soon</Badge>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Mathematical Results Display - Only for Stage 2 */}
+      {results && currentStage === 'mitigation' && (
         <Card>
           <CardHeader>
             <CardTitle>Succession Impact Analysis</CardTitle>
@@ -353,23 +477,23 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
         </Card>
       )}
 
-      {/* Loading State */}
-      {isLoading && (
+      {/* Loading State - Only for Stage 2 */}
+      {isLoading && currentStage === 'mitigation' && (
         <div className="flex items-center justify-center p-8">
           <Loader2 className="h-8 w-8 animate-spin" />
           <span className="ml-2">Generating strategic insights...</span>
         </div>
       )}
 
-      {/* Error Display */}
-      {error && (
+      {/* Error Display - Only for Stage 2 */}
+      {error && currentStage === 'mitigation' && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* AI Insights Display */}
-      {aiInsights && (
+      {/* AI Insights Display - Only for Stage 2 */}
+      {aiInsights && currentStage === 'mitigation' && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle>Strategic Succession Analysis</CardTitle>
