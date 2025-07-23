@@ -3,6 +3,8 @@
  * Provides computed metrics for client succession planning analysis
  */
 
+import { safeFrequencyToLowerCase, safePracticeAreaToArray } from './dataUtils';
+
 /**
  * Derives the relationship type based on client's lobbyist structure
  * @param {Object} client - Client data object
@@ -59,7 +61,7 @@ export const calculateTransitionComplexity = (client) => {
   complexity += relationshipIntensity * 0.3;
   
   // Communication frequency factor
-  const frequency = client.communication_frequency?.toLowerCase() || '';
+  const frequency = safeFrequencyToLowerCase(client.communication_frequency);
   const frequencyScores = {
     'daily': 3,
     'weekly': 2,
@@ -71,9 +73,10 @@ export const calculateTransitionComplexity = (client) => {
   complexity += frequencyScores[frequency] || 0;
   
   // Complex practice areas
-  const practiceArea = client.practice_area?.toLowerCase() || '';
+  const practiceAreas = safePracticeAreaToArray(client.practice_area).map(area => area.toLowerCase());
+  
   const complexAreas = ['healthcare', 'energy', 'financial services'];
-  if (complexAreas.some(area => practiceArea.includes(area))) {
+  if (practiceAreas.some(area => complexAreas.some(complexArea => area.includes(complexArea)))) {
     complexity += 1.5;
   }
   

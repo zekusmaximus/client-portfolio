@@ -23,6 +23,7 @@ import {
 import usePortfolioStore from './portfolioStore';
 import { isClientEnhanced, getEnhancedClientCount, getEnhancementRate } from './utils/clientUtils';
 import { formatClientName } from './utils/textUtils';
+import { practiceAreaMatchesSearch } from './utils/dataUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 
 const ClientListView = () => {
@@ -56,9 +57,7 @@ const ClientListView = () => {
         .filter(client => {
           // Text search filter
           const matchesSearch = formatClientName(client.name).toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (client.practiceArea && client.practiceArea.some(area =>
-              area.toLowerCase().includes(searchTerm.toLowerCase())
-            ));
+            practiceAreaMatchesSearch(client.practiceArea, searchTerm);
           
           // Partner filter
           const matchesPartner = partnerFilter === 'all' || 

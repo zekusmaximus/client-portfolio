@@ -522,7 +522,7 @@ router.get('/clients', async (req, res) => {
         ...client,
         revenue,
         // Transform database field names to frontend-expected names
-        practiceArea: client.practice_area || [],
+        practiceArea: Array.isArray(client.practice_area) ? client.practice_area : [],
         relationshipStrength: client.relationship_strength || 5,
         conflictRisk: client.conflict_risk || 'Medium',
         renewalProbability: client.renewal_probability || 0.7,
