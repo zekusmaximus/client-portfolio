@@ -21,7 +21,8 @@
       "Bash(find:*)",
       "Bash(timeout 10 npm run dev)",
       "Bash(tail:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

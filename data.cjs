@@ -161,8 +161,8 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
                renewal_probability, strategic_fit_score, notes, primary_lobbyist,
                client_originator, lobbyist_team, interaction_frequency, relationship_intensity
         FROM clients 
-        WHERE LOWER(name) = LOWER($1) AND user_id = $2
-      `, [clientData.name || '', req.user.userId]);
+        WHERE LOWER(name) = LOWER($1)
+      `, [clientData.name || '']);
 
       let currentClient;
       
@@ -232,7 +232,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
             interaction_frequency = $12,
             relationship_intensity = $13,
             updated_at = CURRENT_TIMESTAMP
-          WHERE id = $14 AND user_id = $15
+          WHERE id = $14
           RETURNING *
         `, [
           clientData.name || '',
@@ -248,8 +248,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           preservedLobbyistTeam,
           preservedInteractionFrequency,
           preservedRelationshipIntensity,
-          existingClient.id,
-          req.user.userId
+          existingClient.id
         ]);
 
         currentClient = updatedClient;
@@ -258,13 +257,12 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
         // Client doesn't exist - INSERT new client
         const { rows: [newClient] } = await (await client).query(`
           INSERT INTO clients (
-            user_id, name, status, practice_area, relationship_strength, conflict_risk,
+            name, status, practice_area, relationship_strength, conflict_risk,
             renewal_probability, strategic_fit_score, notes, primary_lobbyist,
             client_originator, lobbyist_team, interaction_frequency, relationship_intensity
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           RETURNING *
         `, [
-          req.user.userId,
           clientData.name || '',
           clientData.status || 'H',
           clientData.practiceArea || [],
@@ -504,10 +502,9 @@ router.get('/clients', async (req, res) => {
         ) AS revenues
       FROM clients c
       LEFT JOIN client_revenues r ON r.client_id = c.id
-      WHERE c.user_id = $1
       GROUP BY c.id
       ORDER BY c.created_at DESC
-    `, [req.user.userId]);
+    `);
     
     // Transform database fields to frontend-expected field names
     const transformedClients = rows.map(client => {
@@ -577,13 +574,13 @@ router.post('/clients', async (req, res) => {
     // Insert client record
     const { rows: [newClient] } = await (await client).query(`
       INSERT INTO clients (
-        user_id, name, status, practice_area, relationship_strength, conflict_risk,
+        name, status, practice_area, relationship_strength, conflict_risk,
         renewal_probability, strategic_fit_score, notes, primary_lobbyist,
         client_originator, lobbyist_team, interaction_frequency, relationship_intensity
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *
     `, [
-      req.user.userId, name, status, practice_area, relationship_strength, conflict_risk,
+      name, status, practice_area, relationship_strength, conflict_risk,
       renewal_probability, strategic_fit_score, notes, primary_lobbyist,
       client_originator, lobbyist_team, interaction_frequency, relationship_intensity
     ]);
@@ -613,9 +610,9 @@ router.post('/clients', async (req, res) => {
         ) AS revenues
       FROM clients c
       LEFT JOIN client_revenues r ON r.client_id = c.id
-      WHERE c.id = $1 AND c.user_id = $2
+      WHERE c.id = $1
       GROUP BY c.id
-    `, [newClient.id, req.user.userId]);
+    `, [newClient.id]);
 
     // Transform database fields to frontend-expected field names
     const transformedClients = rows.map(client => {
@@ -695,13 +692,13 @@ router.put('/clients/:id', async (req, res) => {
         notes = $8, primary_lobbyist = $9, client_originator = $10,
         lobbyist_team = $11, interaction_frequency = $12, relationship_intensity = $13,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $14 AND user_id = $15
+      WHERE id = $14
       RETURNING *
     `, [
       name, status, practice_area, relationship_strength, conflict_risk,
       renewal_probability, strategic_fit_score, notes, primary_lobbyist,
       client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
-      clientId, req.user.userId
+      clientId
     ]);
 
     if (!updatedClient) {
@@ -737,9 +734,9 @@ router.put('/clients/:id', async (req, res) => {
         ) AS revenues
       FROM clients c
       LEFT JOIN client_revenues r ON r.client_id = c.id
-      WHERE c.id = $1 AND c.user_id = $2
+      WHERE c.id = $1
       GROUP BY c.id
-    `, [clientId, req.user.userId]);
+    `, [clientId]);
 
     // Transform database fields to frontend-expected field names
     const transformedClients = rows.map(client => {
@@ -798,10 +795,10 @@ router.delete('/clients/:id', async (req, res) => {
     // First delete associated revenues
     await (await client).query('DELETE FROM client_revenues WHERE client_id = $1', [clientId]);
 
-    // Then delete the client (with user_id check for security)
+    // Then delete the client
     const { rowCount } = await (await client).query(
-      'DELETE FROM clients WHERE id = $1 AND user_id = $2', 
-      [clientId, req.user.userId]
+      'DELETE FROM clients WHERE id = $1', 
+      [clientId]
     );
 
     if (rowCount === 0) {

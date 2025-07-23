@@ -1,8 +1,8 @@
 const db = require('../db.cjs');
 const { calculateStrategicScores } = require('../utils/strategic.cjs');
 
-/* List all clients for a user, each with nested revenues array */
-exports.listWithRevenues = async (userId) => {
+/* List all clients, each with nested revenues array */
+exports.listWithRevenues = async () => {
   const { rows } = await db.query(
     `SELECT c.*, jsonb_agg(
          jsonb_build_object(
@@ -14,16 +14,14 @@ exports.listWithRevenues = async (userId) => {
        ) AS revenues
      FROM clients c
      LEFT JOIN client_revenues r ON r.client_id = c.id
-     WHERE c.user_id = $1
      GROUP BY c.id
-     ORDER BY c.created_at DESC`,
-    [userId]
+     ORDER BY c.created_at DESC`
   );
   return rows;
 };
 
 /* Create a new client */
-exports.create = async (userId, data) => {
+exports.create = async (data) => {
   const {
     name,
     status = 'Prospect',
@@ -46,10 +44,10 @@ exports.create = async (userId, data) => {
       conflict_risk, renewal_probability, strategic_fit_score, notes,
       primary_lobbyist, client_originator, lobbyist_team,
       interaction_frequency, relationship_intensity)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     VALUES (1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING *`,
     [
-      userId, name, status, practice_area, relationship_strength,
+      name, status, practice_area, relationship_strength,
       conflict_risk, renewal_probability, strategic_fit_score, notes,
       primary_lobbyist, client_originator, lobbyist_team,
       interaction_frequency, relationship_intensity,
@@ -60,29 +58,29 @@ exports.create = async (userId, data) => {
 };
 
 /* Update existing client (partial update) */
-exports.update = async (clientId, userId, patch) => {
+exports.update = async (clientId, patch) => {
   // Build dynamic SET clause
   const keys = Object.keys(patch);
   if (!keys.length) return null;
 
-  const cols = keys.map((k, i) => `"${k}" = $${i + 3}`).join(', ');
+  const cols = keys.map((k, i) => `"${k}" = $${i + 2}`).join(', ');
   const values = keys.map((k) => patch[k]);
 
   const { rows: [client] } = await db.query(
     `UPDATE clients SET ${cols}, updated_at = now()
-     WHERE id = $1 AND user_id = $2
+     WHERE id = $1
      RETURNING *`,
-    [clientId, userId, ...values]
+    [clientId, ...values]
   );
   return client;
 };
 
 /* Delete client (cascade removes revenues) */
-exports.remove = (clientId, userId) =>
-  db.query('DELETE FROM clients WHERE id = $1 AND user_id = $2', [clientId, userId]);
+exports.remove = (clientId) =>
+  db.query('DELETE FROM clients WHERE id = $1', [clientId]);
 
 /* Get single client with revenues */
-exports.get = async (clientId, userId) => {
+exports.get = async (clientId) => {
   const { rows } = await db.query(
     `SELECT c.*, jsonb_agg(
          jsonb_build_object(
@@ -94,9 +92,9 @@ exports.get = async (clientId, userId) => {
        ) AS revenues
      FROM clients c
      LEFT JOIN client_revenues r ON r.client_id = c.id
-     WHERE c.id = $1 AND c.user_id = $2
+     WHERE c.id = $1
      GROUP BY c.id`,
-    [clientId, userId]
+    [clientId]
   );
   return rows[0];
 };
@@ -105,11 +103,10 @@ exports.get = async (clientId, userId) => {
 
 /**
  * List clients with calculated strategic metrics
- * @param {number} userId
  * @returns {Promise<Array>}
  */
-exports.listWithMetrics = async (userId) => {
- const clients = await exports.listWithRevenues(userId);
+exports.listWithMetrics = async () => {
+ const clients = await exports.listWithRevenues();
 
  const enriched = clients.map((c) => {
    // Build revenue object for 2023-2025
@@ -141,11 +138,10 @@ exports.listWithMetrics = async (userId) => {
 /**
  * Get single client with calculated metrics
  * @param {number|string} clientId
- * @param {number} userId
  * @returns {Promise<Object|null>}
  */
-exports.getWithMetrics = async (clientId, userId) => {
- const client = await exports.get(clientId, userId);
+exports.getWithMetrics = async (clientId) => {
+ const client = await exports.get(clientId);
  if (!client) return null;
 
  const scored = calculateStrategicScores([
