@@ -83,6 +83,82 @@ router.post('/succession', handleValidationErrors, async (req, res) => {
   }
 });
 
+// POST /api/scenarios/bulk-transition-plans
+router.post('/bulk-transition-plans', handleValidationErrors, async (req, res) => {
+  try {
+    if (!anthropic) {
+      return res.status(500).json({
+        success: false,
+        error: 'AI service not available - Anthropic client not initialized',
+        details: process.env.NODE_ENV === 'development' ? 'Check API key configuration' : undefined
+      });
+    }
+
+    const { clients, stage1Data } = req.body;
+
+    if (!clients || !Array.isArray(clients) || clients.length === 0) {
+      return res.status(400).json({ success: false, error: 'clients array is required' });
+    }
+
+    if (!stage1Data) {
+      return res.status(400).json({ success: false, error: 'stage1Data is required' });
+    }
+
+    // Generate individual transition plans for each client
+    const plans = await Promise.all(clients.map(async (client) => {
+      try {
+        // Create client-specific prompt
+        const prompt = createBulkTransitionPlanPrompt(client, stage1Data);
+        
+        const message = await anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 2000,
+          temperature: 0.7,
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ]
+        });
+
+        const aiResponse = message.content[0].text;
+        
+        // Parse AI response into structured plan
+        const parsedPlan = parseTransitionPlanResponse(aiResponse, client);
+        
+        return {
+          clientId: client.id,
+          clientName: client.name,
+          ...parsedPlan
+        };
+      } catch (error) {
+        console.error(`Error generating plan for client ${client.id}:`, error);
+        return {
+          clientId: client.id,
+          clientName: client.name,
+          error: 'Failed to generate plan',
+          status: 'error'
+        };
+      }
+    }));
+
+    res.json({
+      success: true,
+      plans,
+      timestamp: new Date().toISOString(),
+    });
+
+  } catch (error) {
+    console.error('Error in bulk transition plans generation:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate bulk transition plans',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 /* -------------------------------------------------------------------------- */
 /*                           CAPACITY OPTIMIZATION                           */
 /* -------------------------------------------------------------------------- */
@@ -480,6 +556,152 @@ Focus on specific, actionable strategies with timeline and resource requirements
   });
 
   return response.content[0].text;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                       BULK TRANSITION PLAN HELPERS                       */
+/* -------------------------------------------------------------------------- */
+
+function createBulkTransitionPlanPrompt(client, stage1Data) {
+  const revenue = client.average_revenue || 0;
+  const practiceAreas = Array.isArray(client.practiceArea) ? client.practiceArea.join(', ') : client.practiceArea || 'Not specified';
+  const relationshipType = client.relationshipType || 'unknown';
+  const successionRisk = client.successionRisk || 5;
+  const transitionComplexity = client.transitionComplexity || 5;
+  
+  return `You are a senior succession planning consultant specializing in government relations law firms. Create a detailed transition plan for this specific client based on the Stage 1 impact analysis.
+
+## CLIENT PROFILE
+- **Name**: ${client.name}
+- **Annual Revenue**: $${revenue.toLocaleString()}
+- **Practice Areas**: ${practiceAreas}
+- **Current Partner**: ${client.primary_lobbyist || 'Not assigned'}
+- **Relationship Type**: ${relationshipType}
+- **Succession Risk**: ${successionRisk}/10
+- **Transition Complexity**: ${transitionComplexity}/10
+- **Relationship Strength**: ${client.relationshipStrength || 'Not specified'}/10
+
+## STAGE 1 CONTEXT
+- **Departing Partners**: ${stage1Data.selectedPartners?.join(', ') || 'Not specified'}
+- **Total Revenue at Risk**: $${stage1Data.impactData?.totalRevenueAtRisk?.toLocaleString() || '0'}
+- **Expected Retention Rate**: ${((stage1Data.impactData?.estimatedRetentionRate || 0.8) * 100).toFixed(1)}%
+
+Please create a comprehensive transition plan with the following structure:
+
+## TRANSITION STRATEGY
+[Specific approach tailored to this client's risk profile and relationship type]
+
+## RECOMMENDED SUCCESSOR
+[Suggest ideal successor partner based on practice area and client needs]
+
+## TIMELINE
+[Recommend timeline in days - be specific (e.g., 30, 60, 90 days)]
+
+## KEY RISKS & MITIGATION
+[Identify 2-3 specific risks and mitigation strategies]
+
+## ACTION ITEMS
+[3-5 specific, actionable tasks with clear owners and deadlines]
+
+## CLIENT COMMUNICATION TEMPLATE
+[Draft email template for initial client communication about transition]
+
+Focus on practical, implementable recommendations. Consider the client's revenue impact, relationship dynamics, and succession risk level in your recommendations.`;
+}
+
+function parseTransitionPlanResponse(aiResponse, client) {
+  try {
+    // Extract different sections from the AI response
+    const sections = {
+      strategy: extractSection(aiResponse, 'TRANSITION STRATEGY'),
+      successorPartner: extractSection(aiResponse, 'RECOMMENDED SUCCESSOR'),
+      timeline: extractTimelineFromResponse(aiResponse),
+      risks: extractSection(aiResponse, 'KEY RISKS & MITIGATION'),
+      tasks: extractTasksFromResponse(aiResponse),
+      communicationTemplate: extractSection(aiResponse, 'CLIENT COMMUNICATION TEMPLATE')
+    };
+
+    // Determine priority based on succession risk
+    let priority = 'medium';
+    if (client.successionRisk >= 8) priority = 'critical';
+    else if (client.successionRisk >= 6) priority = 'high';
+    else if (client.successionRisk <= 3) priority = 'low';
+
+    return {
+      strategy: sections.strategy || 'No strategy generated',
+      successorPartner: sections.successorPartner || 'To be determined',
+      timelineDays: sections.timeline || 30,
+      risks: sections.risks || 'No specific risks identified',
+      tasks: sections.tasks || [],
+      communicationTemplate: sections.communicationTemplate || 'No template generated',
+      priority,
+      status: 'planned',
+      createdAt: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error parsing transition plan response:', error);
+    return {
+      strategy: 'Error generating strategy',
+      successorPartner: 'To be determined',
+      timelineDays: 30,
+      risks: 'Unable to assess risks',
+      tasks: [],
+      communicationTemplate: 'Template generation failed',
+      priority: 'medium',
+      status: 'error',
+      error: error.message
+    };
+  }
+}
+
+function extractSection(text, sectionHeader) {
+  const regex = new RegExp(`## ${sectionHeader}([\\s\\S]*?)(?=##|$)`, 'i');
+  const match = text.match(regex);
+  if (match && match[1]) {
+    return match[1].trim().replace(/^\[|\]$/g, ''); // Remove brackets if present
+  }
+  return null;
+}
+
+function extractTimelineFromResponse(text) {
+  // Look for timeline section and extract number of days
+  const timelineSection = extractSection(text, 'TIMELINE');
+  if (timelineSection) {
+    const dayMatch = timelineSection.match(/(\d+)\s*days?/i);
+    if (dayMatch) {
+      return parseInt(dayMatch[1]);
+    }
+  }
+  
+  // Fallback: look for any mention of days in the text
+  const globalMatch = text.match(/(\d+)\s*days?/i);
+  if (globalMatch) {
+    return parseInt(globalMatch[1]);
+  }
+  
+  return 30; // Default fallback
+}
+
+function extractTasksFromResponse(text) {
+  const actionSection = extractSection(text, 'ACTION ITEMS');
+  if (!actionSection) return [];
+  
+  // Split by lines and look for bullet points or numbered items
+  const lines = actionSection.split('\n');
+  const tasks = [];
+  
+  for (const line of lines) {
+    const cleanLine = line.trim();
+    // Match various bullet point formats: -, *, 1., [1], etc.
+    if (/^[-*•]\s+/.test(cleanLine) || /^\d+\.\s+/.test(cleanLine) || /^\[\d+\]\s+/.test(cleanLine)) {
+      const task = cleanLine.replace(/^[-*•]\s+|^\d+\.\s+|^\[\d+\]\s+/, '').trim();
+      if (task.length > 0) {
+        tasks.push(task);
+      }
+    }
+  }
+  
+  return tasks.slice(0, 5); // Limit to 5 tasks
 }
 
 module.exports = router;

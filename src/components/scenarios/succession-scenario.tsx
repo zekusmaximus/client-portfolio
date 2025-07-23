@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import ImpactAnalysisWorkbench from '../succession/ImpactAnalysisWorkbench';
+import ClientReviewInterface from '../succession/ClientReviewInterface';
 
 interface SuccessionScenarioProps {
   portfolioId?: string;
@@ -53,14 +54,15 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
     setCurrentStage('impact');
   };
 
-  const handleProceedToStage3 = () => {
+  const handleProceedToStage3 = (transitionPlans: any) => {
+    setStage1Data({ ...stage1Data, transitionPlans });
     setCurrentStage('implementation');
   };
 
   const renderProgressStepper = () => {
     const stages = [
       { key: 'impact', label: 'Impact Analysis', completed: stage1Data !== null },
-      { key: 'mitigation', label: 'Mitigation Planning', completed: false },
+      { key: 'mitigation', label: 'Client Review & Triage', completed: stage1Data?.transitionPlans !== undefined },
       { key: 'implementation', label: 'Implementation', completed: false }
     ];
 
@@ -266,8 +268,17 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ portfolioId }) 
         <ImpactAnalysisWorkbench onProceedToStage2={handleProceedToStage2} />
       )}
 
-      {/* Stage 2: Mitigation Planning */}
-      {currentStage === 'mitigation' && (
+      {/* Stage 2: Client Review & Triage */}
+      {currentStage === 'mitigation' && stage1Data && (
+        <ClientReviewInterface
+          stage1Data={stage1Data}
+          onProceedToStage3={handleProceedToStage3}
+          onBackToStage1={handleBackToStage1}
+        />
+      )}
+
+      {/* Legacy Stage 2: Mitigation Planning Form (kept for backward compatibility) */}
+      {currentStage === 'mitigation' && !stage1Data && (
         <>
           <Card>
             <CardHeader>

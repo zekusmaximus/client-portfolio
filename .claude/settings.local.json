@@ -19,7 +19,8 @@
       "Bash(psql:*)",
       "Bash(mv:*)",
       "Bash(find:*)",
-      "Bash(timeout 10 npm run dev)"
+      "Bash(timeout 10 npm run dev)",
+      "Bash(tail:*)"
     ],
     "deny": []
   }

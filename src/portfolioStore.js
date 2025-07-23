@@ -44,6 +44,15 @@ const usePortfolioStore = create(
         customAssignments: {} 
       },
       
+      // Succession planning state
+      transitionPlans: {}, // { clientId: transitionPlan }
+      successionWorkflow: {
+        currentStage: 'impact', // 'impact', 'triage', 'implementation'
+        stage1Data: null,
+        stage2Data: null,
+        selectedDepartingPartners: []
+      },
+      
       // Actions
       setClients: (clients) => {
         const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
@@ -656,6 +665,103 @@ const usePortfolioStore = create(
       getSuccessionAnalytics: () => {
         const state = get();
         return getSuccessionAnalytics(state.clients);
+      },
+
+      // Succession planning workflow actions
+      setSuccessionStage: (stage, data) => {
+        const current = get().successionWorkflow;
+        set({
+          successionWorkflow: {
+            ...current,
+            currentStage: stage,
+            ...(stage === 'triage' && { stage1Data: data }),
+            ...(stage === 'implementation' && { stage2Data: data })
+          }
+        });
+      },
+
+      setTransitionPlan: (clientId, plan) => {
+        const currentPlans = get().transitionPlans;
+        set({
+          transitionPlans: {
+            ...currentPlans,
+            [clientId]: plan
+          }
+        });
+      },
+
+      setTransitionPlans: (plans) => {
+        set({ transitionPlans: plans });
+      },
+
+      updateTransitionPlan: (clientId, updates) => {
+        const currentPlans = get().transitionPlans;
+        if (currentPlans[clientId]) {
+          set({
+            transitionPlans: {
+              ...currentPlans,
+              [clientId]: {
+                ...currentPlans[clientId],
+                ...updates,
+                updatedAt: new Date().toISOString()
+              }
+            }
+          });
+        }
+      },
+
+      approveTransitionPlan: (clientId) => {
+        get().updateTransitionPlan(clientId, { status: 'approved' });
+      },
+
+      rejectTransitionPlan: (clientId) => {
+        get().updateTransitionPlan(clientId, { status: 'rejected' });
+      },
+
+      bulkUpdateTransitionPlans: (clientIds, updates) => {
+        const currentPlans = get().transitionPlans;
+        const updatedPlans = { ...currentPlans };
+        
+        clientIds.forEach(clientId => {
+          if (updatedPlans[clientId]) {
+            updatedPlans[clientId] = {
+              ...updatedPlans[clientId],
+              ...updates,
+              updatedAt: new Date().toISOString()
+            };
+          } else {
+            updatedPlans[clientId] = {
+              clientId,
+              ...updates,
+              createdAt: new Date().toISOString()
+            };
+          }
+        });
+
+        set({ transitionPlans: updatedPlans });
+      },
+
+      getTransitionPlansByStatus: (status) => {
+        const plans = get().transitionPlans;
+        return Object.entries(plans)
+          .filter(([_, plan]) => plan.status === status)
+          .map(([clientId, plan]) => ({ clientId, ...plan }));
+      },
+
+      clearTransitionPlans: () => {
+        set({ transitionPlans: {} });
+      },
+
+      resetSuccessionWorkflow: () => {
+        set({
+          successionWorkflow: {
+            currentStage: 'impact',
+            stage1Data: null,
+            stage2Data: null,
+            selectedDepartingPartners: []
+          },
+          transitionPlans: {}
+        });
       }
     }),
     {
