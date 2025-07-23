@@ -20,7 +20,8 @@
       "Bash(mv:*)",
       "Bash(find:*)",
       "Bash(timeout 10 npm run dev)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(git log:*)"
     ],
     "deny": []
   }
