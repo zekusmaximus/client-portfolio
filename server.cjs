@@ -184,6 +184,46 @@ app.get('/api/debug', async (req, res) => {
   }
 });
 
+// Test endpoint to fetch clients without auth (TEMPORARY FOR DEBUGGING)
+app.get('/api/debug/clients', async (req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT 
+        c.*,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'year', r.year,
+              'revenue_amount', r.revenue_amount
+            ) ORDER BY r.year
+          ) FILTER (WHERE r.id IS NOT NULL),
+          '[]'
+        ) AS revenues
+      FROM clients c
+      LEFT JOIN client_revenues r ON r.client_id = c.id
+      GROUP BY c.id
+      ORDER BY c.created_at DESC
+      LIMIT 5
+    `);
+    
+    res.json({
+      clientCount: rows.length,
+      sampleClients: rows.map(client => ({
+        id: client.id,
+        name: client.name,
+        status: client.status,
+        user_id: client.user_id,
+        created_at: client.created_at
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to fetch clients',
+      message: error.message
+    });
+  }
+});
+
 // Serve React app for all other routes (commented out for now)
 // app.get('/*', (req, res) => {
 //   res.sendFile(path.join(__dirname, '../frontend/build/index.html'));
