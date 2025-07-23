@@ -30,6 +30,7 @@ import {
 } from 'recharts';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
+import { getSuccessionRiskVariant, getRelationshipTypeColor, groupClientsBySuccessionRisk } from './utils/successionUtils';
 
 import ClientCardModal from './ClientCardModal';
 import DataUploadManager from './DataUploadManager';
@@ -43,7 +44,8 @@ const DashboardView = () => {
     closeClientModal,
     retryFetchClients,
     getPartnershipHealth,
-    setCurrentView
+    setCurrentView,
+    getSuccessionAnalytics
   } = usePortfolioStore();
   const [selectedTab, setSelectedTab] = useState('overview');
   const [showUpload, setShowUpload] = useState(false);
@@ -157,6 +159,9 @@ const DashboardView = () => {
         return sum + value;
       }, 0) / clients.length : 0;
 
+    // Succession analytics
+    const successionAnalytics = getSuccessionAnalytics();
+
     return {
       practiceAreas,
       revenueByStatus,
@@ -165,7 +170,8 @@ const DashboardView = () => {
       totalRevenue,
       averageStrategicValue,
       highRiskClients,
-      lowRenewalClients
+      lowRenewalClients,
+      successionAnalytics
     };
   }, [clients]);
 
@@ -337,9 +343,10 @@ const DashboardView = () => {
 
       {/* Main Dashboard */}
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="analysis">Strategic Analysis</TabsTrigger>
+          <TabsTrigger value="succession">Succession Planning</TabsTrigger>
           <TabsTrigger value="clients">Client Rankings</TabsTrigger>
         </TabsList>
 
@@ -466,6 +473,119 @@ const DashboardView = () => {
           </Card>
         </TabsContent>
 
+        <TabsContent value="succession" className="space-y-6">
+          {/* Succession Planning Overview */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">High Risk Clients</p>
+                    <p className="text-2xl font-bold text-red-600">{analytics.successionAnalytics.riskDistribution.high}</p>
+                  </div>
+                  <AlertTriangle className="h-8 w-8 text-red-500" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Medium Risk Clients</p>
+                    <p className="text-2xl font-bold text-yellow-600">{analytics.successionAnalytics.riskDistribution.medium}</p>
+                  </div>
+                  <Clock className="h-8 w-8 text-yellow-500" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Low Risk Clients</p>
+                    <p className="text-2xl font-bold text-green-600">{analytics.successionAnalytics.riskDistribution.low}</p>
+                  </div>
+                  <Target className="h-8 w-8 text-green-500" />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Avg Complexity</p>
+                    <p className="text-2xl font-bold">{analytics.successionAnalytics.averageComplexity}</p>
+                  </div>
+                  <BarChart3 className="h-8 w-8 text-purple-500" />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Relationship Type Distribution */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Relationship Type Distribution
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {Object.entries(analytics.successionAnalytics.relationshipTypes).map(([type, count]) => (
+                    <div key={type} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded-full ${getRelationshipTypeColor(type).replace('bg', 'bg').replace('text-', 'bg-')}`} />
+                        <span className="capitalize">{type}</span>
+                      </div>
+                      <Badge variant="outline">{count}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Clients Needing Attention */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5" />
+                  Clients Needing Attention
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {analytics.successionAnalytics.highestRiskClients.map((client, index) => (
+                    <div key={client.id || index} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div>
+                        <p className="font-medium">{formatClientName(client.name)}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge 
+                            variant="outline"
+                            className={`text-xs ${getRelationshipTypeColor(client.relationshipType)}`}
+                          >
+                            {client.relationshipType?.toUpperCase()}
+                          </Badge>
+                          <span className="text-xs text-gray-600">
+                            Complexity: {client.transitionComplexity}/10
+                          </span>
+                        </div>
+                      </div>
+                      <Badge variant={getSuccessionRiskVariant(client.successionRisk)}>
+                        Risk: {client.successionRisk}/10
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         <TabsContent value="clients" className="space-y-6">
           {/* Client Rankings Table */}
           <Card>
@@ -485,7 +605,8 @@ const DashboardView = () => {
                       <th className="text-left p-2 font-medium">Strategic Value</th>
                       <th className="text-left p-2 font-medium">Revenue</th>
                       <th className="text-left p-2 font-medium">Status</th>
-                      <th className="text-left p-2 font-medium">Risk</th>
+                      <th className="text-left p-2 font-medium">Conflict Risk</th>
+                      <th className="text-left p-2 font-medium">Succession Risk</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -525,7 +646,12 @@ const DashboardView = () => {
                                 client.conflictRisk === 'Medium' ? 'outline' : 'secondary'
                               }
                             >
-                              {client.conflictRisk || 'Medium'} Conflict Risk
+                              {client.conflictRisk || 'Medium'}
+                            </Badge>
+                          </td>
+                          <td className="p-2">
+                            <Badge variant={getSuccessionRiskVariant(client.successionRisk)}>
+                              {client.successionRisk}/10
                             </Badge>
                           </td>
                         </tr>

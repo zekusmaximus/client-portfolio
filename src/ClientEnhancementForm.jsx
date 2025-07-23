@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
+import { enhanceClientWithSuccessionMetrics, getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 
 // Helper functions for relationship metrics
 const getRelationshipStrengthLabel = (value) => {
@@ -721,6 +722,67 @@ const ClientEnhancementForm = ({ onClose }) => {
           </div>
 
 
+
+          {/* Succession Planning Preview */}
+          <Card className="succession-preview bg-gray-50 dark:bg-gray-800">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <AlertCircle className="h-5 w-5" />
+                Succession Planning Impact
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const enhancedClient = enhanceClientWithSuccessionMetrics(formData);
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Relationship Type</Label>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded-full ${getRelationshipTypeColor(enhancedClient.relationshipType).replace('text-', 'bg-')}`} />
+                        <Badge 
+                          variant="outline"
+                          className={`${getRelationshipTypeColor(enhancedClient.relationshipType)}`}
+                        >
+                          {enhancedClient.relationshipType?.toUpperCase()}
+                        </Badge>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Transition Complexity</Label>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-gray-200 rounded-full h-2">
+                          <div 
+                            className="bg-purple-500 h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${(enhancedClient.transitionComplexity / 10) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-sm font-medium">{enhancedClient.transitionComplexity}/10</span>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Succession Risk</Label>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={getSuccessionRiskVariant(enhancedClient.successionRisk)}>
+                          <AlertTriangle className="h-3 w-3 mr-1" />
+                          {enhancedClient.successionRisk}/10
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              
+              <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  <strong>Live Preview:</strong> These succession metrics update automatically as you modify relationship data above. 
+                  This helps you understand how changes affect succession planning and client transition complexity.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Notes */}
           <div className="space-y-3">

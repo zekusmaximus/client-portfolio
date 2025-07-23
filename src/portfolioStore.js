@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from './api';
+import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
@@ -44,7 +45,10 @@ const usePortfolioStore = create(
       },
       
       // Actions
-      setClients: (clients) => set({ clients }),
+      setClients: (clients) => {
+        const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
+        set({ clients: enhancedClients });
+      },
 
       // Fetch clients from backend
       fetchClients: async () => {
@@ -54,7 +58,8 @@ const usePortfolioStore = create(
         try {
           const response = await apiClient.get('/data/clients');
           const clients = response.clients || [];
-          set({ clients, clientsLoading: false, fetchError: null });
+          const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
+          set({ clients: enhancedClients, clientsLoading: false, fetchError: null });
         } catch (err) {
           console.error('Failed to fetch clients', err);
           
@@ -645,7 +650,13 @@ const usePortfolioStore = create(
       
       resetOptimization: () => set({ 
         optimization: null 
-      })
+      }),
+
+      // Succession planning analytics
+      getSuccessionAnalytics: () => {
+        const state = get();
+        return getSuccessionAnalytics(state.clients);
+      }
     }),
     {
       name: 'portfolio-storage',

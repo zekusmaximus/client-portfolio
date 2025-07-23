@@ -17,11 +17,13 @@ import {
   User,
   Clock,
   Heart,
-  Zap
+  Zap,
+  AlertTriangle
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { isClientEnhanced, getEnhancedClientCount, getEnhancementRate } from './utils/clientUtils';
 import { formatClientName } from './utils/textUtils';
+import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 
 const ClientListView = () => {
   const {
@@ -36,6 +38,8 @@ const ClientListView = () => {
   const [sortBy, setSortBy] = useState('strategicValue');
   const [sortOrder, setSortOrder] = useState('desc');
   const [partnerFilter, setPartnerFilter] = useState('all');
+  const [relationshipTypeFilter, setRelationshipTypeFilter] = useState('all');
+  const [successionRiskFilter, setSuccessionRiskFilter] = useState('all');
   const [deleteDialogClient, setDeleteDialogClient] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -61,7 +65,17 @@ const ClientListView = () => {
             client.primary_lobbyist === partnerFilter ||
             (!client.primary_lobbyist && partnerFilter === 'unassigned');
           
-          return matchesSearch && matchesPartner;
+          // Relationship type filter
+          const matchesRelationshipType = relationshipTypeFilter === 'all' ||
+            client.relationshipType === relationshipTypeFilter;
+          
+          // Succession risk filter
+          const matchesSuccessionRisk = successionRiskFilter === 'all' ||
+            (successionRiskFilter === 'low' && client.successionRisk <= 3) ||
+            (successionRiskFilter === 'medium' && client.successionRisk > 3 && client.successionRisk <= 6) ||
+            (successionRiskFilter === 'high' && client.successionRisk > 6);
+          
+          return matchesSearch && matchesPartner && matchesRelationshipType && matchesSuccessionRisk;
         })
         .sort((a, b) => {
           let aValue, bValue;
@@ -76,6 +90,12 @@ const ClientListView = () => {
           } else if (sortBy === 'averageRevenue') {
             aValue = getClientRevenue(a) || 0;
             bValue = getClientRevenue(b) || 0;
+          } else if (sortBy === 'successionRisk') {
+            aValue = a.successionRisk || 0;
+            bValue = b.successionRisk || 0;
+          } else if (sortBy === 'transitionComplexity') {
+            aValue = a.transitionComplexity || 0;
+            bValue = b.transitionComplexity || 0;
           } else {
             // Fallback for other fields
             aValue = a[sortBy] || 0;
@@ -90,7 +110,7 @@ const ClientListView = () => {
             return bValue - aValue;
           }
         });
-  }, [clients, searchTerm, sortBy, sortOrder, partnerFilter]);
+  }, [clients, searchTerm, sortBy, sortOrder, partnerFilter, relationshipTypeFilter, successionRiskFilter]);
 
   const handleEditClient = (client) => {
     openClientModal(client);
@@ -201,6 +221,29 @@ const ClientListView = () => {
                 ))}
               </SelectContent>
             </Select>
+            <Select value={relationshipTypeFilter} onValueChange={setRelationshipTypeFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Relationship Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="primary">Primary</SelectItem>
+                <SelectItem value="secondary">Secondary</SelectItem>
+                <SelectItem value="shared">Shared</SelectItem>
+                <SelectItem value="orphaned">Orphaned</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={successionRiskFilter} onValueChange={setSuccessionRiskFilter}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Risk Level" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Risk</SelectItem>
+                <SelectItem value="low">Low (1-3)</SelectItem>
+                <SelectItem value="medium">Medium (4-6)</SelectItem>
+                <SelectItem value="high">High (7-10)</SelectItem>
+              </SelectContent>
+            </Select>
             <div className="flex gap-2">
               <select
                 value={sortBy}
@@ -209,6 +252,8 @@ const ClientListView = () => {
               >
                 <option value="strategicValue">Strategic Value</option>
                 <option value="averageRevenue">Revenue</option>
+                <option value="successionRisk">Succession Risk</option>
+                <option value="transitionComplexity">Complexity</option>
                 <option value="name">Name</option>
               </select>
               <Button
@@ -244,6 +289,26 @@ const ClientListView = () => {
                     >
                       {client.conflictRisk} Conflict Risk
                     </Badge>
+                  </div>
+                  
+                  {/* Succession Planning Indicators */}
+                  <div className="flex items-center gap-2 mt-2">
+                    <Badge 
+                      variant={getSuccessionRiskVariant(client.successionRisk)}
+                      className="text-xs"
+                    >
+                      <AlertTriangle className="h-3 w-3 mr-1" />
+                      Risk: {client.successionRisk}/10
+                    </Badge>
+                    <Badge 
+                      variant="outline"
+                      className={`text-xs ${getRelationshipTypeColor(client.relationshipType)}`}
+                    >
+                      {client.relationshipType?.toUpperCase()}
+                    </Badge>
+                  </div>
+                  <div className="text-xs text-gray-600 mt-1">
+                    Transition Complexity: {client.transitionComplexity}/10
                   </div>
                 </div>
                 <div className="flex gap-2">
