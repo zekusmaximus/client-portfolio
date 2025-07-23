@@ -157,10 +157,11 @@ app.get('/api/health', async (req, res) => {
 // Debug endpoint to check database contents (NO AUTH REQUIRED)
 app.get('/api/debug', async (req, res) => {
   try {
-    const [usersResult, clientsResult, tablesResult] = await Promise.all([
+    const [usersResult, clientsResult, tablesResult, usernamesResult] = await Promise.all([
       db.query('SELECT COUNT(*) as count FROM users'),
       db.query('SELECT COUNT(*) as count FROM clients'), 
-      db.query('SELECT table_name FROM information_schema.tables WHERE table_schema = \'public\'')
+      db.query('SELECT table_name FROM information_schema.tables WHERE table_schema = \'public\''),
+      db.query('SELECT id, username, created_at FROM users ORDER BY created_at')
     ]);
 
     res.json({
@@ -168,6 +169,11 @@ app.get('/api/debug', async (req, res) => {
       tables: tablesResult.rows.map(r => r.table_name),
       userCount: parseInt(usersResult.rows[0].count),
       clientCount: parseInt(clientsResult.rows[0].count),
+      users: usernamesResult.rows.map(u => ({
+        id: u.id,
+        username: u.username,
+        created_at: u.created_at
+      })),
       timestamp: new Date().toISOString()
     });
   } catch (error) {
