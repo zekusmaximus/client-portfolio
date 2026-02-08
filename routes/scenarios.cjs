@@ -4,9 +4,44 @@ const auth = require('../middleware/auth.cjs');
 const { handleValidationErrors, sanitizeRequestBody } = require('../middleware/validation.cjs');
 const clientModel = require('../models/clientModel.cjs');
 const { generatePortfolioSummary } = require('../utils/strategic.cjs');
+const crypto = require('crypto');
 
 // Initialize Anthropic client (reuse pattern from claude.cjs)
 let anthropic = null;
+
+// Cache for AI analysis results
+const aiCache = new Map();
+
+// Helper to get cache key
+const getCacheKey = (prefix, ...args) => {
+  const hash = crypto.createHash('sha256');
+  hash.update(prefix);
+  args.forEach(arg => hash.update(JSON.stringify(arg || {})));
+  return hash.digest('hex');
+};
+
+// Helper to get cached analysis or generate new one
+async function getCachedAnalysis(cacheKeyPrefix, inputs, generatorFn) {
+  const cacheKey = getCacheKey(cacheKeyPrefix, ...inputs);
+
+  if (aiCache.has(cacheKey)) {
+    console.log(`⚡ AI Cache Hit: ${cacheKeyPrefix}`);
+    return aiCache.get(cacheKey);
+  }
+
+  const result = await generatorFn();
+
+  // Cache the result
+  aiCache.set(cacheKey, result);
+
+  // Simple size management
+  if (aiCache.size > 100) {
+    const keys = Array.from(aiCache.keys());
+    for (let i = 0; i < 50; i++) aiCache.delete(keys[i]);
+  }
+
+  return result;
+}
 
 try {
   const { Anthropic } = require('@anthropic-ai/sdk');
@@ -396,7 +431,11 @@ function calculateGrowthMath(clients, scenarioData) {
 /* -------------------------------------------------------------------------- */
 
 async function getSuccessionScenarioAnalysis(mathResults, portfolioSummary, scenarioData) {
-  const prompt = `You are a senior succession planning consultant for government relations law firms. Analyze this succession scenario and provide strategic recommendations.
+  return getCachedAnalysis(
+    'succession',
+    [mathResults, portfolioSummary, scenarioData],
+    async () => {
+      const prompt = `You are a senior succession planning consultant for government relations law firms. Analyze this succession scenario and provide strategic recommendations.
 
 <scenario_context>
 Departing Lobbyists: ${mathResults.departingLobbyists.join(', ')}
@@ -433,18 +472,24 @@ Provide a structured succession planning analysis:
 
 Focus on actionable recommendations with specific timelines and success metrics.`;
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2000,
-    temperature: 0.3,
-    messages: [{ role: 'user', content: prompt }],
-  });
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: prompt }],
+      });
 
-  return response.content[0].text;
+      return response.content[0].text;
+    }
+  );
 }
 
 async function getCapacityOptimizationAnalysis(mathResults, portfolioSummary, scenarioData) {
-  const prompt = `You are a capacity optimization consultant for law firms. Analyze this capacity scenario and provide optimization recommendations.
+  return getCachedAnalysis(
+    'capacity',
+    [mathResults, portfolioSummary, scenarioData],
+    async () => {
+      const prompt = `You are a capacity optimization consultant for law firms. Analyze this capacity scenario and provide optimization recommendations.
 
 <capacity_analysis>
 Current Capacity: ${mathResults.currentCapacity} hours/month
@@ -490,18 +535,24 @@ Provide a comprehensive capacity optimization analysis:
 
 Focus on data-driven recommendations with clear ROI justification.`;
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2000,
-    temperature: 0.3,
-    messages: [{ role: 'user', content: prompt }],
-  });
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: prompt }],
+      });
 
-  return response.content[0].text;
+      return response.content[0].text;
+    }
+  );
 }
 
 async function getGrowthModelingAnalysis(mathResults, portfolioSummary, scenarioData) {
-  const prompt = `You are a growth strategy consultant for government relations law firms. Analyze this growth scenario and provide strategic recommendations.
+  return getCachedAnalysis(
+    'growth',
+    [mathResults, portfolioSummary, scenarioData],
+    async () => {
+      const prompt = `You are a growth strategy consultant for government relations law firms. Analyze this growth scenario and provide strategic recommendations.
 
 <growth_scenario>
 Current Revenue: $${mathResults.currentRevenue.toLocaleString()}
@@ -552,14 +603,16 @@ Provide a comprehensive growth strategy analysis:
 
 Focus on specific, actionable strategies with timeline and resource requirements.`;
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 2000,
-    temperature: 0.3,
-    messages: [{ role: 'user', content: prompt }],
-  });
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: prompt }],
+      });
 
-  return response.content[0].text;
+      return response.content[0].text;
+    }
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -707,5 +760,9 @@ function extractTasksFromResponse(text) {
   
   return tasks.slice(0, 5); // Limit to 5 tasks
 }
+
+// Expose functions for testing
+router._getSuccessionScenarioAnalysis = getSuccessionScenarioAnalysis;
+router._setAnthropicClient = (client) => { anthropic = client; };
 
 module.exports = router;
