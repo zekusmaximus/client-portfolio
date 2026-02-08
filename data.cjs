@@ -149,26 +149,46 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     
     // Save to database using upsert logic
     await (await client).query('BEGIN');
+
+    // Pre-fetch all existing clients to avoid N+1 queries
+    const clientNames = clientsWithScores
+      .map(c => c.name)
+      .filter(n => typeof n === 'string' && n.trim().length > 0);
     
-    const savedClients = [];
-    let updatedCount = 0;
-    let insertedCount = 0;
+    // Map to store existing clients: Lowercase Name -> Client Object
+    const existingClientsMap = new Map();
     
-    for (const clientData of clientsWithScores) {
-      // Check if client exists by name (case-insensitive)
-      const { rows: existingClients } = await (await client).query(`
+    if (clientNames.length > 0) {
+      // Fetch all potential matches in one query
+      // Using ANY($1) allows us to match against an array of lowercased names
+      const { rows: allExistingClients } = await (await client).query(`
         SELECT id, name, practice_area, relationship_strength, conflict_risk,
                renewal_probability, strategic_fit_score, notes, primary_lobbyist,
                client_originator, lobbyist_team, interaction_frequency, relationship_intensity
         FROM clients 
-        WHERE LOWER(name) = LOWER($1)
-      `, [clientData.name || '']);
+        WHERE LOWER(name) = ANY($1)
+      `, [clientNames.map(n => n.toLowerCase())]);
+
+      allExistingClients.forEach(c => {
+        if (c.name) {
+          existingClientsMap.set(c.name.toLowerCase(), c);
+        }
+      });
+    }
+
+    const savedClients = [];
+    let updatedCount = 0;
+    let insertedCount = 0;
+
+    for (const clientData of clientsWithScores) {
+      // Check if client exists by name (case-insensitive) using the pre-fetched map
+      const lowerName = (clientData.name || '').toLowerCase();
+      const existingClient = existingClientsMap.get(lowerName);
 
       let currentClient;
       
-      if (existingClients.length > 0) {
+      if (existingClient) {
         // Client exists - UPDATE with CSV data, preserve manual enhancements
-        const existingClient = existingClients[0];
         
         // Preserve manual enhancements (only if they were manually set and differ from defaults)
         const preservedPracticeArea = existingClient.practice_area && existingClient.practice_area.length > 0 
@@ -253,6 +273,9 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
 
         currentClient = updatedClient;
         updatedCount++;
+
+        // Update the map so subsequent CSV rows for the same client use the updated data
+        existingClientsMap.set(lowerName, updatedClient);
       } else {
         // Client doesn't exist - INSERT new client
         const { rows: [newClient] } = await (await client).query(`
@@ -280,6 +303,9 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
 
         currentClient = newClient;
         insertedCount++;
+
+        // Add to map so subsequent CSV rows for the same client use the new data
+        existingClientsMap.set(lowerName, newClient);
       }
 
       // Handle revenue updates - DELETE existing and INSERT new
