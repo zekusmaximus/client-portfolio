@@ -104,8 +104,12 @@ router.post('/bulk-transition-plans', handleValidationErrors, async (req, res) =
       return res.status(400).json({ success: false, error: 'stage1Data is required' });
     }
 
+    // Import p-limit dynamically
+    const pLimit = (await import('p-limit')).default;
+    const limit = pLimit(5); // Limit concurrency to 5 requests
+
     // Generate individual transition plans for each client
-    const plans = await Promise.all(clients.map(async (client) => {
+    const plans = await Promise.all(clients.map((client) => limit(async () => {
       try {
         // Create client-specific prompt
         const prompt = createBulkTransitionPlanPrompt(client, stage1Data);
@@ -141,7 +145,7 @@ router.post('/bulk-transition-plans', handleValidationErrors, async (req, res) =
           status: 'error'
         };
       }
-    }));
+    })));
 
     res.json({
       success: true,
