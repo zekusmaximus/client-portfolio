@@ -316,14 +316,25 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           WHERE client_id = $1
         `, [currentClient.id]);
 
-        // Insert new revenue records from CSV
-        for (const [year, amount] of Object.entries(clientData.revenue)) {
-          if (amount && amount > 0) {
-            await (await client).query(`
-              INSERT INTO client_revenues (client_id, year, revenue_amount)
-              VALUES ($1, $2, $3)
-            `, [currentClient.id, parseInt(year), amount]);
-          }
+        // Insert new revenue records from CSV in bulk
+        const validRevenues = Object.entries(clientData.revenue)
+          .filter(([year, amount]) => amount && amount > 0)
+          .map(([year, amount]) => [parseInt(year), amount]);
+
+        if (validRevenues.length > 0) {
+          const params = [];
+          const valuePlaceholders = [];
+          let paramIndex = 1;
+          validRevenues.forEach(([year, amount]) => {
+            params.push(currentClient.id, year, amount);
+            valuePlaceholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2})`);
+            paramIndex += 3;
+          });
+          const query = `
+            INSERT INTO client_revenues (client_id, year, revenue_amount)
+            VALUES ${valuePlaceholders.join(',')}
+          `;
+          await (await client).query(query, params);
         }
       }
       
@@ -611,12 +622,21 @@ router.post('/clients', async (req, res) => {
       client_originator, lobbyist_team, interaction_frequency, relationship_intensity
     ]);
 
-    // Insert revenue records
-    for (const revenue of revenues) {
-      await (await client).query(`
+    // Insert revenue records in bulk
+    if (revenues.length > 0) {
+      const params = [];
+      const valuePlaceholders = [];
+      let paramIndex = 1;
+      revenues.forEach(revenue => {
+        params.push(newClient.id, revenue.year, revenue.revenue_amount);
+        valuePlaceholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2})`);
+        paramIndex += 3;
+      });
+      const query = `
         INSERT INTO client_revenues (client_id, year, revenue_amount)
-        VALUES ($1, $2, $3)
-      `, [newClient.id, revenue.year, revenue.revenue_amount]);
+        VALUES ${valuePlaceholders.join(',')}
+      `;
+      await (await client).query(query, params);
     }
 
     await (await client).query('COMMIT');
@@ -735,12 +755,21 @@ router.put('/clients/:id', async (req, res) => {
     // Delete existing revenues
     await (await client).query('DELETE FROM client_revenues WHERE client_id = $1', [clientId]);
 
-    // Insert new revenues
-    for (const revenue of revenues) {
-      await (await client).query(`
+    // Insert new revenues in bulk
+    if (revenues.length > 0) {
+      const params = [];
+      const valuePlaceholders = [];
+      let paramIndex = 1;
+      revenues.forEach(revenue => {
+        params.push(clientId, revenue.year, revenue.revenue_amount);
+        valuePlaceholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2})`);
+        paramIndex += 3;
+      });
+      const query = `
         INSERT INTO client_revenues (client_id, year, revenue_amount)
-        VALUES ($1, $2, $3)
-      `, [clientId, revenue.year, revenue.revenue_amount]);
+        VALUES ${valuePlaceholders.join(',')}
+      `;
+      await (await client).query(query, params);
     }
 
     await (await client).query('COMMIT');

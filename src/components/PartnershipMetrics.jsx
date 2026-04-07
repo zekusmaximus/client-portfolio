@@ -55,12 +55,19 @@ const PartnershipMetrics = ({ partners, transitions, clients }) => {
       // 2. Client Retention Risk
       const departingPartners = partners.filter(p => p && p.isDeparting);
       const departingClients = departingPartners.flatMap(p => p?.clients || []);
-      
+
       let highValueAtRisk = 0;
       if (Array.isArray(clients) && departingClients.length > 0) {
+        // Create a Map for O(1) client lookups to avoid O(N^2) complexity
+        const clientMap = new Map(
+          clients
+            .filter(c => c && c.id && c.strategic_value)
+            .map(c => [c.id, c.strategic_value])
+        );
+
         highValueAtRisk = departingClients.filter(clientId => {
-          const client = clients.find(c => c && c.id === clientId);
-          return client && client.strategic_value && client.strategic_value > 7;
+          const strategicValue = clientMap.get(clientId);
+          return strategicValue && strategicValue > 7;
         }).length;
       }
 

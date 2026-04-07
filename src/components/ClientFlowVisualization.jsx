@@ -8,35 +8,42 @@ import { formatClientName, formatPartnerName } from '../utils/textUtils';
 const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
   const { getClientRevenue } = usePortfolioStore();
 
+  // Create client lookup map for O(1) access
+  const clientMap = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
+
   // Group assignments by source and destination with security validation
   const flows = useMemo(() => {
     const departingPartners = partners.filter(p => p.isDeparting);
     const remainingPartners = partners.filter(p => !p.isDeparting);
-    
+
     if (!departingPartners.length || !remainingPartners.length || !Object.keys(assignments).length) {
       return { departingPartners: [], flows: [], remainingPartners: [] };
     }
 
+    // Create lookup maps for O(1) access
+    const clientMap = new Map(clients.map(c => [c.id, c]));
+    const partnerMap = new Map(partners.map(p => [p.id, p]));
+
     // Create flow mapping with input validation
     const flowMap = new Map();
-    
+
     Object.entries(assignments).forEach(([clientId, partnerId]) => {
       // Security: Validate IDs are strings and not empty
-      if (typeof clientId !== 'string' || typeof partnerId !== 'string' || 
+      if (typeof clientId !== 'string' || typeof partnerId !== 'string' ||
           !clientId.trim() || !partnerId.trim()) {
         return;
       }
 
-      const client = clients.find(c => c?.id === clientId);
-      const targetPartner = remainingPartners.find(p => p?.id === partnerId);
-      const sourcePartner = departingPartners.find(p => 
+      const client = clientMap.get(clientId);
+      const targetPartner = partnerMap.get(partnerId);
+      const sourcePartner = departingPartners.find(p =>
         p?.clients?.includes(clientId)
       );
 
       // Only process valid assignments
       if (client && targetPartner && sourcePartner) {
         const flowKey = `${sourcePartner.id}-${targetPartner.id}`;
-        
+
         if (!flowMap.has(flowKey)) {
           flowMap.set(flowKey, {
             sourcePartner,
@@ -45,7 +52,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
             totalRevenue: 0
           });
         }
-        
+
         const flow = flowMap.get(flowKey);
         flow.clients.push(client);
         flow.totalRevenue += getClientRevenue(client);
@@ -55,7 +62,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
     return {
       departingPartners,
       flows: Array.from(flowMap.values()),
-      remainingPartners: remainingPartners.filter(p => 
+      remainingPartners: remainingPartners.filter(p =>
         Array.from(flowMap.values()).some(flow => flow.targetPartner.id === p.id)
       )
     };
@@ -70,13 +77,13 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
 
   // Get clients not yet assigned
   const unassignedClients = useMemo(() => {
-    const departingClients = flows.departingPartners.flatMap(p => 
-      (p.clients || []).map(clientId => clients.find(c => c.id === clientId)).filter(Boolean)
+    const departingClients = flows.departingPartners.flatMap(p =>
+      (p.clients || []).map(clientId => clientMap.get(clientId)).filter(Boolean)
     );
-    
+
     const assignedClientIds = new Set(Object.keys(assignments));
     return departingClients.filter(client => !assignedClientIds.has(client.id));
-  }, [flows.departingPartners, clients, assignments]);
+  }, [flows.departingPartners, clientMap, assignments]);
 
   if (flows.departingPartners.length === 0) {
     return (
@@ -109,7 +116,7 @@ const ClientFlowVisualization = ({ partners, assignments = {}, clients }) => {
             <div className="space-y-4">
               {flows.departingPartners.map(partner => {
                 const partnerClients = (partner.clients || [])
-                  .map(clientId => clients.find(c => c.id === clientId))
+                  .map(clientId => clientMap.get(clientId))
                   .filter(Boolean);
                 
                 const assignedFromPartner = partnerClients.filter(client => 
