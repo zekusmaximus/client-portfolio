@@ -41,6 +41,13 @@ export const exportPartnershipPDF = (partners, transitions, clients, getRevenueF
     const safeTransitions = transitions || {};
     const safeClients = Array.isArray(clients) ? clients : [];
 
+    // O(1) lookup maps built once, used throughout render
+    const clientById = new Map(safeClients.map(c => [c?.id, c]));
+    const partnerById = new Map(safePartners.map(p => [p?.id, p]));
+    const partnerByClientId = new Map(
+      safePartners.flatMap(p => (p?.clients || []).map(cid => [cid, p]))
+    );
+
     const styles = `
       <style>
         @media print {
@@ -161,7 +168,7 @@ export const exportPartnershipPDF = (partners, transitions, clients, getRevenueF
       if (!partner) return '';
       
       const partnerClients = (partner.clients || [])
-        .map(clientId => safeClients.find(c => c?.id === clientId))
+        .map(clientId => clientById.get(clientId))
         .filter(Boolean);
 
       const partnerRevenue = partnerClients.reduce((sum, client) => {
@@ -248,9 +255,9 @@ export const exportPartnershipPDF = (partners, transitions, clients, getRevenueF
             </thead>
             <tbody>
               ${assignmentEntries.map(([clientId, newPartnerId]) => {
-                const client = safeClients.find(c => c?.id === clientId);
-                const currentPartner = safePartners.find(p => p?.clients?.includes(clientId));
-                const newPartner = safePartners.find(p => p?.id === newPartnerId);
+                const client = clientById.get(clientId);
+                const currentPartner = partnerByClientId.get(clientId);
+                const newPartner = partnerById.get(newPartnerId);
                 const revenue = getClientRevenue(client, getRevenueFunc);
                 const practiceAreas = Array.isArray(client?.practice_area) ? 
                   client.practice_area.join(', ') : (client?.practice_area || 'Not specified');
@@ -359,11 +366,20 @@ export const exportTransitionPlan = (assignments, partners, clients, getRevenueF
 
     // Generate CSV rows
     const rows = [headers];
-    
+
+    // Build lookup maps to avoid O(n²) scans
+    const clientById = new Map(safeClients.map(c => [c?.id, c]));
+    const partnerById = new Map(safePartners.map(p => [p?.id, p]));
+    const currentPartnerByClientId = new Map(
+      safePartners.flatMap(p =>
+        Array.isArray(p?.clients) ? p.clients.map(cid => [cid, p]) : []
+      )
+    );
+
     Object.entries(safeAssignments).forEach(([clientId, newPartnerId]) => {
-      const client = safeClients.find(c => c?.id === clientId);
-      const currentPartner = safePartners.find(p => p?.clients?.includes(clientId));
-      const newPartner = safePartners.find(p => p?.id === newPartnerId);
+      const client = clientById.get(clientId);
+      const currentPartner = currentPartnerByClientId.get(clientId);
+      const newPartner = partnerById.get(newPartnerId);
       
       const revenue = getClientRevenue(client, getRevenueFunc);
       const practiceAreas = Array.isArray(client?.practice_area) ? 

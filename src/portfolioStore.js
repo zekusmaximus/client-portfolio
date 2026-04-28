@@ -414,6 +414,8 @@ const usePortfolioStore = create(
               currentCapacity: partner.capacityUsed
             }));
             
+            const remainingPartnersById = new Map(remainingPartners.map(p => [p.id, p]));
+
             departingClientsData.forEach(client => {
               const clientAreas = Array.isArray(client.practice_area) ? client.practice_area : [client.practice_area].filter(Boolean);
               
@@ -422,7 +424,7 @@ const usePortfolioStore = create(
               let maxMatch = 0;
               
               redistribution.forEach(partner => {
-                const originalPartner = remainingPartners.find(p => p.id === partner.partnerId);
+                const originalPartner = remainingPartnersById.get(partner.partnerId);
                 const commonAreas = clientAreas.filter(area => originalPartner.practiceAreas.includes(area));
                 if (commonAreas.length > maxMatch) {
                   maxMatch = commonAreas.length;
@@ -474,10 +476,11 @@ const usePortfolioStore = create(
               currentCapacity: partner.capacityUsed
             }));
             
+            const redistributionMap = new Map(redistribution.map(p => [p.partnerId, p]));
             departingClientsData.forEach(client => {
               const assignedPartnerId = customAssignments[client.id];
               if (assignedPartnerId) {
-                const targetPartner = redistribution.find(p => p.partnerId === assignedPartnerId);
+                const targetPartner = redistributionMap.get(assignedPartnerId);
                 if (targetPartner) {
                   targetPartner.assignedClients.push(client);
                   targetPartner.targetRevenue += state.getClientRevenue(client);

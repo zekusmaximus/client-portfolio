@@ -147,7 +147,8 @@ function calculateStrategicScores(clients) {
     }
     // Handle database format (client.revenues array)
     else if (revenues.length > 0) {
-      const revenue2025 = revenues.find(rev => rev.year === 2025);
+      const revenueByYear = new Map(revenues.map(r => [r.year, r]));
+      const revenue2025 = revenueByYear.get(2025);
       currentRevenue = revenue2025 ? parseFloat(revenue2025.revenue_amount) || 0 : 0;
     }
     

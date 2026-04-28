@@ -176,171 +176,223 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       });
     }
 
-    const savedClients = [];
     let updatedCount = 0;
     let insertedCount = 0;
 
+    // --- Pass 1: compute all field values and deduplicate by name ---
+    // Later CSV rows for the same client name override earlier ones (matches original behaviour).
+    const toUpdateMap = new Map(); // lowerName -> row data for bulk UPDATE
+    const toInsertMap = new Map(); // lowerName -> row data for bulk INSERT
+    const revenueDataMap = new Map(); // lowerName -> revenue object (last occurrence wins)
+
     for (const clientData of clientsWithScores) {
-      // Check if client exists by name (case-insensitive) using the pre-fetched map
       const lowerName = (clientData.name || '').toLowerCase();
       const existingClient = existingClientsMap.get(lowerName);
 
-      let currentClient;
-      
       if (existingClient) {
-        // Client exists - UPDATE with CSV data, preserve manual enhancements
-        
         // Preserve manual enhancements (only if they were manually set and differ from defaults)
-        const preservedPracticeArea = existingClient.practice_area && existingClient.practice_area.length > 0 
-          ? existingClient.practice_area 
+        const preservedPracticeArea = existingClient.practice_area && existingClient.practice_area.length > 0
+          ? existingClient.practice_area
           : clientData.practiceArea || [];
-        
-        const preservedRelationshipStrength = existingClient.relationship_strength !== 5 
-          ? existingClient.relationship_strength 
+
+        const preservedRelationshipStrength = existingClient.relationship_strength !== 5
+          ? existingClient.relationship_strength
           : clientData.relationshipStrength || 5;
-        
-        const preservedConflictRisk = existingClient.conflict_risk !== 'Medium' 
-          ? existingClient.conflict_risk 
+
+        const preservedConflictRisk = existingClient.conflict_risk !== 'Medium'
+          ? existingClient.conflict_risk
           : clientData.conflictRisk || 'Medium';
-        
-        const preservedRenewalProbability = existingClient.renewal_probability !== 0.7 
-          ? existingClient.renewal_probability 
+
+        const preservedRenewalProbability = existingClient.renewal_probability !== 0.7
+          ? existingClient.renewal_probability
           : clientData.renewalProbability || 0.7;
-        
-        const preservedStrategicFitScore = existingClient.strategic_fit_score !== 5 
-          ? existingClient.strategic_fit_score 
+
+        const preservedStrategicFitScore = existingClient.strategic_fit_score !== 5
+          ? existingClient.strategic_fit_score
           : clientData.strategicFitScore || 5;
-        
-        const preservedNotes = existingClient.notes && existingClient.notes.trim() !== '' 
-          ? existingClient.notes 
+
+        const preservedNotes = existingClient.notes && existingClient.notes.trim() !== ''
+          ? existingClient.notes
           : clientData.notes || '';
-        
-        const preservedPrimaryLobbyist = existingClient.primary_lobbyist && existingClient.primary_lobbyist.trim() !== '' 
-          ? existingClient.primary_lobbyist 
+
+        const preservedPrimaryLobbyist = existingClient.primary_lobbyist && existingClient.primary_lobbyist.trim() !== ''
+          ? existingClient.primary_lobbyist
           : clientData.primaryLobbyist || '';
-        
-        const preservedClientOriginator = existingClient.client_originator && existingClient.client_originator.trim() !== '' 
-          ? existingClient.client_originator 
+
+        const preservedClientOriginator = existingClient.client_originator && existingClient.client_originator.trim() !== ''
+          ? existingClient.client_originator
           : clientData.clientOriginator || '';
-        
-        const preservedLobbyistTeam = existingClient.lobbyist_team && existingClient.lobbyist_team.length > 0 
-          ? existingClient.lobbyist_team 
+
+        const preservedLobbyistTeam = existingClient.lobbyist_team && existingClient.lobbyist_team.length > 0
+          ? existingClient.lobbyist_team
           : clientData.lobbyistTeam || [];
-        
-        const preservedInteractionFrequency = existingClient.interaction_frequency && existingClient.interaction_frequency.trim() !== '' 
-          ? existingClient.interaction_frequency 
+
+        const preservedInteractionFrequency = existingClient.interaction_frequency && existingClient.interaction_frequency.trim() !== ''
+          ? existingClient.interaction_frequency
           : clientData.interactionFrequency || '';
-        
-        const preservedRelationshipIntensity = existingClient.relationship_intensity !== 5 
-          ? existingClient.relationship_intensity 
+
+        const preservedRelationshipIntensity = existingClient.relationship_intensity !== 5
+          ? existingClient.relationship_intensity
           : clientData.relationshipIntensity || 5;
 
-        // Update existing client with CSV data but preserve manual enhancements
-        const { rows: [updatedClient] } = await (await client).query(`
-          UPDATE clients SET 
-            name = $1,
-            status = $2,
-            practice_area = $3,
-            relationship_strength = $4,
-            conflict_risk = $5,
-            renewal_probability = $6,
-            strategic_fit_score = $7,
-            notes = $8,
-            primary_lobbyist = $9,
-            client_originator = $10,
-            lobbyist_team = $11,
-            interaction_frequency = $12,
-            relationship_intensity = $13,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = $14
-          RETURNING *
-        `, [
-          clientData.name || '',
-          clientData.status || 'H',
-          preservedPracticeArea,
-          preservedRelationshipStrength,
-          preservedConflictRisk,
-          preservedRenewalProbability,
-          preservedStrategicFitScore,
-          preservedNotes,
-          preservedPrimaryLobbyist,
-          preservedClientOriginator,
-          preservedLobbyistTeam,
-          preservedInteractionFrequency,
-          preservedRelationshipIntensity,
-          existingClient.id
-        ]);
-
-        currentClient = updatedClient;
-        updatedCount++;
-
-        // Update the map so subsequent CSV rows for the same client use the updated data
-        existingClientsMap.set(lowerName, updatedClient);
+        toUpdateMap.set(lowerName, {
+          id: existingClient.id,
+          name: clientData.name || '',
+          status: clientData.status || 'H',
+          practiceArea: preservedPracticeArea,
+          relationshipStrength: preservedRelationshipStrength,
+          conflictRisk: preservedConflictRisk,
+          renewalProbability: preservedRenewalProbability,
+          strategicFitScore: preservedStrategicFitScore,
+          notes: preservedNotes,
+          primaryLobbyist: preservedPrimaryLobbyist,
+          clientOriginator: preservedClientOriginator,
+          lobbyistTeam: preservedLobbyistTeam,
+          interactionFrequency: preservedInteractionFrequency,
+          relationshipIntensity: preservedRelationshipIntensity
+        });
       } else {
-        // Client doesn't exist - INSERT new client
-        const { rows: [newClient] } = await (await client).query(`
-          INSERT INTO clients (
-            name, status, practice_area, relationship_strength, conflict_risk,
-            renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-            client_originator, lobbyist_team, interaction_frequency, relationship_intensity
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-          RETURNING *
-        `, [
-          clientData.name || '',
-          clientData.status || 'H',
-          clientData.practiceArea || [],
-          clientData.relationshipStrength || 5,
-          clientData.conflictRisk || 'Medium',
-          clientData.renewalProbability || 0.7,
-          clientData.strategicFitScore || 5,
-          clientData.notes || '',
-          clientData.primaryLobbyist || '',
-          clientData.clientOriginator || '',
-          clientData.lobbyistTeam || [],
-          clientData.interactionFrequency || '',
-          clientData.relationshipIntensity || 5
-        ]);
-
-        currentClient = newClient;
-        insertedCount++;
-
-        // Add to map so subsequent CSV rows for the same client use the new data
-        existingClientsMap.set(lowerName, newClient);
+        toInsertMap.set(lowerName, {
+          name: clientData.name || '',
+          status: clientData.status || 'H',
+          practiceArea: clientData.practiceArea || [],
+          relationshipStrength: clientData.relationshipStrength || 5,
+          conflictRisk: clientData.conflictRisk || 'Medium',
+          renewalProbability: clientData.renewalProbability || 0.7,
+          strategicFitScore: clientData.strategicFitScore || 5,
+          notes: clientData.notes || '',
+          primaryLobbyist: clientData.primaryLobbyist || '',
+          clientOriginator: clientData.clientOriginator || '',
+          lobbyistTeam: clientData.lobbyistTeam || [],
+          interactionFrequency: clientData.interactionFrequency || '',
+          relationshipIntensity: clientData.relationshipIntensity || 5
+        });
       }
 
-      // Handle revenue updates - DELETE existing and INSERT new
       if (clientData.revenue) {
-        // Delete existing revenue records for this client
-        await (await client).query(`
-          DELETE FROM client_revenues 
-          WHERE client_id = $1
-        `, [currentClient.id]);
-
-        // Insert new revenue records from CSV in bulk
-        const validRevenues = Object.entries(clientData.revenue)
-          .filter(([year, amount]) => amount && amount > 0)
-          .map(([year, amount]) => [parseInt(year), amount]);
-
-        if (validRevenues.length > 0) {
-          const params = [];
-          const valuePlaceholders = [];
-          let paramIndex = 1;
-          validRevenues.forEach(([year, amount]) => {
-            params.push(currentClient.id, year, amount);
-            valuePlaceholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2})`);
-            paramIndex += 3;
-          });
-          const query = `
-            INSERT INTO client_revenues (client_id, year, revenue_amount)
-            VALUES ${valuePlaceholders.join(',')}
-          `;
-          await (await client).query(query, params);
-        }
+        revenueDataMap.set(lowerName, clientData.revenue);
       }
-      
-      savedClients.push(currentClient);
     }
-    
+
+    // Map to collect returned rows by lowerName for revenue association
+    const clientResultMap = new Map(); // lowerName -> returned DB row
+
+    // --- Pass 2a: bulk UPDATE existing clients ---
+    const updateRows = Array.from(toUpdateMap.values());
+    if (updateRows.length > 0) {
+      const params = [];
+      const valuePlaceholders = [];
+      let paramIndex = 1;
+      for (const u of updateRows) {
+        params.push(
+          u.id, u.name, u.status, u.practiceArea, u.relationshipStrength,
+          u.conflictRisk, u.renewalProbability, u.strategicFitScore,
+          u.notes, u.primaryLobbyist, u.clientOriginator,
+          u.lobbyistTeam, u.interactionFrequency, u.relationshipIntensity
+        );
+        valuePlaceholders.push(
+          `($${paramIndex}::uuid, $${paramIndex+1}, $${paramIndex+2}, $${paramIndex+3}::text[], $${paramIndex+4}::numeric, $${paramIndex+5}, $${paramIndex+6}::numeric, $${paramIndex+7}::numeric, $${paramIndex+8}, $${paramIndex+9}, $${paramIndex+10}, $${paramIndex+11}::text[], $${paramIndex+12}, $${paramIndex+13}::numeric)`
+        );
+        paramIndex += 14;
+      }
+      const { rows: updatedRows } = await (await client).query(`
+        UPDATE clients c SET
+          name = v.name,
+          status = v.status,
+          practice_area = v.practice_area,
+          relationship_strength = v.relationship_strength,
+          conflict_risk = v.conflict_risk,
+          renewal_probability = v.renewal_probability,
+          strategic_fit_score = v.strategic_fit_score,
+          notes = v.notes,
+          primary_lobbyist = v.primary_lobbyist,
+          client_originator = v.client_originator,
+          lobbyist_team = v.lobbyist_team,
+          interaction_frequency = v.interaction_frequency,
+          relationship_intensity = v.relationship_intensity,
+          updated_at = CURRENT_TIMESTAMP
+        FROM (VALUES ${valuePlaceholders.join(',')}) AS v(
+          id, name, status, practice_area, relationship_strength, conflict_risk,
+          renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+          client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+        )
+        WHERE c.id = v.id
+        RETURNING c.*
+      `, params);
+      updatedRows.forEach(r => clientResultMap.set(r.name.toLowerCase(), r));
+      updatedCount = updatedRows.length;
+    }
+
+    // --- Pass 2b: bulk INSERT new clients ---
+    const insertRows = Array.from(toInsertMap.values());
+    if (insertRows.length > 0) {
+      const params = [];
+      const valuePlaceholders = [];
+      let paramIndex = 1;
+      for (const ins of insertRows) {
+        params.push(
+          ins.name, ins.status, ins.practiceArea, ins.relationshipStrength,
+          ins.conflictRisk, ins.renewalProbability, ins.strategicFitScore,
+          ins.notes, ins.primaryLobbyist, ins.clientOriginator,
+          ins.lobbyistTeam, ins.interactionFrequency, ins.relationshipIntensity
+        );
+        valuePlaceholders.push(
+          `($${paramIndex}, $${paramIndex+1}, $${paramIndex+2}::text[], $${paramIndex+3}::numeric, $${paramIndex+4}, $${paramIndex+5}::numeric, $${paramIndex+6}::numeric, $${paramIndex+7}, $${paramIndex+8}, $${paramIndex+9}, $${paramIndex+10}::text[], $${paramIndex+11}, $${paramIndex+12}::numeric)`
+        );
+        paramIndex += 13;
+      }
+      const { rows: insertedRows } = await (await client).query(`
+        INSERT INTO clients (
+          name, status, practice_area, relationship_strength, conflict_risk,
+          renewal_probability, strategic_fit_score, notes, primary_lobbyist,
+          client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+        )
+        VALUES ${valuePlaceholders.join(',')}
+        RETURNING *
+      `, params);
+      insertedRows.forEach(r => clientResultMap.set(r.name.toLowerCase(), r));
+      insertedCount = insertedRows.length;
+    }
+
+    // --- Pass 3: batch revenue DELETE + INSERT ---
+    // Collect all client IDs that have incoming revenue data
+    const revenueClientIds = [];
+    const allRevenueRows = []; // [clientId, year, amount]
+
+    for (const [lowerName, revenue] of revenueDataMap) {
+      const dbRow = clientResultMap.get(lowerName);
+      if (!dbRow) continue;
+      revenueClientIds.push(dbRow.id);
+      const validRevenues = Object.entries(revenue)
+        .filter(([, amount]) => amount && amount > 0)
+        .map(([year, amount]) => [parseInt(year), amount]);
+      for (const [year, amount] of validRevenues) {
+        allRevenueRows.push([dbRow.id, year, amount]);
+      }
+    }
+
+    if (revenueClientIds.length > 0) {
+      await (await client).query(
+        'DELETE FROM client_revenues WHERE client_id = ANY($1::uuid[])',
+        [revenueClientIds]
+      );
+    }
+
+    if (allRevenueRows.length > 0) {
+      const params = [];
+      const valuePlaceholders = [];
+      let paramIndex = 1;
+      for (const [clientId, year, amount] of allRevenueRows) {
+        params.push(clientId, year, amount);
+        valuePlaceholders.push(`($${paramIndex}::uuid, $${paramIndex+1}::int, $${paramIndex+2}::numeric)`);
+        paramIndex += 3;
+      }
+      await (await client).query(`
+        INSERT INTO client_revenues (client_id, year, revenue_amount)
+        VALUES ${valuePlaceholders.join(',')}
+      `, params);
+    }
+
     await (await client).query('COMMIT');
     
     res.json({
