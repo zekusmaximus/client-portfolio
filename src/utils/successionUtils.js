@@ -4,6 +4,7 @@
  */
 
 import { safeFrequencyToLowerCase, safePracticeAreaToArray } from './dataUtils';
+import { resolveStickinessScore, resolveEffort, MAX_EFFORT } from './clientMetrics';
 
 /**
  * Derives the relationship type based on client's lobbyist structure
@@ -30,10 +31,13 @@ export const deriveRelationshipType = (client) => {
     }
   }
   
-  const relationshipStrength = parseFloat(client.relationship_strength) || 0;
-  
-  // Shared relationship: multiple team members AND strong relationship
-  if (teamSize >= 2 && relationshipStrength >= 7) {
+  // Stickiness (0–10) now stands in for the retired relationship_strength.
+  // A high-stickiness client is firmly anchored to the firm, so when it's also
+  // serviced by a team we treat the relationship as "shared".
+  const stickinessScore = resolveStickinessScore(client);
+
+  // Shared relationship: multiple team members AND a strong, anchored relationship
+  if (teamSize >= 2 && stickinessScore >= 7) {
     return 'shared';
   }
   
@@ -55,11 +59,16 @@ export const calculateTransitionComplexity = (client) => {
   if (!client) return 1;
   
   let complexity = 0;
-  
-  // Base complexity from relationship intensity
-  const relationshipIntensity = parseFloat(client.relationship_intensity) || 0;
-  complexity += relationshipIntensity * 0.3;
-  
+
+  // Base complexity from engagement load. This used to read the 1–10
+  // relationship_intensity slider (× 0.3 ⇒ 0.3–3.0). That field is retired in
+  // favor of `effort` (cadence + handful flag, ~0.5–7.5 work units), so we
+  // normalize effort back onto a 0–10 scale and keep the same 0.3 weight —
+  // preserving the original contribution range rather than just swapping vars.
+  const effort = resolveEffort(client);
+  const engagement = Math.min(10, (effort / MAX_EFFORT) * 10);
+  complexity += engagement * 0.3;
+
   // Communication frequency factor
   const frequency = safeFrequencyToLowerCase(client.communication_frequency);
   const frequencyScores = {
@@ -78,12 +87,6 @@ export const calculateTransitionComplexity = (client) => {
   const complexAreas = ['healthcare', 'energy', 'financial services'];
   if (practiceAreas.some(area => complexAreas.some(complexArea => area.includes(complexArea)))) {
     complexity += 1.5;
-  }
-  
-  // High strategic fit adds complexity
-  const strategicFit = parseFloat(client.strategic_fit_score) || 0;
-  if (strategicFit >= 8) {
-    complexity += 1;
   }
   
   // High conflict risk adds complexity
@@ -116,10 +119,13 @@ export const calculateSuccessionRisk = (client) => {
   };
   risk += typeRiskScores[relationshipType] || 2;
   
-  // Low relationship strength increases risk
-  const relationshipStrength = parseFloat(client.relationship_strength) || 0;
-  if (relationshipStrength < 6) {
-    risk += (6 - relationshipStrength);
+  // Low stickiness increases risk. Stickiness (0–10) replaces the retired
+  // relationship_strength: a loosely-held client (cold / transactional) is the
+  // easiest to lose in a transition, so it carries the most succession risk.
+  // Mirrors the old `strength < 6 ⇒ +(6 - strength)` curve on the new scale.
+  const stickinessScore = resolveStickinessScore(client);
+  if (stickinessScore < 6) {
+    risk += (6 - stickinessScore);
   }
   
   // Complexity factor
