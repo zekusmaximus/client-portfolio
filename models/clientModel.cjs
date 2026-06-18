@@ -20,8 +20,8 @@ exports.listWithRevenues = async () => {
   return rows;
 };
 
-/* Create a new client */
-exports.create = async (data) => {
+/* Create a new client. Owned by the creating user (all partners share read access). */
+exports.create = async (userId, data) => {
   const {
     name,
     status = 'Prospect',
@@ -44,10 +44,10 @@ exports.create = async (data) => {
       conflict_risk, renewal_probability, strategic_fit_score, notes,
       primary_lobbyist, client_originator, lobbyist_team,
       interaction_frequency, relationship_intensity)
-     VALUES (1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      RETURNING *`,
     [
-      name, status, practice_area, relationship_strength,
+      userId, name, status, practice_area, relationship_strength,
       conflict_risk, renewal_probability, strategic_fit_score, notes,
       primary_lobbyist, client_originator, lobbyist_team,
       interaction_frequency, relationship_intensity,
@@ -57,8 +57,9 @@ exports.create = async (data) => {
   return client;
 };
 
-/* Update existing client (partial update) */
-exports.update = async (clientId, patch) => {
+/* Update existing client (partial update). userId is accepted for call-site
+   alignment; all partners may edit any client (shared portfolio). */
+exports.update = async (clientId, userId, patch) => {
   // Build dynamic SET clause
   const keys = Object.keys(patch);
   if (!keys.length) return null;

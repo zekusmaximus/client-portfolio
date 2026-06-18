@@ -47,21 +47,34 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
 #### Data Flow
 1. CSV upload → `data.cjs` processes via `clientAnalyzer.cjs`
 2. Client data stored in Zustand store with localStorage persistence
-3. Strategic value calculations use weighted algorithms in `clientAnalyzer.cjs:calculateStrategicValue`
+3. Strategic value calculations use the single scorer in `utils/strategic.cjs` (re-exported by `clientAnalyzer.cjs`)
 4. AI endpoints require `ANTHROPIC_API_KEY` environment variable
 
 ## Strategic Value Calculation
 
-The core business logic calculates client strategic value using:
-- Revenue score (20%)
-- Relationship intensity (30%) 
-- Strategic fit score (15%)
-- Renewal probability (15%)
-- Crisis management needs (10%)
-- Growth score (10%)
-- Minus conflict risk penalty
+Strategic-value scoring has a **single source of truth**: `utils/strategic.cjs`.
+Every code path uses it — `data.cjs`/CSV import (via a re-export from
+`clientAnalyzer.cjs`), `models/clientModel.cjs` (`listWithMetrics` /
+`getWithMetrics`), `claude.cjs`, and `routes/scenarios.cjs`. Do NOT reimplement
+scoring elsewhere; keep one formula so the dashboard and the AI advisor always
+agree.
 
-Formula implemented in `clientAnalyzer.cjs:calculateStrategicValue` and `data.cjs:calculateStrategicValue`.
+Current formula (clamped to 0–10):
+
+```
+strategicValue = revenueScore*0.50 + relationshipStrength*0.35
+                 + renewalProbability(0–10)*0.15  −  conflictPenalty
+revenueScore   = min(10, mostRecentRevenue / 50000)   // $500k → 10
+conflictPenalty: High = 3, Medium = 1, Low = 0
+```
+
+`mostRecentRevenue` is the latest year's revenue, resolved from either a
+`revenues` array (DB shape) or a `revenue` object (frontend shape). The helpers
+tolerate both snake_case and camelCase field names so all paths produce
+identical numbers.
+
+> The specific weights are under review. Adjust them in ONE place
+> (`utils/strategic.cjs`) and the change propagates everywhere.
 
 ## File Structure Context
 

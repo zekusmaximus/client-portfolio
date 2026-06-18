@@ -1,10 +1,95 @@
 /**
- * Strategic utility functions
- * Extracted from clientAnalyzer.cjs and claude.cjs (Stage 4 refactor)
+ * Strategic scoring — single source of truth.
+ *
+ * This module is the ONLY implementation of strategic-value scoring in the
+ * codebase. It is consumed by:
+ *   - data.cjs            (via clientAnalyzer.cjs re-export) — the dashboard CRUD path
+ *   - models/clientModel  (listWithMetrics / getWithMetrics) — the AI + scenarios path
+ *   - claude.cjs          (generatePortfolioSummary)
+ *
+ * The functions are deliberately tolerant of both field-name conventions
+ * (snake_case from the database, camelCase from the frontend) and of both
+ * revenue shapes (a `revenues` array of {year, revenue_amount} rows, or a
+ * `revenue` object keyed by year) so that every code path produces identical
+ * numbers for the same client.
+ *
+ * Current formula (weights pending product review):
+ *   strategicValue = revenueScore*0.50 + relationshipStrength*0.35
+ *                    + renewalProbability(0-10)*0.15  -  conflictPenalty
+ *   revenueScore   = min(10, mostRecentRevenue / 50000)   // $500k -> 10
+ *   conflictPenalty: High=3, Medium=1, Low=0
+ * Result is clamped to 0..10.
  */
 
 /**
- * Calculate strategic scores for all clients
+ * Resolve the most recent year's revenue for a client, accepting either a
+ * `revenues` array (database shape) or a `revenue` object (frontend shape).
+ * @param {Object} client
+ * @param {Array} [revenues] - optional explicit revenues array
+ * @returns {number}
+ */
+function getMostRecentRevenue(client, revenues) {
+  const revArray = Array.isArray(revenues)
+    ? revenues
+    : Array.isArray(client.revenues)
+      ? client.revenues
+      : null;
+
+  if (revArray && revArray.length > 0) {
+    const latest = revArray.reduce((a, b) => (Number(b.year) > Number(a.year) ? b : a));
+    return parseFloat(latest.revenue_amount) || 0;
+  }
+
+  if (client.revenue && typeof client.revenue === 'object') {
+    const years = Object.keys(client.revenue)
+      .map(Number)
+      .filter((y) => !Number.isNaN(y));
+    if (years.length > 0) {
+      const latestYear = Math.max(...years);
+      return parseFloat(client.revenue[latestYear]) || 0;
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Calculate strategic value (0-10) for a single client.
+ * @param {Object} client
+ * @param {Array} [revenues]
+ * @returns {number}
+ */
+function calculateStrategicValue(client, revenues = []) {
+  const mostRecentRevenue = getMostRecentRevenue(client, revenues);
+
+  // Revenue Score (0-10) — normalized so $500k maps to 10.
+  const revenueScore = Math.min(10, (parseFloat(mostRecentRevenue) || 0) / 50000);
+
+  // Relationship strength (1-10). Accept snake_case or camelCase; default 5.
+  const relationshipStrength =
+    parseFloat(client.relationship_strength ?? client.relationshipStrength) || 5;
+
+  // Renewal probability (0-1) -> 0-10. Default 0.5 (neutral).
+  const renewalProbabilityScore =
+    (parseFloat(client.renewal_probability ?? client.renewalProbability) || 0.5) * 10;
+
+  // Conflict risk penalty. Default 'Medium'.
+  const conflictRisk = client.conflict_risk ?? client.conflictRisk ?? 'Medium';
+  const conflictPenalty = { High: 3, Medium: 1, Low: 0 }[conflictRisk] ?? 1;
+
+  const strategicValue =
+    revenueScore * 0.5 +
+    relationshipStrength * 0.35 +
+    renewalProbabilityScore * 0.15 -
+    conflictPenalty;
+
+  return Math.max(0, Math.min(10, strategicValue));
+}
+
+/**
+ * Calculate strategic scores for a list of clients.
+ * Adds `strategicValue` and `averageRevenue` (most-recent-year revenue, kept
+ * under the historical field name for frontend compatibility).
  * @param {Array} clients
  * @returns {Array}
  */
@@ -13,59 +98,20 @@ function calculateStrategicScores(clients) {
     return [];
   }
 
-  // Calculate average revenues for normalization
-  const revenues = clients.map(client => {
-    const rev2023 = parseFloat(client.revenue?.['2023']) || 0;
-    const rev2024 = parseFloat(client.revenue?.['2024']) || 0;
-    const rev2025 = parseFloat(client.revenue?.['2025']) || 0;
-    return (rev2023 + rev2024 + rev2025) / 3;
-  });
-
-  const maxRevenue = Math.max(...revenues);
-  const minRevenue = Math.min(...revenues);
-
-  return clients.map((client, index) => {
-    const avgRevenue = revenues[index];
-
-    // Revenue Score (0–10)
-    const revenueScore = maxRevenue === minRevenue ? 5 :
-      ((avgRevenue - minRevenue) / (maxRevenue - minRevenue)) * 10;
-
-    // Growth Score (CAGR normalised 0–10)
-    const initialRevenue = parseFloat(client.revenue?.['2023']) || 1;
-    const finalRevenue = parseFloat(client.revenue?.['2025']) || 1; // Changed from 0 to 1 to prevent 0 default
-    const cagr = initialRevenue > 0 ? Math.pow(finalRevenue / initialRevenue, 1 / 2) - 1 : 0;
-    const growthScore = Math.max(0, Math.min(10, (cagr + 0.5) * 10));
-
-    // Strategic Value (removed efficiency score, redistributed weights)
-    const relationshipStrength = parseFloat(client.relationshipStrength) || 5;
-    const renewalProbability = parseFloat(client.renewalProbability) || 0.5;
-
-    const conflictPenalty = {
-      High: 3,
-      Medium: 1,
-      Low: 0,
-    }[client.conflictRisk] || 1;
-
-    const strategicValue = (
-      (revenueScore * 0.45) +           // Increased from 0.35 (added 5% from efficiency + 5% from growth)
-      (growthScore * 0.20) +           // Decreased from 0.25 (moved 5% to revenue)
-      (relationshipStrength * 0.25) +  // Same weight
-      (renewalProbability * 10 * 0.10) // Same weight
-    ) - conflictPenalty;
+  return clients.map((client) => {
+    const strategicValue = calculateStrategicValue(client, client.revenues);
+    const currentRevenue = getMostRecentRevenue(client, client.revenues);
 
     return {
       ...client,
-      averageRevenue: Math.round(avgRevenue),
-      revenueScore: Math.round(revenueScore * 100) / 100,
-      growthScore: Math.round(growthScore * 100) / 100,
-      strategicValue: Math.max(0, Math.round(strategicValue * 100) / 100),
+      averageRevenue: Math.round(currentRevenue),
+      strategicValue: Math.round(strategicValue * 100) / 100,
     };
   });
 }
 
 /**
- * Generate a portfolio summary
+ * Generate a portfolio summary from scored clients.
  * @param {Array} clients
  * @returns {Object}
  */
@@ -117,6 +163,8 @@ function generatePortfolioSummary(clients) {
 }
 
 module.exports = {
+  getMostRecentRevenue,
+  calculateStrategicValue,
   calculateStrategicScores,
   generatePortfolioSummary,
 };
