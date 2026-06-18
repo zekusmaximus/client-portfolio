@@ -61,6 +61,9 @@ one fast pick):
 1. **Who's carrying what.** Per-partner revenue, effort-load (sum of cadence
    weights, *not* raw client count), and revenue-per-effort. Mike's
    low-revenue / high-contact book shows up on sight — you don't compute it.
+   **Balance is relative, not absolute:** each partner is compared to the
+   six-partner average/median, not to a fixed "full book" ceiling. Off-balance
+   = an outlier from the pack. (See "How balance is defined.")
 2. **Where the exposure is.** High revenue sitting on thin relationships =
    the firm's flight risk. (Value × low stickiness = revenue at risk.) This is
    the most actionable single signal the tool produces.
@@ -73,7 +76,20 @@ Plus a persistent **Ask the AI** box with the per-partner picture loaded into
 context ("Is Mike overloaded?", "Who's the natural home for a $300k healthcare
 client?", "Where's our biggest retention risk?").
 
-## What it deliberately does NOT do
+## How "balanced" is defined
+
+**Peer-relative, no anchor.** There is no objective "full book" number, and we
+don't ask the partners to invent one. Each partner's effort, revenue, and
+revenue-per-effort are compared to the group (six-partner average/median). The
+signal is the *spread*: who's an outlier above or below the pack. With only six,
+this is mostly a glance at six bars against a reference line.
+
+- Pro: needs no subjective capacity ceiling; suits six equals; directly answers
+  "who's carrying more than their share."
+- The one blind spot: it can't tell you if *all six* are collectively
+  overloaded (even-but-drowning reads as "balanced"). If that ever matters,
+  we add it as a **trend** signal ("total load up 30% since spring"), never as
+  a forced anchor.
 
 - **No automated swap optimizer.** It flags imbalances and suggests *candidates*;
   it never tells you to move a specific client. Reassigning a relationship can
@@ -114,5 +130,5 @@ redistribution modeler — so step 2 is assembly more than invention.
   touches the formula.
 - **Does effort need anything beyond cadence?** (e.g., a "this one's a handful"
   flag for the rare high-maintenance client whose cadence understates the work.)
-- **Capacity baseline.** What's a "full" book for one partner, in effort terms?
-  Needed before the balance flags mean anything.
+- ~~Capacity baseline / "full book" anchor~~ — **resolved:** balancing is
+  peer-relative, no anchor. See "How balance is defined."
