@@ -393,34 +393,34 @@ const ClientListView = () => {
                 </div>
               )}
 
-              {/* Relationship Metrics */}
-              {(client.relationshipStrength || client.relationship_intensity) && (
+              {/* Relationship Metrics — stickiness (flight risk) + effort load */}
+              {(client.stickinessScore != null || client.effort != null) && (
                 <div>
                   <div className="flex items-center gap-1 mb-2">
                     <Heart className="h-3 w-3 text-red-500" />
                     <span className="text-xs text-muted-foreground">Relationship Metrics</span>
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-sm">
-                    {client.relationshipStrength && (
+                    {client.stickinessScore != null && (
                       <div>
-                        <p className="text-xs text-muted-foreground">Strength</p>
+                        <p className="text-xs text-muted-foreground">Stickiness</p>
                         <div className="flex items-center gap-1">
                           <div className="flex-1 bg-gray-200 rounded-full h-2">
-                            <div 
+                            <div
                               className="bg-red-500 h-2 rounded-full transition-all duration-300"
-                              style={{ width: `${(client.relationshipStrength / 10) * 100}%` }}
+                              style={{ width: `${(client.stickinessScore / 10) * 100}%` }}
                             />
                           </div>
-                          <span className="text-xs font-medium">{client.relationshipStrength}/10</span>
+                          <span className="text-xs font-medium">{client.stickinessScore}/10</span>
                         </div>
                       </div>
                     )}
-                    {client.relationship_intensity && (
+                    {client.effort != null && (
                       <div>
-                        <p className="text-xs text-muted-foreground">Intensity</p>
+                        <p className="text-xs text-muted-foreground">Effort</p>
                         <div className="flex items-center gap-1">
                           <Zap className="h-3 w-3 text-yellow-500" />
-                          <span className="text-xs font-medium">{client.relationship_intensity}</span>
+                          <span className="text-xs font-medium">{client.effort}</span>
                         </div>
                       </div>
                     )}

@@ -185,20 +185,20 @@ const usePortfolioStore = create(
 
       // Helper function to format client data for API
       formatClientForAPI: (clientData) => {
+        // The three legacy retention fields (relationship_strength,
+        // relationship_intensity, renewal_probability) and the phantom
+        // strategic_fit_score have been retired — succession now derives from
+        // stickiness/effort, and the score from stickiness. No longer sent.
         return {
           name: clientData.name || '',
           status: clientData.status || 'Prospect',
           practice_area: clientData.practiceArea || [],
-          relationship_strength: clientData.relationship_strength || 5,
           conflict_risk: clientData.conflict_risk || 'Medium',
-          renewal_probability: clientData.renewal_probability || 0.7,
-          strategic_fit_score: clientData.strategic_fit_score || 5,
           notes: clientData.notes || '',
           primary_lobbyist: clientData.primary_lobbyist || '',
           client_originator: clientData.client_originator || '',
           lobbyist_team: clientData.lobbyist_team || [],
           interaction_frequency: clientData.interaction_frequency || '',
-          relationship_intensity: clientData.relationship_intensity || 5,
           stickiness: clientData.stickiness ?? null,
           high_maintenance: clientData.high_maintenance === true,
           revenues: clientData.revenues || []

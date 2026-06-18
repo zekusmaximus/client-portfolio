@@ -51,19 +51,6 @@ export const VALIDATION_RULES = {
     }
   },
   
-  relationship_strength: {
-    required: true,
-    type: 'integer',
-    min: 1,
-    max: 10,
-    errorMessages: {
-      required: 'Relationship strength is required',
-      type: 'Relationship strength must be a number',
-      min: 'Relationship strength must be at least 1',
-      max: 'Relationship strength must not exceed 10'
-    }
-  },
-  
   conflict_risk: {
     required: true,
     allowedValues: ['Low', 'Medium', 'High'],
@@ -99,32 +86,6 @@ export const VALIDATION_RULES = {
     errorMessages: {
       required: 'Interaction frequency is required',
       allowedValues: 'Interaction frequency must be one of: Daily, Weekly, Monthly, Quarterly, As-Needed'
-    }
-  },
-  
-  relationship_intensity: {
-    required: true,
-    type: 'integer',
-    min: 1,
-    max: 10,
-    errorMessages: {
-      required: 'Relationship intensity is required',
-      type: 'Relationship intensity must be a number',
-      min: 'Relationship intensity must be at least 1',
-      max: 'Relationship intensity must not exceed 10'
-    }
-  },
-  
-  renewal_probability: {
-    required: true,
-    type: 'float',
-    min: 0,
-    max: 1,
-    errorMessages: {
-      required: 'Renewal probability is required',
-      type: 'Renewal probability must be a number',
-      min: 'Renewal probability must be at least 0',
-      max: 'Renewal probability must not exceed 1'
     }
   },
   

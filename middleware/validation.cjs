@@ -49,11 +49,6 @@ const clientValidationRules = [
       return true;
     }),
 
-  // Relationship strength validation
-  body('relationship_strength')
-    .isInt({ min: 1, max: 10 })
-    .withMessage('Relationship strength must be an integer between 1 and 10'),
-
   // Conflict risk validation
   body('conflict_risk')
     .trim()
@@ -95,15 +90,11 @@ const clientValidationRules = [
     .withMessage('Interaction frequency must be one of: Daily, Weekly, Monthly, Quarterly, As-Needed')
     .customSanitizer(sanitizeInput),
 
-  // Relationship intensity validation
-  body('relationship_intensity')
-    .isInt({ min: 1, max: 10 })
-    .withMessage('Relationship intensity must be an integer between 1 and 10'),
-
-  // Renewal probability validation
-  body('renewal_probability')
-    .isFloat({ min: 0, max: 1 })
-    .withMessage('Renewal probability must be a decimal between 0 and 1'),
+  // Stickiness validation (1–5 roommate↔cold-call pick; optional/back-tolerant)
+  body('stickiness')
+    .optional({ nullable: true })
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Stickiness must be an integer between 1 and 5'),
 
   // Notes validation
   body('notes')
