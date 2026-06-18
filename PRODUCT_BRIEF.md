@@ -41,10 +41,16 @@ Every client sits on three axes, each captured by **one intuitive input**:
 | Axis | What it means | How it's set |
 |------|---------------|--------------|
 | **Value** | Revenue at stake | Imported — no entry |
-| **Effort** | How much work the client takes | **Contact cadence**: Daily / Weekly / Monthly / Quarterly / As-needed |
+| **Effort** | How much work the client takes | **Contact cadence**: Daily / Weekly / Monthly / Quarterly / As-needed — plus an optional **"handful" flag** (see below) |
 | **Stickiness** | How locked-in the relationship is (flight risk) | **One scale, concrete anchors** (below) |
 
 Plus **Conflict** (Low / Medium / High) as a separate risk flag.
+
+**The "handful" flag.** Cadence captures *how often* you touch a client, not
+*how heavy each touch is*. For the rare client whose every interaction is a fire
+drill, a single optional checkbox bumps their effort weight above what cadence
+implies. Default off — it's the exception, not a field to fill in on everyone.
+Keeps effort honest without adding a second slider to every client.
 
 **The stickiness scale** (replaces today's three overlapping retention fields —
 `relationship_strength`, `relationship_intensity`, `renewal_probability` — with
@@ -104,9 +110,20 @@ this is mostly a glance at six bars against a reference line.
 
 A fixed, legible label that ranks clients and feeds the "high-value" tier used
 across the app. It is **supporting cast**, not the product. We keep one formula
-(in `utils/strategic.cjs`), show its components when displayed ("Revenue 5.0 +
-Stickiness 2.8 − Conflict 1"), and we do **not** litigate its weights. The
-decisions that matter come from the partner view, which needs zero tuning.
+(in `utils/strategic.cjs`) and we do **not** litigate its weights. The decisions
+that matter come from the partner view, which needs zero tuning.
+
+Post-consolidation the formula has just **two weighted terms minus a penalty**:
+
+```
+strategicValue = Value(revenue) × W1  +  Stickiness × W2  −  Conflict penalty
+```
+
+where Stickiness is the 5-point scale mapped to 0–10 (Personal bond = 10 …
+Cold = 0). This replaces the three retention inputs that fed the old formula
+(`relationship_strength`, `renewal_probability`) with the single stickiness
+pick. Shown with its parts when displayed ("Revenue 5.0 + Stickiness 2.8 −
+Conflict 1") so it reads itself.
 
 ## Build path (rough, value-first)
 
@@ -122,13 +139,19 @@ decisions that matter come from the partner view, which needs zero tuning.
 Much of the plumbing exists already — per-partner aggregation, capacity, a
 redistribution modeler — so step 2 is assembly more than invention.
 
+## Resolved decisions
+
+- **Retention consolidation — confirmed.** `relationship_strength` +
+  `relationship_intensity` + `renewal_probability` collapse into the one
+  stickiness scale. The score becomes Value + Stickiness − Conflict (above).
+  *(Build note: existing rows need a one-time migration to derive stickiness;
+  the three old columns can then be retired.)*
+- **"Handful" flag — confirmed.** Optional per-client checkbox that bumps effort
+  above what cadence implies. Default off.
+- **Balancing — peer-relative, no anchor.** See "How balance is defined."
+
 ## Open questions
 
-- **Confirm the retention consolidation.** Collapsing `relationship_strength` +
-  `relationship_intensity` + `renewal_probability` into one stickiness scale
-  changes the score's inputs. Agreed in principle here; flagging because it
-  touches the formula.
-- **Does effort need anything beyond cadence?** (e.g., a "this one's a handful"
-  flag for the rare high-maintenance client whose cadence understates the work.)
-- ~~Capacity baseline / "full book" anchor~~ — **resolved:** balancing is
-  peer-relative, no anchor. See "How balance is defined."
+- None blocking. Next decisions surface during the step-1 build (e.g., the exact
+  cadence→effort weights and the stickiness 0–10 mapping — both easy to tune
+  once the partner view makes their effect visible).
