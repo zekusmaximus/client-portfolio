@@ -643,20 +643,20 @@ router.post('/clients', async (req, res) => {
   try {
     await (await client).query('BEGIN');
     
+    // The legacy retention columns (relationship_strength, relationship_intensity,
+    // renewal_probability) and the phantom strategic_fit_score are retired: no
+    // longer written here. They remain in the table (nullable / defaulted) until
+    // a later V4 migration drops them, so existing rows are untouched.
     const {
       name,
       status,
       practice_area,
-      relationship_strength,
       conflict_risk,
-      renewal_probability,
-      strategic_fit_score,
       notes,
       primary_lobbyist,
       client_originator,
       lobbyist_team,
       interaction_frequency,
-      relationship_intensity,
       stickiness = null,
       high_maintenance = false,
       revenues = []
@@ -665,16 +665,14 @@ router.post('/clients', async (req, res) => {
     // Insert client record
     const { rows: [newClient] } = await (await client).query(`
       INSERT INTO clients (
-        name, status, practice_area, relationship_strength, conflict_risk,
-        renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-        client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+        name, status, practice_area, conflict_risk, notes, primary_lobbyist,
+        client_originator, lobbyist_team, interaction_frequency,
         stickiness, high_maintenance
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
     `, [
-      name, status, practice_area, relationship_strength, conflict_risk,
-      renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-      client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+      name, status, practice_area, conflict_risk, notes, primary_lobbyist,
+      client_originator, lobbyist_team, interaction_frequency,
       stickiness, high_maintenance
     ]);
 
@@ -769,20 +767,20 @@ router.put('/clients/:id', async (req, res) => {
     await (await client).query('BEGIN');
     
     const clientId = req.params.id;
+    // Legacy retention columns (relationship_strength, relationship_intensity,
+    // renewal_probability) and the phantom strategic_fit_score are retired and
+    // intentionally left out of the SET clause — an edit no longer touches them,
+    // preserving any existing values until a later V4 migration drops them.
     const {
       name,
       status,
       practice_area,
-      relationship_strength,
       conflict_risk,
-      renewal_probability,
-      strategic_fit_score,
       notes,
       primary_lobbyist,
       client_originator,
       lobbyist_team,
       interaction_frequency,
-      relationship_intensity,
       stickiness = null,
       high_maintenance = false,
       revenues = []
@@ -791,18 +789,17 @@ router.put('/clients/:id', async (req, res) => {
     // Update client record
     const { rows: [updatedClient] } = await (await client).query(`
       UPDATE clients SET
-        name = $1, status = $2, practice_area = $3, relationship_strength = $4,
-        conflict_risk = $5, renewal_probability = $6, strategic_fit_score = $7,
-        notes = $8, primary_lobbyist = $9, client_originator = $10,
-        lobbyist_team = $11, interaction_frequency = $12, relationship_intensity = $13,
-        stickiness = $14, high_maintenance = $15,
+        name = $1, status = $2, practice_area = $3, conflict_risk = $4,
+        notes = $5, primary_lobbyist = $6, client_originator = $7,
+        lobbyist_team = $8, interaction_frequency = $9,
+        stickiness = $10, high_maintenance = $11,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $16
+      WHERE id = $12
       RETURNING *
     `, [
-      name, status, practice_area, relationship_strength, conflict_risk,
-      renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-      client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+      name, status, practice_area, conflict_risk,
+      notes, primary_lobbyist, client_originator,
+      lobbyist_team, interaction_frequency,
       stickiness, high_maintenance,
       clientId
     ]);
