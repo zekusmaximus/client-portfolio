@@ -199,6 +199,8 @@ const usePortfolioStore = create(
           lobbyist_team: clientData.lobbyist_team || [],
           interaction_frequency: clientData.interaction_frequency || '',
           relationship_intensity: clientData.relationship_intensity || 5,
+          stickiness: clientData.stickiness ?? null,
+          high_maintenance: clientData.high_maintenance === true,
           revenues: clientData.revenues || []
         };
       },

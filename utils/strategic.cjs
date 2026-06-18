@@ -107,7 +107,8 @@ function getEffort(client) {
  *  - else neutral 5.
  */
 function getStickiness(client) {
-  const explicit = num(client.stickiness ?? client.stickinessScore);
+  // Raw stickiness input is the 1–5 roommate↔cold scale.
+  const explicit = num(client.stickiness);
   if (explicit !== null) {
     // 1–5 scale → 0–10  (Personal bond 5 → 10 … Cold 1 → 0)
     return Math.max(0, Math.min(10, ((explicit - 1) / 4) * 10));
@@ -152,7 +153,8 @@ function calculateStrategicValue(client, revenues = []) {
 /**
  * Calculate metrics for a list of clients. Adds `strategicValue`,
  * `averageRevenue` (most-recent-year revenue, kept under the historical name),
- * `stickiness` (0–10), and `effort` (relative work units).
+ * `stickinessScore` (0–10 derived; the raw 1–5 `stickiness` input is preserved),
+ * and `effort` (relative work units).
  */
 function calculateStrategicScores(clients) {
   if (!clients || clients.length === 0) {
@@ -162,7 +164,9 @@ function calculateStrategicScores(clients) {
   return clients.map((client) => ({
     ...client,
     averageRevenue: Math.round(getMostRecentRevenue(client, client.revenues)),
-    stickiness: Math.round(getStickiness(client) * 100) / 100,
+    // Raw `stickiness` (1–5 input) is preserved via ...client; this is the
+    // derived 0–10 value used for display/scoring, under a distinct name.
+    stickinessScore: Math.round(getStickiness(client) * 100) / 100,
     effort: getEffort(client),
     strategicValue: Math.round(calculateStrategicValue(client, client.revenues) * 100) / 100,
   }));

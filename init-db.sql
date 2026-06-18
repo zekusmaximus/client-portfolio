@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS clients (
     lobbyist_team TEXT[],
     interaction_frequency VARCHAR(100),
     relationship_intensity INTEGER DEFAULT 5,
+    stickiness SMALLINT,
+    high_maintenance BOOLEAN DEFAULT false,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -47,6 +49,17 @@ CREATE TABLE IF NOT EXISTS client_revenues (
 CREATE INDEX IF NOT EXISTS idx_clients_user_id ON clients(user_id);
 CREATE INDEX IF NOT EXISTS idx_client_revenues_client_id ON client_revenues(client_id);
 CREATE INDEX IF NOT EXISTS idx_client_revenues_year ON client_revenues(year);
+
+-- Stickiness + effort inputs (idempotent; also migrates pre-existing databases).
+-- ADD COLUMN IF NOT EXISTS is a no-op when the columns already exist above.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS stickiness SMALLINT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS high_maintenance BOOLEAN DEFAULT false;
+
+-- One-time backfill: seed stickiness (1-5) from legacy relationship_intensity (1-10).
+-- Only fills rows not yet set, so re-running never clobbers a partner's chosen value.
+UPDATE clients
+SET stickiness = GREATEST(1, LEAST(5, ROUND(relationship_intensity / 2.0)))::smallint
+WHERE stickiness IS NULL AND relationship_intensity IS NOT NULL;
 
 -- No default users are created for security reasons
 -- Use the create-admin.cjs script to create your first administrator account

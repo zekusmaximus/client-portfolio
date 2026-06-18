@@ -657,6 +657,8 @@ router.post('/clients', async (req, res) => {
       lobbyist_team,
       interaction_frequency,
       relationship_intensity,
+      stickiness = null,
+      high_maintenance = false,
       revenues = []
     } = req.body;
 
@@ -665,13 +667,15 @@ router.post('/clients', async (req, res) => {
       INSERT INTO clients (
         name, status, practice_area, relationship_strength, conflict_risk,
         renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-        client_originator, lobbyist_team, interaction_frequency, relationship_intensity
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+        stickiness, high_maintenance
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
       name, status, practice_area, relationship_strength, conflict_risk,
       renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-      client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+      client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+      stickiness, high_maintenance
     ]);
 
     // Insert revenue records in bulk
@@ -779,23 +783,27 @@ router.put('/clients/:id', async (req, res) => {
       lobbyist_team,
       interaction_frequency,
       relationship_intensity,
+      stickiness = null,
+      high_maintenance = false,
       revenues = []
     } = req.body;
 
     // Update client record
     const { rows: [updatedClient] } = await (await client).query(`
-      UPDATE clients SET 
+      UPDATE clients SET
         name = $1, status = $2, practice_area = $3, relationship_strength = $4,
         conflict_risk = $5, renewal_probability = $6, strategic_fit_score = $7,
         notes = $8, primary_lobbyist = $9, client_originator = $10,
         lobbyist_team = $11, interaction_frequency = $12, relationship_intensity = $13,
+        stickiness = $14, high_maintenance = $15,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $14
+      WHERE id = $16
       RETURNING *
     `, [
       name, status, practice_area, relationship_strength, conflict_risk,
       renewal_probability, strategic_fit_score, notes, primary_lobbyist,
       client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+      stickiness, high_maintenance,
       clientId
     ]);
 
