@@ -95,6 +95,8 @@ const ClientEnhancementForm = ({ onClose }) => {
     interaction_frequency: 'As-Needed',
     relationship_intensity: 5,
     renewal_probability: 0.7,
+    stickiness: 3,
+    high_maintenance: false,
     notes: '',
     revenues: []
   });
@@ -139,6 +141,8 @@ const ClientEnhancementForm = ({ onClose }) => {
         interaction_frequency: client.interaction_frequency || 'As-Needed',
         relationship_intensity: client.relationship_intensity || 5,
         renewal_probability: client.renewal_probability || 0.7,
+        stickiness: client.stickiness || 3,
+        high_maintenance: client.high_maintenance === true,
         notes: client.notes || '',
         revenues: revenuesWithDefault
       });
@@ -156,6 +160,8 @@ const ClientEnhancementForm = ({ onClose }) => {
         interaction_frequency: 'As-Needed',
         relationship_intensity: 5,
         renewal_probability: 0.7,
+        stickiness: 3,
+        high_maintenance: false,
         notes: '',
         revenues: [{ year: new Date().getFullYear(), revenue_amount: '' }]
       });
@@ -609,6 +615,44 @@ const ClientEnhancementForm = ({ onClose }) => {
                 {errors.interaction_frequency}
               </p>
             )}
+          </div>
+
+          {/* High-maintenance ("handful") flag — bumps effort above cadence */}
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="high_maintenance"
+              checked={formData.high_maintenance === true}
+              onCheckedChange={(checked) => handleFieldChange('high_maintenance', checked === true)}
+            />
+            <Label htmlFor="high_maintenance" className="text-sm">
+              High-maintenance — each interaction is heavy (counts as extra effort)
+            </Label>
+          </div>
+
+          {/* Stickiness — how locked-in the relationship is (flight risk) */}
+          <div className="space-y-3">
+            <Label className="flex items-center gap-2 text-sm font-medium">
+              <Heart className="h-4 w-4" />
+              Relationship Stickiness
+            </Label>
+            <RadioGroup
+              key={`stickiness-${formData.stickiness}`}
+              value={String(formData.stickiness)}
+              onValueChange={(value) => handleFieldChange('stickiness', parseInt(value, 10))}
+            >
+              {[
+                [5, "Personal bond — won't leave"],
+                [4, 'Strong, established'],
+                [3, 'Solid but transactional'],
+                [2, 'New / still shallow'],
+                [1, 'Cold — never met in person'],
+              ].map(([val, label]) => (
+                <div key={val} className="flex items-center space-x-2">
+                  <RadioGroupItem value={String(val)} id={`stickiness-${val}`} />
+                  <Label htmlFor={`stickiness-${val}`}>{label}</Label>
+                </div>
+              ))}
+            </RadioGroup>
           </div>
 
           {/* Relationship Intensity */}
