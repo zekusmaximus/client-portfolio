@@ -31,17 +31,13 @@ import {
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor, groupClientsBySuccessionRisk } from './utils/successionUtils';
-
-import ClientCardModal from './ClientCardModal';
 import DataUploadManager from './DataUploadManager';
 
 const DashboardView = () => {
   const {
     clients,
     fetchError,
-    selectedClient,
     openClientModal,
-    closeClientModal,
     retryFetchClients,
     getPartnershipHealth,
     setCurrentView,
@@ -664,15 +660,6 @@ const DashboardView = () => {
           </Card>
         </TabsContent>
       </Tabs>
-
-      {/* Modal hub */}
-      <ClientCardModal
-        open={Boolean(selectedClient)}
-        onOpenChange={(open) => {
-          if (!open) closeClientModal();
-        }}
-        client={selectedClient}
-      />
     </div>
   );
 };

@@ -20,66 +20,6 @@ exports.listWithRevenues = async () => {
   return rows;
 };
 
-/* Create a new client. Owned by the creating user (all partners share read access). */
-exports.create = async (userId, data) => {
-  const {
-    name,
-    status = 'Prospect',
-    practice_area,
-    relationship_strength,
-    conflict_risk,
-    renewal_probability,
-    strategic_fit_score,
-    notes,
-    primary_lobbyist,
-    client_originator,
-    lobbyist_team,
-    interaction_frequency,
-    relationship_intensity,
-  } = data;
-
-  const { rows: [client] } = await db.query(
-    `INSERT INTO clients
-     (user_id, name, status, practice_area, relationship_strength,
-      conflict_risk, renewal_probability, strategic_fit_score, notes,
-      primary_lobbyist, client_originator, lobbyist_team,
-      interaction_frequency, relationship_intensity)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-     RETURNING *`,
-    [
-      userId, name, status, practice_area, relationship_strength,
-      conflict_risk, renewal_probability, strategic_fit_score, notes,
-      primary_lobbyist, client_originator, lobbyist_team,
-      interaction_frequency, relationship_intensity,
-    ]
-  );
-  client.revenues = [];
-  return client;
-};
-
-/* Update existing client (partial update). userId is accepted for call-site
-   alignment; all partners may edit any client (shared portfolio). */
-exports.update = async (clientId, userId, patch) => {
-  // Build dynamic SET clause
-  const keys = Object.keys(patch);
-  if (!keys.length) return null;
-
-  const cols = keys.map((k, i) => `"${k}" = $${i + 2}`).join(', ');
-  const values = keys.map((k) => patch[k]);
-
-  const { rows: [client] } = await db.query(
-    `UPDATE clients SET ${cols}, updated_at = now()
-     WHERE id = $1
-     RETURNING *`,
-    [clientId, ...values]
-  );
-  return client;
-};
-
-/* Delete client (cascade removes revenues) */
-exports.remove = (clientId) =>
-  db.query('DELETE FROM clients WHERE id = $1', [clientId]);
-
 /* Get single client with revenues */
 exports.get = async (clientId) => {
   const { rows } = await db.query(
