@@ -168,13 +168,6 @@ async function del(endpoint) {
   return;
 }
 
-// ---------- Domain-specific helpers for Phase 3 ----------
-export const postClient   = (data)      => post('/clients', data);
-export const putClient    = (id, data)  => put(`/clients/${id}`, data);
-export const deleteClient = (id)        => del(`/clients/${id}`);
-export const postRevenue  = (clientId, data) => post(`/clients/${clientId}/revenues`, data);
-export const putRevenue   = (revenueId, data) => put(`/revenues/${revenueId}`, data);
-
 export const apiClient = { post, get, put, del };
 
 export default apiClient;

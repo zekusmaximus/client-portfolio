@@ -1,7 +1,16 @@
 /**
  * Client Portfolio Analysis Engine
- * Implements strategic value calculations and portfolio optimization algorithms
+ * CSV processing, contract-status derivation, and portfolio optimization.
+ *
+ * Strategic-value scoring lives in ./utils/strategic.cjs (single source of
+ * truth) and is re-exported here for the data.cjs/CSV path. Do NOT reimplement
+ * scoring in this file — keep one formula.
  */
+
+const {
+  calculateStrategicValue,
+  calculateStrategicScores,
+} = require('./utils/strategic.cjs');
 
 // Helper function to decode HTML entities
 function decodeHTMLEntities(text) {
@@ -79,85 +88,6 @@ function deriveContractStatus(contractPeriod) {
     console.warn('Error parsing contract period:', contractPeriod, error);
     return 'H';
   }
-}
-
-/**
- * Calculate strategic value for a single client
- * @param {Object} client - Client object with basic information
- * @param {Array} revenues - Array of revenue objects with year and revenue_amount
- * @returns {number} Strategic value score (0-10)
- */
-function calculateStrategicValue(client, revenues = []) {
-  // Get the most recent year's revenue as primary financial input
-  const mostRecentRevenue = revenues.length > 0 ? 
-    revenues.reduce((latest, current) => 
-      current.year > latest.year ? current : latest
-    ).revenue_amount : 0;
-  
-  // Revenue Score (0-10) - normalized by $500k baseline
-  const revenueScore = Math.min(10, (parseFloat(mostRecentRevenue) || 0) / 50000);
-  
-  // Relationship Strength (1-10, direct mapping) - default to 5 for neutral
-  const relationshipStrength = parseFloat(client.relationship_strength) || 5;
-  
-  // Strategic Fit Score (1-10, direct mapping) - default to 5 for neutral
-  const strategicFitScore = parseFloat(client.strategic_fit_score) || 5;
-  
-  // Renewal Probability (0-1, normalized to 0-10) - default to 0.5 for neutral
-  const renewalProbabilityScore = (parseFloat(client.renewal_probability) || 0.5) * 10;
-  
-  // Conflict Risk Penalty - default to 'Medium' if null/undefined
-  const conflictRisk = client.conflict_risk ?? 'Medium';
-  const conflictPenalty = {
-    'High': 3,
-    'Medium': 1, 
-    'Low': 0
-  }[conflictRisk] ?? 1;
-  
-  // Re-balanced weights emphasizing revenue and relationship (removed strategic fit score)
-  const strategicValue = (
-    (revenueScore * 0.50) +           // Increased from 0.40
-    (relationshipStrength * 0.35) +   // Increased from 0.30
-    (renewalProbabilityScore * 0.15)  // Increased from 0.10
-  ) - conflictPenalty;
-  
-  return Math.max(0, Math.min(10, strategicValue));
-}
-
-/**
- * Calculate strategic scores for all clients
- * @param {Array} clients - Array of client objects with revenues
- * @returns {Array} Clients with calculated scores
- */
-function calculateStrategicScores(clients) {
-  if (!clients || clients.length === 0) {
-    return [];
-  }
-  
-  return clients.map(client => {
-    const revenues = client.revenues || [];
-    const strategicValue = calculateStrategicValue(client, revenues);
-    
-    // Use 2025 revenue as the primary revenue figure (most recent year)
-    let currentRevenue = 0;
-    
-    // Handle CSV format (client.revenue object)
-    if (client.revenue && typeof client.revenue === 'object') {
-      currentRevenue = parseFloat(client.revenue['2025']) || 0;
-    }
-    // Handle database format (client.revenues array)
-    else if (revenues.length > 0) {
-      const revenueByYear = new Map(revenues.map(r => [r.year, r]));
-      const revenue2025 = revenueByYear.get(2025);
-      currentRevenue = revenue2025 ? parseFloat(revenue2025.revenue_amount) || 0 : 0;
-    }
-    
-    return {
-      ...client,
-      averageRevenue: Math.round(currentRevenue), // Keep field name for compatibility but use 2025 revenue
-      strategicValue: Math.round(strategicValue * 100) / 100
-    };
-  });
 }
 
 /**
