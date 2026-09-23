@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current work plan
+
+Active plan: `docs/plans/tier-0.md` (stabilisation). Read it before making
+changes and update its status table when you finish a work package.
+Background and evidence: `REVIEW-2026-09.md`. Product direction:
+`PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
+data scoping by design).
+
 ## Development Commands
 
 ### Frontend Development
@@ -62,10 +70,11 @@ agree.
 Current formula (clamped to 0–10):
 
 ```
-strategicValue = revenueScore*0.50 + relationshipStrength*0.35
-                 + renewalProbability(0–10)*0.15  −  conflictPenalty
+strategicValue = revenueScore*0.50 + stickiness(0–10)*0.50  −  conflictPenalty
 revenueScore   = min(10, mostRecentRevenue / 50000)   // $500k → 10
+stickiness     = (raw 1–5 pick − 1) / 4 × 10; legacy fallbacks in getStickiness()
 conflictPenalty: High = 3, Medium = 1, Low = 0
+effort         = cadence weight (Daily 5 … As-Needed 0.5) × 1.5 if "handful"
 ```
 
 `mostRecentRevenue` is the latest year's revenue, resolved from either a
