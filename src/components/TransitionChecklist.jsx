@@ -58,7 +58,7 @@ const formatDate = (date) => {
 const TransitionChecklist = ({ assignments, clients }) => {
   const { partners } = usePortfolioStore();
   const [tasks, setTasks] = useLocalStorage('transition-tasks', {});
-  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now());
+  const [_lastUpdateTime, setLastUpdateTime] = useState(Date.now());
 
   // Generate standardized tasks for each client transition
   const generateTasks = (clientId, fromPartner, toPartner, client) => {

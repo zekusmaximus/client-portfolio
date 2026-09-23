@@ -24,7 +24,7 @@ const PostTransitionGrid = ({ partners, model, clients, customAssignments = {} }
       let assignedClients = [...(partner.clients || [])];
       
       switch (model) {
-        case 'balanced':
+        case 'balanced': {
           // Distribute evenly by count
           const clientsPerPartner = Math.ceil(departingClientsData.length / remainingPartners.length);
           const startIndex = remainingPartners.indexOf(partner) * clientsPerPartner;
@@ -32,6 +32,7 @@ const PostTransitionGrid = ({ partners, model, clients, customAssignments = {} }
           const balancedClients = departingClientsData.slice(startIndex, endIndex);
           assignedClients.push(...balancedClients.map(c => c.id));
           break;
+        }
 
         case 'expertise':
           // Match practice areas

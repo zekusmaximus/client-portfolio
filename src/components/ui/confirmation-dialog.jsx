@@ -1,4 +1,3 @@
-import React from 'react';
 import { Button } from './button';
 import { Alert, AlertDescription } from './alert';
 import { AlertTriangle } from 'lucide-react';

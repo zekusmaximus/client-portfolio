@@ -1237,7 +1237,7 @@ ${growthVector === 'Organic Growth' ? `
    - Client Value Optimization: [Strategies to increase average client value from $${(currentRevenue / portfolioSummary.totalClients).toLocaleString()}]
 
 2. **Service Offering Enhancement**
-${targetMarkets.map((market, i) => 
+${targetMarkets.map((market) => 
   `   - **${market} Practice**: [Specific growth strategies and revenue targets]
      • Current Position: [Market share and capability assessment]
      • Growth Opportunity: [Specific expansion plans and targets]

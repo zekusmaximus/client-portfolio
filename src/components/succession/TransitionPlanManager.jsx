@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,15 +23,10 @@ import {
   TrendingUp,
   Activity,
   Plus,
-  Filter,
-  Search,
-  Settings,
-  Send,
   Edit3,
   ArrowLeft,
   BarChart3,
   Timer,
-  Zap,
   Award
 } from 'lucide-react';
 import usePortfolioStore from '../../portfolioStore';
@@ -56,7 +51,7 @@ const COMMUNICATION_TYPES = {
 };
 
 // Transition Gantt Chart Component
-const TransitionGantt = ({ transitions, onTaskUpdate, onClientSelect }) => {
+const TransitionGantt = ({ transitions, onClientSelect }) => {
   const [viewMode, setViewMode] = useState('month'); // week, month, quarter
   const [selectedClient, setSelectedClient] = useState(null);
 
@@ -163,7 +158,7 @@ const TransitionGantt = ({ transitions, onTaskUpdate, onClientSelect }) => {
 
         {/* Timeline Rows */}
         <div className="space-y-2 max-h-96 overflow-y-auto">
-          {transitions.map((transition, index) => (
+          {transitions.map((transition) => (
             <div 
               key={transition.clientId} 
               className={`flex items-center py-2 px-1 rounded hover:bg-gray-50 cursor-pointer ${
@@ -241,7 +236,7 @@ const TransitionGantt = ({ transitions, onTaskUpdate, onClientSelect }) => {
 };
 
 // Task Assignment Panel Component
-const TaskAssignmentPanel = ({ tasks, assignees, onCreateTask, onUpdateTask, onAssignTask }) => {
+const TaskAssignmentPanel = ({ tasks, assignees, onCreateTask, onUpdateTask }) => {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTask, setNewTask] = useState({
     title: '',

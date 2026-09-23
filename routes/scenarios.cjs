@@ -78,7 +78,7 @@ router.post('/succession', handleValidationErrors, async (req, res) => {
       });
     }
 
-    const { scenarioData, portfolioId } = req.body;
+    const { scenarioData } = req.body;
     const userId = req.user.userId;
 
     if (!scenarioData) {
@@ -213,7 +213,7 @@ router.post('/capacity', handleValidationErrors, async (req, res) => {
       });
     }
 
-    const { scenarioData, portfolioId } = req.body;
+    const { scenarioData } = req.body;
     const userId = req.user.userId;
 
     if (!scenarioData) {
@@ -268,7 +268,7 @@ router.post('/growth', handleValidationErrors, async (req, res) => {
       });
     }
 
-    const { scenarioData, portfolioId } = req.body;
+    const { scenarioData } = req.body;
     const userId = req.user.userId;
 
     if (!scenarioData) {

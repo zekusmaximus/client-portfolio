@@ -1,5 +1,3 @@
-import React from 'react';
-
 const TooltipProvider = ({ children }) => {
   return <div className="tooltip-provider">{children}</div>;
 };
@@ -8,7 +6,7 @@ const Tooltip = ({ children }) => {
   return <div className="group relative inline-block">{children}</div>;
 };
 
-const TooltipTrigger = ({ children, asChild, ...props }) => {
+const TooltipTrigger = ({ children, asChild: _asChild, ...props }) => {
   return <div {...props}>{children}</div>;
 };
 

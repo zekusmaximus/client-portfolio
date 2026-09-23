@@ -383,7 +383,7 @@ const usePortfolioStore = create(
         let redistribution = [];
 
         switch (model) {
-          case 'balanced':
+          case 'balanced': {
             const totalRevenue = departingClientsData.reduce((sum, client) => sum + state.getClientRevenue(client), 0);
             const revenuePerPartner = totalRevenue / remainingPartners.length;
             
@@ -406,8 +406,9 @@ const usePortfolioStore = create(
               currentRevenues[targetIndex] += clientRevenue;
             });
             break;
+          }
 
-          case 'expertise':
+          case 'expertise': {
             redistribution = remainingPartners.map(partner => ({
               partnerId: partner.id,
               partnerName: partner.name,
@@ -438,6 +439,7 @@ const usePortfolioStore = create(
               bestMatch.targetRevenue += state.getClientRevenue(client);
             });
             break;
+          }
 
           case 'relationship':
             redistribution = remainingPartners.map(partner => ({
@@ -468,7 +470,7 @@ const usePortfolioStore = create(
             });
             break;
 
-          case 'custom':
+          case 'custom': {
             const customAssignments = state.partnershipTransition.customAssignments;
             redistribution = remainingPartners.map(partner => ({
               partnerId: partner.id,
@@ -490,6 +492,7 @@ const usePortfolioStore = create(
               }
             });
             break;
+          }
         }
 
         return redistribution;

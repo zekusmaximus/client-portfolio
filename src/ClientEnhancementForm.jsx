@@ -14,8 +14,7 @@ import {
   validateClientForm, 
   sanitizeFormData, 
   getFieldError, 
-  validateRevenueEntry,
-  VALIDATION_RULES 
+  validateRevenueEntry
 } from './utils/validation';
 import {
   X,
@@ -162,7 +161,7 @@ const ClientEnhancementForm = ({ onClose }) => {
       }));
     } else {
       setErrors(prev => {
-        const { [`revenue_${index}`]: removed, ...rest } = prev;
+        const { [`revenue_${index}`]: _removed, ...rest } = prev;
         return rest;
       });
     }

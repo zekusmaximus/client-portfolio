@@ -11,7 +11,6 @@ const ScenarioComparison = ({ scenarios, onApply }) => {
     partners, 
     clients, 
     calculateRedistribution, 
-    getClientRevenue,
     partnershipTransition 
   } = usePortfolioStore();
 

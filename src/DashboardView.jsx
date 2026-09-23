@@ -25,12 +25,11 @@ import {
   Pie,
   Cell,
   BarChart,
-  Bar,
-  Legend
+  Bar
 } from 'recharts';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
-import { getSuccessionRiskVariant, getRelationshipTypeColor, groupClientsBySuccessionRisk } from './utils/successionUtils';
+import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 import DataUploadManager from './DataUploadManager';
 
 const DashboardView = () => {

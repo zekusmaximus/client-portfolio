@@ -20,7 +20,7 @@ const clientValidationRules = [
     .trim()
     .isLength({ min: 1, max: 255 })
     .withMessage('Client name must be between 1 and 255 characters')
-    .matches(/^[a-zA-Z0-9\s\-\.,&'()\/]+$/)
+    .matches(/^[a-zA-Z0-9\s\-.,&'()/]+$/)
     .withMessage('Client name contains invalid characters')
     .customSanitizer(sanitizeInput),
 
@@ -62,7 +62,7 @@ const clientValidationRules = [
     .trim()
     .isLength({ max: 255 })
     .withMessage('Primary lobbyist name must not exceed 255 characters')
-    .matches(/^[a-zA-Z\s\-'\.]*$/)
+    .matches(/^[a-zA-Z\s\-'.]*$/)
     .withMessage('Primary lobbyist name contains invalid characters')
     .customSanitizer(sanitizeInput),
 
@@ -72,7 +72,7 @@ const clientValidationRules = [
     .trim()
     .isLength({ max: 255 })
     .withMessage('Client originator name must not exceed 255 characters')
-    .matches(/^[a-zA-Z\s\-'\.]*$/)
+    .matches(/^[a-zA-Z\s\-'.]*$/)
     .withMessage('Client originator name contains invalid characters')
     .customSanitizer(sanitizeInput),
 

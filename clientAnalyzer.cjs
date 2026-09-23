@@ -93,10 +93,10 @@ function deriveContractStatus(contractPeriod) {
 /**
  * Optimize portfolio based on capacity constraints
  * @param {Array} clients - Array of client objects with strategic scores
- * @param {number} maxCapacity - Maximum available hours (deprecated but kept for compatibility)
+ * @param {number} _maxCapacity - Maximum available hours (deprecated but kept for compatibility)
  * @returns {Object} Optimization results
  */
-function optimizePortfolio(clients, maxCapacity = 2000) {
+function optimizePortfolio(clients, _maxCapacity = 2000) {
   if (!clients || clients.length === 0) {
     return {
       clients: [],

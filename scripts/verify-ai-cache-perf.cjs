@@ -1,5 +1,4 @@
 const { performance } = require('perf_hooks');
-const assert = require('assert');
 
 // Mock environment variables before importing anything
 process.env.DATABASE_URL = 'postgres://mock:mock@localhost:5432/mock_db';
@@ -62,13 +61,13 @@ try {
 
     // 1. First call (Cold)
     const start1 = performance.now();
-    const result1 = await router._getSuccessionScenarioAnalysis(mathResults, portfolioSummary, scenarioData);
+    await router._getSuccessionScenarioAnalysis(mathResults, portfolioSummary, scenarioData);
     const end1 = performance.now();
     console.log(`First call time: ${(end1 - start1).toFixed(2)}ms`);
 
     // 2. Second call (Cached)
     const start2 = performance.now();
-    const result2 = await router._getSuccessionScenarioAnalysis(mathResults, portfolioSummary, scenarioData);
+    await router._getSuccessionScenarioAnalysis(mathResults, portfolioSummary, scenarioData);
     const end2 = performance.now();
     console.log(`Second call time: ${(end2 - start2).toFixed(2)}ms`);
 
@@ -81,7 +80,7 @@ try {
     // 3. Third call with DIFFERENT input (Should miss)
     const mathResults2 = { ...mathResults, totalClientsAtRisk: 6 }; // Changed input
     const start3 = performance.now();
-    const result3 = await router._getSuccessionScenarioAnalysis(mathResults2, portfolioSummary, scenarioData);
+    await router._getSuccessionScenarioAnalysis(mathResults2, portfolioSummary, scenarioData);
     const end3 = performance.now();
     console.log(`Third call (different input) time: ${(end3 - start3).toFixed(2)}ms`);
 

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userModel = require('../models/userModel.cjs');
 const { compare } = require('../utils/hash.cjs');
-const { sign, verify } = require('../utils/jwt.cjs');
+const { sign } = require('../utils/jwt.cjs');
 const authenticateToken = require('../middleware/auth.cjs');
 
 router.post('/login', async (req, res) => {

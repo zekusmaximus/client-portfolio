@@ -87,7 +87,7 @@ const csvValidationRules = [
         // Decode HTML entities for validation
         const decodedClient = decodeHTMLEntities(row.CLIENT.trim());
         
-        if (!/^[a-zA-Z0-9\s\-\.,&'()\/]+$/.test(decodedClient)) {
+        if (!/^[a-zA-Z0-9\s\-.,&'()/]+$/.test(decodedClient)) {
           throw new Error(`Row ${i + 1}: CLIENT contains invalid characters`);
         }
       }
@@ -541,7 +541,7 @@ router.post('/analytics', (req, res) => {
       
       const mappedStatus = statusMapping[clientStatus] || clientStatus || 'Prospect';
       
-      if (revenueByStatus.hasOwnProperty(mappedStatus)) {
+      if (Object.prototype.hasOwnProperty.call(revenueByStatus, mappedStatus)) {
         revenueByStatus[mappedStatus] += client.averageRevenue || 0; // averageRevenue already contains 2025 data only
       } else {
         revenueByStatus['Prospect'] += client.averageRevenue || 0; // Default fallback

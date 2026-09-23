@@ -16,14 +16,17 @@ data scoping by design).
 - `npm run dev` - Start Vite development server for React frontend
 - `npm run build` - Build production React app
 - `npm run preview` - Preview production build locally
-- `npm run lint` - Run ESLint on JS/JSX files
+- `npm run lint` - Run ESLint on JS/JSX/CJS files (errors fail the gate, warnings are informational)
 
 ### Backend Development
 - `npm start` or `node server.cjs` - Start Express.js backend server on port 5000
 - Backend runs on http://localhost:5000 with CORS enabled for development
 
 ### Testing
-- No specific test framework is configured - check with user before implementing tests
+- `npm test` - Run the test suite with Node's built-in runner (`node --test "tests/**/*.test.mjs"`); no test dependencies to install
+- Tests live in `tests/*.test.mjs` and use `node:test` + `node:assert/strict`. Import CommonJS modules with a default import (`import strategic from '../utils/strategic.cjs'`)
+- Never import `db.cjs`, `data.cjs`, `models/*`, or `utils/jwt.cjs` from tests: they throw at load time without `DATABASE_URL` / `JWT_SECRET`
+- `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`
 
 ## Architecture Overview
 
