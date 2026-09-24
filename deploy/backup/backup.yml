@@ -1,0 +1,79 @@
+# Nightly encrypted, restore-verified backup of the client-portfolio database.
+#
+# This file belongs in the PRIVATE repository zekusmaximus/client-portfolio-backups
+# as .github/workflows/backup.yml, next to pg-backup.sh at that repository's root
+# (deploy/backup/INSTALL.md). Never put it under .github/workflows/ in the public
+# client-portfolio repository: Actions logs and artifacts there are public.
+#
+# Secret    BACKUP_DATABASE_URL  Render External Database URL (read-only role preferred)
+# Variable  PG_MAJOR             the database's PostgreSQL major version, from the Render dashboard
+# Variable  AGE_RECIPIENT        age public key (age1...); the private key is only in the password manager
+name: backup
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # 07:00 UTC, about 3 am Eastern
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      # Throwaway server the dump is restored into before it is encrypted.
+      restore-check:
+        image: postgres:${{ vars.PG_MAJOR || 'PG_MAJOR-is-not-set' }}
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: restore_check
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PG_MAJOR: ${{ vars.PG_MAJOR }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install postgresql-client-${{ vars.PG_MAJOR }} (apt.postgresql.org) and age
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends "postgresql-client-$PG_MAJOR" age
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" --version
+
+      - name: Dump, restore-check, encrypt
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          PGSSLMODE: require
+          RESTORE_CHECK_URL: postgresql://postgres@127.0.0.1:5432/restore_check
+          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
+          BACKUP_OUT_DIR: ${{ runner.temp }}/backup
+        run: PATH="/usr/lib/postgresql/$PG_MAJOR/bin:$PATH" bash ./pg-backup.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-portfolio-backup
+          path: ${{ runner.temp }}/backup/*.dump.age
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

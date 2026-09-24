@@ -178,6 +178,14 @@ Tier 0 work.
 - **Database:** a dropped connection logs `{"event":"pg_pool_error",...}`; the pool reconnects on the next query and the process keeps running.
 - **Health:** `GET /api/health` returns `status`, `timestamp`, `uptimeSeconds`, `environment` and `services` (`database`, `anthropic`, `model`).
 
+### Backups (WP4, D12)
+- **Layer 1** is whatever Render provides for the database's instance type (backups, point-in-time recovery); `deploy/backup/INSTALL.md` step 1 confirms it in the dashboard.
+- **Layer 2** runs nightly at 07:00 UTC (plus `workflow_dispatch`) in GitHub Actions in the **private** repository `zekusmaximus/client-portfolio-backups`, never in this public one, whose logs and artifacts anyone can read. It runs copies of `deploy/backup/pg-backup.sh` and `deploy/backup/backup.yml`; after changing either here, the copies in the private repository must be updated by hand (INSTALL.md step 5).
+- **What it checks:** the row counts and the dump come from one snapshot; `users`, `clients` and `client_revenues` must exist and `users` must not be empty; `pg_dump`, production and the restore-check server must share a major version (`PG_MAJOR`); the plaintext dump is restored into a throwaway `postgres:$PG_MAJOR` container and every public table's count must match. Only then is it `age`-encrypted. Any failure fails the run, leaves no plaintext and uploads nothing, and GitHub emails the failure.
+- **Retention:** each night's `client_portfolio_<UTC stamp>.dump.age` is a workflow artifact kept 90 days. The `age` private key exists only in the password manager.
+- **Restore:** `deploy/backup/RESTORE.md` (download, decrypt, scratch restore, count check, production restore on Render, quarterly drill).
+- **Self-test:** `.github/workflows/backup-selftest.yml` runs `deploy/backup/selftest.sh` on PostgreSQL 16, 17 and 18 with synthetic data, the happy path and every failure path. Run it locally against a throwaway server only (it creates and drops `pgb_selftest_*` databases): `SELFTEST_SERVER_URL=postgresql://postgres@127.0.0.1:5432 bash deploy/backup/selftest.sh`. A new table in `public` is counted automatically; renaming `users`, `clients` or `client_revenues` means updating the required list in `pg-backup.sh`.
+
 ## Development Notes
 
 ### State Management

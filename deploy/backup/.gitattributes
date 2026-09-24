@@ -1,0 +1,3 @@
+# Keep LF endings in a Windows checkout, so the files copied into the private
+# backups repository (INSTALL.md) still run under bash.
+* text eol=lf
