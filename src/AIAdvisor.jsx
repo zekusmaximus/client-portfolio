@@ -15,22 +15,49 @@ import {
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
-import { apiClient } from './api';
+import Markdown from 'react-markdown';
+import { apiClient, apiErrorMessage } from './api';
 import { getEnhancedClientCount } from './utils/clientUtils';
+
+// One AI answer: the markdown body plus the "cut off" / "declined" notices.
+// react-markdown at its defaults renders no raw HTML, so the model's output is
+// text and markup only.
+const AIAnswer = ({ text, truncated, refused }) => (
+  <div>
+    {refused && (
+      <div className="mb-3 flex items-center gap-2 text-sm text-amber-700">
+        <AlertCircle className="h-4 w-4" />
+        <span>The AI declined to answer this request.</span>
+      </div>
+    )}
+    <div className="ai-markdown text-sm">
+      <Markdown>{text || ''}</Markdown>
+    </div>
+    {truncated && (
+      <div className="mt-3 flex items-center gap-2 text-sm text-amber-700">
+        <AlertCircle className="h-4 w-4" />
+        <span>The response was cut off; ask a narrower question.</span>
+      </div>
+    )}
+  </div>
+);
 
 const AIAdvisor = () => {
   const reportingYear = usePortfolioStore((s) => s.getReportingYear());
-  const { clients, fetchClients, clientsLoading } = usePortfolioStore();
+  // Answers and the last error live in the store (WP2) so they survive a tab switch.
+  const {
+    clients,
+    fetchClients,
+    clientsLoading,
+    aiResults: results,
+    aiError: error,
+    setAiResult,
+    setAiError,
+  } = usePortfolioStore();
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isLoading, setIsLoading] = useState(false);
   const [customQuery, setCustomQuery] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
-  const [results, setResults] = useState({
-    portfolioAnalysis: null,
-    strategicAdvice: null,
-    clientRecommendations: null
-  });
-  const [error, setError] = useState(null);
 
   const hasData = clients && clients.length > 0;
 
@@ -38,7 +65,7 @@ const AIAdvisor = () => {
     if (!hasData) return;
     try {
       setIsLoading(true);
-      setError(null);
+      setAiError(null);
 
       // Extract only necessary client IDs for analysis, filtering out clients without valid IDs
       const clientIds = clients.filter(c => c.id && String(c.id).trim() !== '').map(c => String(c.id).trim());
@@ -50,14 +77,14 @@ const AIAdvisor = () => {
       const data = await apiClient.post('/claude/analyze-portfolio', { clientIds });
 
       if (data.success) {
-        setResults(prev => ({ ...prev, portfolioAnalysis: data }));
+        setAiResult('portfolioAnalysis', data);
       } else {
         throw new Error(data.error || 'Analysis failed');
       }
 
     } catch (err) {
       console.error('Portfolio analysis error:', err);
-      setError(err.message);
+      setAiError(apiErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -67,7 +94,7 @@ const AIAdvisor = () => {
     if (!hasData) return;
 
     setIsLoading(true);
-    setError(null);
+    setAiError(null);
 
     try {
       // Extract only necessary client IDs for advice
@@ -79,7 +106,7 @@ const AIAdvisor = () => {
       });
 
       if (data.success) {
-        setResults(prev => ({ ...prev, strategicAdvice: data }));
+        setAiResult('strategicAdvice', data);
         setCustomQuery(''); // Clear the query after successful request
       } else {
         throw new Error(data.error || 'Advice generation failed');
@@ -87,7 +114,7 @@ const AIAdvisor = () => {
 
     } catch (err) {
       console.error('Strategic advice error:', err);
-      setError(err.message);
+      setAiError(apiErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -95,24 +122,24 @@ const AIAdvisor = () => {
 
   const handleClientRecommendations = async (client) => {
     if (!client) {
-      setError('No client selected.');
+      setAiError('No client selected.');
       return;
     }
 
     // Validate client has a proper ID
     if (!client.id || (typeof client.id !== 'string' && typeof client.id !== 'number') || String(client.id).trim() === '') {
-      setError('Client is missing a valid ID. Please refresh the client list and try again.');
+      setAiError('Client is missing a valid ID. Please refresh the client list and try again.');
       return;
     }
 
     // Validate client has a name
     if (!client.name || typeof client.name !== 'string' || client.name.trim() === '') {
-      setError('Client data is incomplete. Please refresh the client list and try again.');
+      setAiError('Client data is incomplete. Please refresh the client list and try again.');
       return;
     }
 
     setIsLoading(true);
-    setError(null);
+    setAiError(null);
     setSelectedClient(client);
 
     try {
@@ -127,34 +154,17 @@ const AIAdvisor = () => {
       const data = await apiClient.post('/claude/client-recommendations', payload);
 
       if (data.success) {
-        setResults(prev => ({ ...prev, clientRecommendations: data }));
+        setAiResult('clientRecommendations', data);
       } else {
         throw new Error(data.error || 'Recommendations generation failed');
       }
 
     } catch (err) {
       console.error('Client recommendations error:', err);
-      setError(err.message);
+      setAiError(apiErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const formatAIResponse = (text) => {
-    // Simple formatting to make AI responses more readable
-    return text
-      .split('\n')
-      .map((line, index) => {
-        if (line.startsWith('**') && line.endsWith('**')) {
-          return <h3 key={index} className="font-semibold text-lg mt-4 mb-2">{line.replace(/\*\*/g, '')}</h3>;
-        } else if (line.startsWith('*') || line.startsWith('-')) {
-          return <li key={index} className="ml-4 mb-1">{line.substring(1).trim()}</li>;
-        } else if (line.trim() === '') {
-          return <br key={index} />;
-        } else {
-          return <p key={index} className="mb-2">{line}</p>;
-        }
-      });
   };
 
   if (!hasData) {
@@ -292,9 +302,11 @@ const AIAdvisor = () => {
                       {new Date(results.portfolioAnalysis.timestamp).toLocaleString()}
                     </Badge>
                   </div>
-                  <div className="prose prose-sm max-w-none">
-                    {formatAIResponse(results.portfolioAnalysis.analysis)}
-                  </div>
+                  <AIAnswer
+                    text={results.portfolioAnalysis.analysis}
+                    truncated={results.portfolioAnalysis.truncated}
+                    refused={results.portfolioAnalysis.refused}
+                  />
                 </div>
               )}
             </CardContent>
@@ -364,9 +376,11 @@ const AIAdvisor = () => {
                       {new Date(results.strategicAdvice.timestamp).toLocaleString()}
                     </Badge>
                   </div>
-                  <div className="prose prose-sm max-w-none">
-                    {formatAIResponse(results.strategicAdvice.advice)}
-                  </div>
+                  <AIAnswer
+                    text={results.strategicAdvice.advice}
+                    truncated={results.strategicAdvice.truncated}
+                    refused={results.strategicAdvice.refused}
+                  />
                 </div>
               )}
             </CardContent>
@@ -450,9 +464,11 @@ const AIAdvisor = () => {
                       {new Date(results.clientRecommendations.timestamp).toLocaleString()}
                     </Badge>
                   </div>
-                  <div className="prose prose-sm max-w-none">
-                    {formatAIResponse(results.clientRecommendations.recommendations)}
-                  </div>
+                  <AIAnswer
+                    text={results.clientRecommendations.recommendations}
+                    truncated={results.clientRecommendations.truncated}
+                    refused={results.clientRecommendations.refused}
+                  />
                 </div>
               )}
             </CardContent>

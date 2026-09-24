@@ -25,6 +25,7 @@ import {
   Send
 } from 'lucide-react';
 import usePortfolioStore from '../../portfolioStore';
+import { apiClient, apiErrorMessage } from '../../api';
 import { formatClientName } from '../../utils/textUtils';
 import { 
   getSuccessionRiskVariant, 
@@ -577,7 +578,10 @@ const ClientReviewInterface = ({ stage1Data, onProceedToStage3, onBackToStage1 }
   const [selectedClients, setSelectedClients] = useState([]);
   const [transitionPlans, setTransitionPlans] = useState({});
   const [isGeneratingPlans, setIsGeneratingPlans] = useState(false);
+  // { done, total, failed: [{ clientId, clientName, error }] } for the current / last run
+  const [planProgress, setPlanProgress] = useState(null);
   const [activeTab, setActiveTab] = useState('triage');
+  const partners = usePortfolioStore((s) => s.partners);
 
   // Extract clients from stage1Data
   const affectedClients = stage1Data?.affectedClients || [];
@@ -601,37 +605,59 @@ const ClientReviewInterface = ({ stage1Data, onProceedToStage3, onBackToStage1 }
     setSelectedClients([]);
   };
 
-  const handleGeneratePlans = async (clients) => {
-    setIsGeneratingPlans(true);
-    try {
-      // Call API to generate transition plans
-      const response = await fetch('/api/scenarios/bulk-transition-plans', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          clients: clients.map(id => affectedClients.find(c => c.id === id)),
-          stage1Data
-        })
-      });
+  // One request per selected client, two in flight at a time (D9). Each plan is
+  // merged into transitionPlans as it arrives; a failure is listed with the
+  // server's error message instead of silently producing no plan.
+  const handleGeneratePlans = async (clientIds) => {
+    const queue = clientIds
+      .map((id) => affectedClients.find((c) => c.id === id))
+      .filter(Boolean);
+    if (queue.length === 0) return;
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.plans) {
-          const newPlans = { ...transitionPlans };
-          data.plans.forEach(plan => {
-            newPlans[plan.clientId] = { ...plan, status: 'planned' };
+    // The prompt wants partner names; Stage 1 keeps the selected partner ids.
+    const requestStage1Data = {
+      selectedPartners: (stage1Data?.selectedPartners || []).map(
+        (id) => partners.find((p) => p.id === id)?.name || id
+      ),
+      impactData: stage1Data?.impactData || {},
+    };
+
+    setIsGeneratingPlans(true);
+    setPlanProgress({ done: 0, total: queue.length, failed: [] });
+
+    let next = 0;
+    const worker = async () => {
+      while (next < queue.length) {
+        const client = queue[next++];
+        try {
+          const data = await apiClient.post('/scenarios/transition-plan', {
+            client,
+            stage1Data: requestStage1Data,
           });
-          setTransitionPlans(newPlans);
+          if (!data?.success || !data.plan) {
+            throw new Error(data?.error || 'No plan returned');
+          }
+          setTransitionPlans((prev) => ({
+            ...prev,
+            [client.id]: { ...data.plan, clientId: client.id, status: 'planned' },
+          }));
+          setPlanProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+        } catch (error) {
+          console.error(`Error generating plan for ${client.name}:`, error);
+          setPlanProgress((prev) => ({
+            ...prev,
+            done: prev.done + 1,
+            failed: [
+              ...prev.failed,
+              { clientId: client.id, clientName: client.name, error: apiErrorMessage(error) },
+            ],
+          }));
         }
       }
-    } catch (error) {
-      console.error('Error generating plans:', error);
-    } finally {
-      setIsGeneratingPlans(false);
-    }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(2, queue.length) }, worker));
+    setIsGeneratingPlans(false);
   };
 
   const handleAssignSuccessor = (clientIds, successorPartner) => {
@@ -739,6 +765,41 @@ const ClientReviewInterface = ({ stage1Data, onProceedToStage3, onBackToStage1 }
         onClearSelection={handleClearSelection}
         isGeneratingPlans={isGeneratingPlans}
       />
+
+      {/* Plan generation progress: one request per client, two at a time */}
+      {planProgress && (
+        <Card className={planProgress.failed.length > 0 ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50'}>
+          <CardContent className="py-3 text-sm">
+            <div className="flex items-center gap-2">
+              {isGeneratingPlans ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>
+                    Generating plan {Math.min(planProgress.done + 1, planProgress.total)} of {planProgress.total}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <span>
+                    {planProgress.done - planProgress.failed.length} of {planProgress.total} plans generated
+                    {planProgress.failed.length > 0 && `, ${planProgress.failed.length} failed`}
+                  </span>
+                </>
+              )}
+            </div>
+            {planProgress.failed.length > 0 && (
+              <ul className="mt-2 space-y-1 text-red-700">
+                {planProgress.failed.map((failure) => (
+                  <li key={failure.clientId}>
+                    <span className="font-medium">{formatClientName(failure.clientName)}</span>: {failure.error}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Main Interface */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
