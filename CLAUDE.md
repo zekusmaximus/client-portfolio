@@ -25,6 +25,7 @@ data scoping by design).
 ### Testing
 - `npm test` - Run the test suite with Node's built-in runner (`node --test "tests/**/*.test.mjs"`); no test dependencies to install
 - Tests live in `tests/*.test.mjs` and use `node:test` + `node:assert/strict`. Import CommonJS modules with a default import (`import strategic from '../utils/strategic.cjs'`)
+- Current suites: `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
 - Never import `db.cjs`, `data.cjs`, `models/*`, or `utils/jwt.cjs` from tests: they throw at load time without `DATABASE_URL` / `JWT_SECRET`
 - `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`
 
@@ -56,10 +57,30 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
 5. **Scenarios** (`ScenarioModeler.jsx`) - Business scenario modeling
 
 #### Data Flow
-1. CSV upload → `data.cjs` processes via `clientAnalyzer.cjs`
+1. CSV upload → `data.cjs` processes via `clientAnalyzer.cjs`; the pure helpers in `utils/csvImport.cjs` read the years from the header and plan the revenue writes
 2. Client data stored in Zustand store with localStorage persistence
 3. Strategic value calculations use the single scorer in `utils/strategic.cjs` (re-exported by `clientAnalyzer.cjs`)
 4. AI endpoints require `ANTHROPIC_API_KEY` environment variable
+
+**CSV year rule (D5).** No revenue year is hard-coded anywhere. A CSV's revenue
+columns are its `YYYY Contracts` headers (case-insensitive), and the file is
+authoritative for exactly those years: an amount > 0 upserts the
+`(client, year)` row, a blank or `$0` cell deletes it, and years the file does
+not mention are left untouched. A 2026-only sheet therefore updates 2026 and
+keeps 2023–2025; a corrected sheet can still zero out a year. A file with no
+year columns writes no revenue and returns the validation warning
+``No `YYYY Contracts` columns found; revenue not changed.``
+`processCSVData` attaches the file's years to every client as `revenueYears`,
+and `POST /api/data/process-csv` returns them as `summary.revenueYears`.
+
+**Reporting year (D4).** The frontend derives `reportingYear`, the latest year
+in which any client has a revenue row with amount > 0, falling back to the
+current calendar year (`src/utils/revenue.js`). The store sets it in the same
+`set()` as `clients` (`setClients`, `fetchClients`) and clears it on logout.
+`getReportingYear()`, `getClientRevenue(client, year = reportingYear)` and
+`getTotalRevenue()` read it, and every "YYYY Revenue" label renders it. In
+January, before the new sheet is imported, the book still shows last year
+rather than $0; importing next year's sheet needs no code change.
 
 ## Strategic Value Calculation
 
@@ -80,10 +101,20 @@ conflictPenalty: High = 3, Medium = 1, Low = 0
 effort         = cadence weight (Daily 5 … As-Needed 0.5) × 1.5 if "handful"
 ```
 
-`mostRecentRevenue` is the latest year's revenue, resolved from either a
-`revenues` array (DB shape) or a `revenue` object (frontend shape). The helpers
-tolerate both snake_case and camelCase field names so all paths produce
-identical numbers.
+`mostRecentRevenue` is the latest year's revenue **for that client**, resolved
+from either a `revenues` array (DB shape) or a `revenue` object (frontend
+shape); `revenueObjectFromRows(revenues)` builds the object form for every year
+on file, and the API responses use it instead of a fixed list of years. The
+helpers tolerate both snake_case and camelCase field names so all paths produce
+identical numbers. `calculateStrategicValue(client)` with one argument reads
+`client.revenues`; passing the rows explicitly is equivalent.
+
+**Reporting year vs. score year (D6).** The score uses each client's own
+latest revenue year. The dashboard total, cards and charts use the book-wide
+reporting year (D4). They differ for a client with no row in the reporting
+year: its card shows $0 for that year while its strategic value still reflects
+its last year with revenue. Changing that is a scoring-semantics decision, not
+Tier 0 work.
 
 > The specific weights are under review. Adjust them in ONE place
 > (`utils/strategic.cjs`) and the change propagates everywhere.
@@ -126,7 +157,8 @@ identical numbers.
 - Error handling implemented throughout the stack
 
 ### Contract Status Logic
-Contract periods are automatically parsed to derive status:
+Contract periods are automatically parsed to derive status
+(`deriveContractStatus(contractPeriod, now = new Date())`):
 - 'IF' - In Force (current date within contract period)
 - 'D' - Done (contract expired) 
 - 'P' - Proposal (contract starts in future)

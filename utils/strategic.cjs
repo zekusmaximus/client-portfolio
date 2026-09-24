@@ -27,6 +27,10 @@
  * are absent, stickiness is derived from the legacy retention fields
  * (relationship_intensity → relationship_strength + renewal_probability) so the
  * score keeps working before/after the data migration.
+ *
+ * No year is hard-coded here. The score reads each client's own latest
+ * revenue year (docs/plans/tier-0.md, D6); the frontend's book-wide reporting
+ * year (D4) can differ for a client with no row in that year.
  */
 
 // Relative effort per client by contact cadence. Tunable.
@@ -76,6 +80,23 @@ function getMostRecentRevenue(client, revenues) {
   }
 
   return 0;
+}
+
+/**
+ * Revenue rows (DB shape) → `{ [year]: amount }` for every year on file.
+ * Skips the null row that `jsonb_agg` without a FILTER yields for a client
+ * with no revenue. Year-agnostic: nothing here knows which years exist.
+ */
+function revenueObjectFromRows(revenues) {
+  const revenue = {};
+  if (!Array.isArray(revenues)) return revenue;
+  for (const row of revenues) {
+    if (!row || row.year === null || row.year === undefined || row.year === '') continue;
+    const year = Number(row.year);
+    if (!Number.isInteger(year) || year <= 0) continue;
+    revenue[year] = parseFloat(row.revenue_amount) || 0;
+  }
+  return revenue;
 }
 
 /**
@@ -133,8 +154,11 @@ function getStickiness(client) {
 
 /**
  * Strategic value (0–10) for a single client: Value + Stickiness − Conflict.
+ * `revenues` is optional: when omitted, `client.revenues` (then the
+ * `client.revenue` object) is read, so the one-argument call scores the
+ * same as `calculateStrategicScores`.
  */
-function calculateStrategicValue(client, revenues = []) {
+function calculateStrategicValue(client, revenues) {
   const mostRecentRevenue = getMostRecentRevenue(client, revenues);
   const revenueScore = Math.min(10, (parseFloat(mostRecentRevenue) || 0) / 50000);
   const stickiness = getStickiness(client);
@@ -226,6 +250,7 @@ module.exports = {
   EFFORT_BY_CADENCE,
   HANDFUL_MULTIPLIER,
   getMostRecentRevenue,
+  revenueObjectFromRows,
   getEffort,
   getStickiness,
   calculateStrategicValue,

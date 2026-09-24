@@ -40,13 +40,15 @@ async function runBenchmark() {
     // 2. Generate Mock CSV Data
     console.log(`📝 Generating ${CSV_SIZE} client records...`);
     const csvData = [];
+    const year = new Date().getFullYear();
+    const yy = String(year).slice(-2);
     for (let i = 0; i < CSV_SIZE; i++) {
       csvData.push({
         CLIENT: `Client ${i} - ${Date.now()}`,
-        'Contract Period': '1/1/25-12/31/25',
-        '2023 Contracts': '$10,000',
-        '2024 Contracts': '$20,000',
-        '2025 Contracts': '$30,000',
+        'Contract Period': `1/1/${yy}-12/31/${yy}`,
+        [`${year - 2} Contracts`]: '$10,000',
+        [`${year - 1} Contracts`]: '$20,000',
+        [`${year} Contracts`]: '$30,000',
         'Practice Area': 'Government Relations',
         'Relationship Strength': '5',
         'Conflict Risk': 'Low',

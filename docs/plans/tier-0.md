@@ -80,7 +80,7 @@ Jeff can veto any of these before a session executes them. Sessions treat them a
 
 | WP | Title | Status | Branch / PR | Notes |
 |---|---|---|---|---|
-| WP0 | Quality gates and the crash fix | PR open | `claude/tier0-wp0-quality-gates`, [PR #10](https://github.com/zekusmaximus/client-portfolio/pull/10) | baseline lint was 104 problems in 32 files (97 errors, `.cjs` included), not the 100 in 3.1; all errors fixed, the 7 `exhaustive-deps` warnings remain by design (D3) |
+| WP0 | Quality gates and the crash fix | merged | `claude/tier0-wp0-quality-gates`, [PR #10](https://github.com/zekusmaximus/client-portfolio/pull/10) | baseline lint was 104 problems in 32 files (97 errors, `.cjs` included), not the 100 in 3.1; all errors fixed, the 7 `exhaustive-deps` warnings remain by design (D3) |
 | WP1 | Year-agnostic revenue | not started | | depends on WP0 |
 | WP2 | AI: stop the bleeding | not started | | depends on WP0 |
 | WP3 | Server hardening | not started | | depends on WP0 |

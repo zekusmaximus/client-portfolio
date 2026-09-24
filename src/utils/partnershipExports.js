@@ -310,7 +310,7 @@ export const exportPartnershipPDF = (partners, transitions, clients, getRevenueF
           <div class="section" style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #ddd;">
             <h2>Report Notes</h2>
             <ul>
-              <li>Revenue figures represent 2025 projections based on current data</li>
+              <li>Revenue figures are for the portfolio's reporting year (the latest year with revenue on file)</li>
               <li>Capacity calculations assume 30 clients = 100% capacity benchmark</li>
               <li>Strategic values rated on 1-10 scale (10 = highest strategic importance)</li>
               <li>This analysis is based on data as of ${new Date().toLocaleDateString()}</li>

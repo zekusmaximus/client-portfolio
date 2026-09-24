@@ -10,6 +10,8 @@ const {
   calculateStrategicScores,
   optimizePortfolio
 } = require('./clientAnalyzer.cjs');
+const { extractRevenueYears, headerKeys, planRevenueWrites } = require('./utils/csvImport.cjs');
+const { revenueObjectFromRows } = require('./utils/strategic.cjs');
 
 // Apply authentication middleware to all routes
 router.use(auth);
@@ -140,6 +142,9 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     });
     
     const clients = processCSVData(decodedCsvData);
+
+    // The years the file covers, from its `YYYY Contracts` headers (D5)
+    const revenueYears = extractRevenueYears(headerKeys(decodedCsvData));
     
     // Validate the processed data
     const validation = validateClientData(clients);
@@ -354,43 +359,48 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       insertedCount = insertedRows.length;
     }
 
-    // --- Pass 3: batch revenue DELETE + INSERT ---
-    // Collect all client IDs that have incoming revenue data
-    const revenueClientIds = [];
-    const allRevenueRows = []; // [clientId, year, amount]
-
-    for (const [lowerName, revenue] of revenueDataMap) {
-      const dbRow = clientResultMap.get(lowerName);
-      if (!dbRow) continue;
-      revenueClientIds.push(dbRow.id);
-      const validRevenues = Object.entries(revenue)
-        .filter(([, amount]) => amount && amount > 0)
-        .map(([year, amount]) => [parseInt(year), amount]);
-      for (const [year, amount] of validRevenues) {
-        allRevenueRows.push([dbRow.id, year, amount]);
+    // --- Pass 3: revenue writes, year-agnostic (D5) ---
+    // The file is authoritative for exactly the years its header names: an
+    // amount > 0 upserts the (client, year) row, a blank or 0 cell deletes it,
+    // and years absent from the file are untouched. History survives a
+    // single-year import; a corrected sheet can still zero out a year.
+    if (revenueYears.length === 0) {
+      validation.warnings.push('No `YYYY Contracts` columns found; revenue not changed.');
+    } else {
+      const revenueClients = [];
+      for (const [lowerName, revenue] of revenueDataMap) {
+        const dbRow = clientResultMap.get(lowerName);
+        if (!dbRow) continue;
+        revenueClients.push({ id: dbRow.id, revenue });
       }
-    }
+      const { upserts, deletes } = planRevenueWrites(revenueClients, revenueYears);
 
-    if (revenueClientIds.length > 0) {
-      await (await client).query(
-        'DELETE FROM client_revenues WHERE client_id = ANY($1::uuid[])',
-        [revenueClientIds]
-      );
-    }
-
-    if (allRevenueRows.length > 0) {
-      const params = [];
-      const valuePlaceholders = [];
-      let paramIndex = 1;
-      for (const [clientId, year, amount] of allRevenueRows) {
-        params.push(clientId, year, amount);
-        valuePlaceholders.push(`($${paramIndex}::uuid, $${paramIndex+1}::int, $${paramIndex+2}::numeric)`);
-        paramIndex += 3;
+      if (upserts.length > 0) {
+        const params = [];
+        const valuePlaceholders = [];
+        let paramIndex = 1;
+        for (const [clientId, year, amount] of upserts) {
+          params.push(clientId, year, amount);
+          valuePlaceholders.push(`($${paramIndex}::uuid, $${paramIndex+1}::int, $${paramIndex+2}::numeric)`);
+          paramIndex += 3;
+        }
+        // UNIQUE(client_id, year) in init-db.sql makes this a true upsert
+        await (await client).query(`
+          INSERT INTO client_revenues (client_id, year, revenue_amount)
+          VALUES ${valuePlaceholders.join(',')}
+          ON CONFLICT (client_id, year) DO UPDATE
+            SET revenue_amount = EXCLUDED.revenue_amount,
+                updated_at = CURRENT_TIMESTAMP
+        `, params);
       }
-      await (await client).query(`
-        INSERT INTO client_revenues (client_id, year, revenue_amount)
-        VALUES ${valuePlaceholders.join(',')}
-      `, params);
+
+      if (deletes.length > 0) {
+        await (await client).query(`
+          DELETE FROM client_revenues r
+          USING unnest($1::uuid[], $2::int[]) AS d(client_id, year)
+          WHERE r.client_id = d.client_id AND r.year = d.year
+        `, [deletes.map(([clientId]) => clientId), deletes.map(([, year]) => year)]);
+      }
     }
 
     await (await client).query('COMMIT');
@@ -403,6 +413,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
         totalClients: clientsWithScores.length,
         updatedClients: updatedCount,
         newClients: insertedCount,
+        revenueYears,
         totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
         statusBreakdown: {
           'Active': clientsWithScores.filter(c => c.status === 'Active' || c.status === 'IF').length,
@@ -597,15 +608,8 @@ router.get('/clients', async (req, res) => {
     
     // Transform database fields to frontend-expected field names
     const transformedClients = rows.map(client => {
-      // Build revenue object for 2023-2025
-      const revenue = { '2023': 0, '2024': 0, '2025': 0 };
-      if (Array.isArray(client.revenues)) {
-        client.revenues.forEach((r) => {
-          if (['2023', '2024', '2025'].includes(String(r.year))) {
-            revenue[r.year] = parseFloat(r.revenue_amount) || 0;
-          }
-        });
-      }
+      // Revenue by year for every row on file (year-agnostic)
+      const revenue = revenueObjectFromRows(client.revenues);
 
       return {
         ...client,
@@ -716,15 +720,8 @@ router.post('/clients', async (req, res) => {
 
     // Transform database fields to frontend-expected field names
     const transformedClients = rows.map(client => {
-      // Build revenue object for 2023-2025
-      const revenue = { '2023': 0, '2024': 0, '2025': 0 };
-      if (Array.isArray(client.revenues)) {
-        client.revenues.forEach((r) => {
-          if (['2023', '2024', '2025'].includes(String(r.year))) {
-            revenue[r.year] = parseFloat(r.revenue_amount) || 0;
-          }
-        });
-      }
+      // Revenue by year for every row on file (year-agnostic)
+      const revenue = revenueObjectFromRows(client.revenues);
 
       return {
         ...client,
@@ -852,15 +849,8 @@ router.put('/clients/:id', async (req, res) => {
 
     // Transform database fields to frontend-expected field names
     const transformedClients = rows.map(client => {
-      // Build revenue object for 2023-2025
-      const revenue = { '2023': 0, '2024': 0, '2025': 0 };
-      if (Array.isArray(client.revenues)) {
-        client.revenues.forEach((r) => {
-          if (['2023', '2024', '2025'].includes(String(r.year))) {
-            revenue[r.year] = parseFloat(r.revenue_amount) || 0;
-          }
-        });
-      }
+      // Revenue by year for every row on file (year-agnostic)
+      const revenue = revenueObjectFromRows(client.revenues);
 
       return {
         ...client,

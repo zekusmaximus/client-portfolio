@@ -26,6 +26,7 @@ import { practiceAreaMatchesSearch } from './utils/dataUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 
 const ClientListView = () => {
+  const reportingYear = usePortfolioStore((s) => s.getReportingYear());
   const {
     clients,
     partners,
@@ -334,7 +335,7 @@ const ClientListView = () => {
                 <div className="flex items-center gap-2">
                   <DollarSign className="h-4 w-4 text-green-500" />
                   <div>
-                    <p className="text-xs text-muted-foreground">2025 Revenue</p>
+                    <p className="text-xs text-muted-foreground">{reportingYear} Revenue</p>
                     <p className="font-semibold text-sm">${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
                   </div>
                 </div>

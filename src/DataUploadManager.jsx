@@ -56,6 +56,7 @@ const handleUpload = async () => {
             success: true,
             clientCount: response.clients.length,
             totalRevenue: response.summary.totalRevenue,
+            revenueYears: response.summary.revenueYears || [],
             validation: response.validation
           });
           await fetchClients(); // Refresh client data in the store
@@ -77,11 +78,12 @@ const handleUpload = async () => {
 };
 
   const expectedColumns = [
-    'CLIENT',
-    'Contract Period', 
-    '2023 Contracts',
-    '2024 Contracts', 
-    '2025 Contracts'
+    { name: 'CLIENT', note: 'client name' },
+    { name: 'Contract Period', note: 'for example 1/1/26-12/31/26' },
+    {
+      name: 'YYYY Contracts',
+      note: 'one column per year, for example 2025 Contracts and 2026 Contracts',
+    },
   ];
 
   return (
@@ -150,12 +152,25 @@ const handleUpload = async () => {
                   <CheckCircle className="h-4 w-4" />
                   <div>
                     <strong>Success!</strong> Processed {uploadResult.clientCount} clients with total revenue of ${uploadResult.totalRevenue.toLocaleString()}
+                    <div className="text-sm mt-1">
+                      Imported years: {uploadResult.revenueYears.length > 0 ? uploadResult.revenueYears.join(', ') : 'none'}
+                    </div>
                     {uploadResult.validation.issues.length > 0 && (
                       <div className="mt-2">
                         <strong>Issues found:</strong>
                         <ul className="list-disc list-inside text-sm mt-1">
                           {uploadResult.validation.issues.map((issue, index) => (
                             <li key={index}>{issue}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {uploadResult.validation.warnings && uploadResult.validation.warnings.length > 0 && (
+                      <div className="mt-2">
+                        <strong>Warnings:</strong>
+                        <ul className="list-disc list-inside text-sm mt-1">
+                          {uploadResult.validation.warnings.map((warning, index) => (
+                            <li key={index}>{warning}</li>
                           ))}
                         </ul>
                       </div>
@@ -177,20 +192,26 @@ const handleUpload = async () => {
             <p className="text-sm text-muted-foreground">
               Your CSV file should contain the following columns:
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2">
               {expectedColumns.map((column) => (
-                <div key={column} className="flex items-center gap-2 text-sm">
+                <div key={column.name} className="flex items-center gap-2 text-sm">
                   <CheckCircle className="h-3 w-3 text-green-500" />
-                  <code className="bg-muted px-2 py-1 rounded text-xs">{column}</code>
+                  <code className="bg-muted px-2 py-1 rounded text-xs">{column.name}</code>
+                  <span className="text-muted-foreground">{column.note}</span>
                 </div>
               ))}
             </div>
             <div className="mt-4 p-3 bg-muted rounded-lg">
               <p className="text-sm font-medium">Example CSV format:</p>
               <code className="text-xs block mt-1">
-                CLIENT,Contract Period,2023 Contracts,2024 Contracts,2025 Contracts<br/>
-                "Acme Corp","1/1/24-12/31/25","$50,000","$75,000","$100,000"
+                CLIENT,Contract Period,2025 Contracts,2026 Contracts<br/>
+                "Acme Corp","1/1/26-12/31/26","$75,000","$100,000"
               </code>
+              <p className="text-sm text-muted-foreground mt-3">
+                A file is authoritative only for the years in its header: a positive amount sets that year for the client,
+                a blank or $0 cell clears it, and years the file does not mention are left as they are.
+                Importing a 2026-only sheet updates 2026 and keeps every earlier year.
+              </p>
             </div>
           </div>
         </CardContent>

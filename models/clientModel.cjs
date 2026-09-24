@@ -1,5 +1,5 @@
 const db = require('../db.cjs');
-const { calculateStrategicScores } = require('../utils/strategic.cjs');
+const { calculateStrategicScores, revenueObjectFromRows } = require('../utils/strategic.cjs');
 
 /* List all clients, each with nested revenues array */
 exports.listWithRevenues = async () => {
@@ -50,15 +50,8 @@ exports.listWithMetrics = async () => {
  const clients = await exports.listWithRevenues();
 
  const enriched = clients.map((c) => {
-   // Build revenue object for 2023-2025
-   const revenue = { '2023': 0, '2024': 0, '2025': 0 };
-   if (Array.isArray(c.revenues)) {
-     c.revenues.forEach((r) => {
-       if (['2023', '2024', '2025'].includes(String(r.year))) {
-         revenue[r.year] = parseFloat(r.revenue_amount) || 0;
-       }
-     });
-   }
+   // Revenue by year for every row on file (year-agnostic)
+   const revenue = revenueObjectFromRows(c.revenues);
 
    return {
      ...c,
@@ -88,10 +81,7 @@ exports.getWithMetrics = async (clientId) => {
  const scored = calculateStrategicScores([
    {
      ...client,
-     revenue: client.revenues?.reduce((acc, r) => {
-       acc[r.year] = parseFloat(r.revenue_amount) || 0;
-       return acc;
-     }, { '2023': 0, '2024': 0, '2025': 0 }),
+     revenue: revenueObjectFromRows(client.revenues),
      timeCommitment: client.time_commitment || 40,
      relationshipStrength: client.relationship_strength || 5,
      conflictRisk: client.conflict_risk || 'Medium',
