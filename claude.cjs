@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const authenticateToken = require('./middleware/auth.cjs');
+const { aiUserLimiter, aiGlobalLimiter } = require('./middleware/rateLimit.cjs');
 const clientModel = require('./models/clientModel.cjs');
 const { generatePortfolioSummary } = require('./utils/strategic.cjs');
 const { complete, describeError } = require('./services/anthropic.cjs');
@@ -10,8 +11,11 @@ const { complete, describeError } = require('./services/anthropic.cjs');
 // AI_MODEL constant). The prompt builders below return { system, prompt }: the
 // persona paragraph is the system prompt, the rest is the single user turn.
 
-// Apply JWT auth to all claude routes
+// Apply JWT auth to all claude routes, then the AI budgets (D11): 30 calls per
+// partner per hour and 300 per day for the firm, shared with routes/scenarios.cjs.
 router.use(authenticateToken);
+router.use(aiUserLimiter);
+router.use(aiGlobalLimiter);
 
 /* -------------------------------------------------------------------------- */
 /*                                  ROUTES                                    */

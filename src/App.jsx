@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BarChart3, Target, Brain, Upload, Users } from 'lucide-react';
@@ -11,6 +11,7 @@ import ClientListView from './ClientListView';
 import ClientEnhancementForm from './ClientEnhancementForm';
 import PartnershipAnalytics from './PartnershipAnalytics';
 import LoginPage from './LoginPage';
+import ChangePasswordDialog from './ChangePasswordDialog';
 import './App.css';
 
 function App() {
@@ -23,6 +24,8 @@ function App() {
     logout,
     checkAuth
   } = usePortfolioStore();
+
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   const hasData = clients && clients.length > 0;
 
@@ -75,6 +78,9 @@ function App() {
                   </p>
                 </div>
               )}
+              <Button variant="ghost" onClick={() => setChangePasswordOpen(true)}>
+                Change password
+              </Button>
               <Button variant="outline" onClick={() => logout()}>
                 Logout
               </Button>
@@ -143,6 +149,8 @@ function App() {
 
       {/* Client Enhancement Modal */}
       <ClientEnhancementForm />
+
+      <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
 
       {/* Footer */}
       <footer className="border-t bg-muted/30 mt-12">

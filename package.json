@@ -14,7 +14,8 @@
     "security:audit-fix": "npm audit fix",
     "security:check": "node scripts/security-check.js",
     "deploy:check": "npm run lint && npm test && npm run build:prod",
-    "create:admin": "node create-admin.cjs"
+    "create:admin": "node create-admin.cjs",
+    "reset:password": "node scripts/reset-password.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.56.0",
@@ -27,6 +28,7 @@
     "dompurify": "^3.2.6",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.0",
     "express-validator": "^7.2.1",
     "isomorphic-dompurify": "^2.26.0",
     "jsonwebtoken": "^9.0.2",

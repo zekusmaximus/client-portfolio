@@ -6,86 +6,18 @@
  * This script creates a new administrator user with a securely hashed password.
  * It should be used to create the initial admin account after database setup.
  * 
- * Usage: node create-admin.js <username> <password>
+ * Usage: node create-admin.cjs <username> <password>
  * 
  * Security Features:
- * - Uses bcrypt with 12 salt rounds for password hashing
- * - Validates password strength requirements
+ * - Hashes with utils/hash.cjs (bcrypt, BCRYPT_SALT_ROUNDS, default 12)
+ * - Validates password strength requirements (utils/passwordPolicy.cjs)
  * - Prevents duplicate username creation
- * - Secure database connection handling
+ * - Connects through db.cjs (DATABASE_URL, DATABASE_SSL)
  */
 
-const bcrypt = require('bcrypt');
-const { Pool } = require('pg');
 require('dotenv').config();
-
-// Configuration
-const SALT_ROUNDS = 12;
-const MIN_PASSWORD_LENGTH = 8;
-
-/**
- * Validates password strength
- * @param {string} password - The password to validate
- * @returns {object} - Validation result with isValid boolean and errors array
- */
-function validatePassword(password) {
-    const errors = [];
-    
-    if (password.length < MIN_PASSWORD_LENGTH) {
-        errors.push(`Password must be at least ${MIN_PASSWORD_LENGTH} characters long`);
-    }
-    
-    if (!/[A-Z]/.test(password)) {
-        errors.push('Password must contain at least one uppercase letter');
-    }
-    
-    if (!/[a-z]/.test(password)) {
-        errors.push('Password must contain at least one lowercase letter');
-    }
-    
-    if (!/[0-9]/.test(password)) {
-        errors.push('Password must contain at least one number');
-    }
-    
-    if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
-        errors.push('Password must contain at least one special character');
-    }
-    
-    return {
-        isValid: errors.length === 0,
-        errors
-    };
-}
-
-/**
- * Validates username
- * @param {string} username - The username to validate
- * @returns {object} - Validation result with isValid boolean and errors array
- */
-function validateUsername(username) {
-    const errors = [];
-    
-    if (!username || username.trim().length === 0) {
-        errors.push('Username is required');
-    }
-    
-    if (username.length < 3) {
-        errors.push('Username must be at least 3 characters long');
-    }
-    
-    if (username.length > 50) {
-        errors.push('Username must be no more than 50 characters long');
-    }
-    
-    if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
-        errors.push('Username can only contain letters, numbers, underscores, and hyphens');
-    }
-    
-    return {
-        isValid: errors.length === 0,
-        errors
-    };
-}
+const { hash } = require('./utils/hash.cjs');
+const { validatePassword, validateUsername } = require('./utils/passwordPolicy.cjs');
 
 /**
  * Creates a new admin user in the database
@@ -93,7 +25,7 @@ function validateUsername(username) {
  * @param {string} password - The admin password (plain text)
  */
 async function createAdminUser(username, password) {
-    let pool;
+    let db;
     
     try {
         // Validate inputs
@@ -119,17 +51,15 @@ async function createAdminUser(username, password) {
             process.exit(1);
         }
         
-        // Create database connection
-        pool = new Pool({
-            connectionString,
-            ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-        });
+        // Loaded here, not at the top: db.cjs reads DATABASE_URL when it is
+        // first required, after main() may have overridden it.
+        db = require('./db.cjs');
         
         console.log('🔗 Connecting to database...');
         
         // Check if username already exists
         const existingUserQuery = 'SELECT id FROM users WHERE username = $1';
-        const existingUserResult = await pool.query(existingUserQuery, [username]);
+        const existingUserResult = await db.query(existingUserQuery, [username]);
         
         if (existingUserResult.rows.length > 0) {
             console.error(`❌ Username '${username}' already exists`);
@@ -140,7 +70,7 @@ async function createAdminUser(username, password) {
         console.log('🔐 Hashing password...');
         
         // Hash the password
-        const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+        const passwordHash = await hash(password);
         
         console.log('👤 Creating admin user...');
         
@@ -151,7 +81,7 @@ async function createAdminUser(username, password) {
             RETURNING id, username, created_at
         `;
         
-        const result = await pool.query(insertUserQuery, [username, passwordHash]);
+        const result = await db.query(insertUserQuery, [username, passwordHash]);
         const newUser = result.rows[0];
         
         console.log('✅ Admin user created successfully!');
@@ -180,8 +110,8 @@ async function createAdminUser(username, password) {
         
         process.exit(1);
     } finally {
-        if (pool) {
-            await pool.end();
+        if (db) {
+            await db.pool.end();
         }
     }
 }
@@ -242,4 +172,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { createAdminUser, validatePassword, validateUsername };
+module.exports = { createAdminUser };
