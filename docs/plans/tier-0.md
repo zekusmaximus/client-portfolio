@@ -16,7 +16,7 @@
 
 ### 0.2 Working agreement
 
-- One work package (WP) per branch and per pull request, in the order WP0 → WP1 → WP2 → WP3 → WP5. WP4 (backups) is independent and its artifacts can be produced in any session; Jeff installs them on the server.
+- One work package (WP) per branch and per pull request, in the order WP0 → WP1 → WP2 → WP3 → WP5. WP4 (backups) is independent and its artifacts can be produced in any session; Jeff installs them (section 7: a private repository and the Render dashboard, not a server).
 - Branch from `origin/main` after the previous WP has merged. Do not stack WPs on one branch.
 - Before starting: `npm ci`, then `npm run lint`, `npm test`, and `VITE_API_BASE_URL=https://gbacpod.com npm run build:prod` must all pass (after WP0 they will; before WP0, lint fails and there is no test script, which is expected).
 - Every WP ends with: gates green, `CLAUDE.md` updated where behaviour it documents changed, the status table in section 2 updated in the same PR, and a PR description that lists the expected outcomes from the WP and the evidence that each one holds.
@@ -70,7 +70,7 @@ Jeff can veto any of these before a session executes them. Sessions treat them a
 | D9 | Per-client transition plans are generated one request per client from the UI (concurrency 2) instead of one bulk request. | With a current model a plan takes 20 to 60 seconds; twenty clients in one HTTP request would exceed any sane proxy timeout. Also gives progress. |
 | D10 | Auth cookie `SameSite=Lax` in all environments; session length 7 days for both JWT and cookie. | Lax closes the cross-site POST vector and works for same-origin and same-site (subdomain) API placement. Seven days suits a "log on to glance" tool with six trusted users. |
 | D11 | Rate limits: login 20 per 15 min per IP and 5 failed per 15 min per username; AI endpoints 30 per hour per user and 300 per day globally. | The per-username limiter is what protects a password; the per-IP limit is loose because six partners may share one office IP. |
-| D12 | Backups: `pg_dump` custom format, encrypted with `age`, copied off-box by `rsync` (Hetzner Storage Box) or `rclone` (any object store), nightly via a systemd timer, 30-day local retention. | Client data leaves the box only encrypted; restore needs one private key kept in the password manager. |
+| D12 | Backups, in two layers. Layer 1: whatever Render provides for the database's instance type (backups, point-in-time recovery). Layer 2: a nightly `pg_dump --format=custom --no-owner --no-privileges` of the Render External Database URL (a read-only role preferred, `PGSSLMODE=require`), run by GitHub Actions in the private repository `zekusmaximus/client-portfolio-backups` and never in this one, with `postgresql-client-$PG_MAJOR` from apt.postgresql.org. Before anything is encrypted, the dump is restored into a throwaway `postgres:$PG_MAJOR` service container and the row count of every public table must equal production's; `users`, `clients` and `client_revenues` must exist and `users` must not be empty. Then `age` to one recipient, plaintext deleted, artifact kept 90 days. Schedule `0 7 * * *` plus `workflow_dispatch`. Replaces the VPS design (systemd timer, Hetzner Storage Box, 30-day local retention), 2026-09-24. | Production is a Render web service and Render PostgreSQL, so there is no server to run a timer on. This repository is public, so no job that touches production data or credentials may run in it. Client data leaves Render only encrypted, and a restore needs one private key kept in the password manager. A dump that has not restored with matching counts is never kept, so a bad backup fails loudly instead of being discovered during a restore. |
 | D13 | nginx serves `dist/` and proxies `/api/` to the Node process; Express does not serve static files. Page-level security headers live in nginx. | Matches what the code implies today (`express.static` points at a nonexistent path). Confirm with the server facts in WP5 before writing the config. |
 | D14 | The root-level status markdown files move to `docs/archive/` in WP5. | They mislead sessions; `CODE_REVIEW.md` in particular leads with an overruled finding. |
 
@@ -83,8 +83,8 @@ Jeff can veto any of these before a session executes them. Sessions treat them a
 | WP0 | Quality gates and the crash fix | merged | `claude/tier0-wp0-quality-gates`, [PR #10](https://github.com/zekusmaximus/client-portfolio/pull/10) | baseline lint was 104 problems in 32 files (97 errors, `.cjs` included), not the 100 in 3.1; all errors fixed, the 7 `exhaustive-deps` warnings remain by design (D3) |
 | WP1 | Year-agnostic revenue | merged | `claude/tier0-wp1-year-agnostic-revenue`, [PR #11](https://github.com/zekusmaximus/client-portfolio/pull/11) | no Postgres in the session container, so the database half of 4.4 is Jeff's on the server and `tests/strategic.test.mjs` stands in for the score regression; `calculateStrategicValue(client)` now honours `client.revenues` (argument resolution, the D6 formula is unchanged); `benchmark-csv.cjs` and one export footnote were hard-coded years that 4.1 missed |
 | WP2 | AI: stop the bleeding | deployed | `claude/tier0-wp2-ai-stop-the-bleeding`, [PR #12](https://github.com/zekusmaximus/client-portfolio/pull/12) | 5.1 line numbers were taken at `3c745a6` and had moved; where the plan and the code differed, the code won: (1) `createTransitionPlanPrompt`/`parseTransitionPlanResponse` live in the pure module `utils/transitionPlan.cjs`, because `routes/scenarios.cjs` loads `utils/jwt.cjs` through the auth middleware and cannot be imported from tests; (2) SDK 0.56.0 error constructors need a `Headers` instance, so the plan's `new Anthropic.RateLimitError(429, {}, 'x', {})` throws and the tests pass `new Headers()`; (3) `succession-scenario.tsx` moved to `src/components/succession/SuccessionScenario.tsx` because the 5.4 grep pattern `scenarios/succession` matched its own import path; (4) `.env.example` had no `ANTHROPIC_API_KEY` line to keep, so one was added with `AI_MODEL`; (5) Stage 1 holds partner ids, so the UI sends `stage1Data` as `{ selectedPartners: <names>, impactData }` rather than the whole Stage 1 object; (6) `apiErrorMessage()` was added to `src/api.js` (the plan said no change needed) for both AI callers; (7) `client-recommendations` keeps `client` (the name) in its response because the AI Advisor now remounts with store-held answers; `p-limit` is now unused and left for WP5's dependency sweep. No Postgres and no key in the container, so the live half of 5.4 is Jeff's after deploy |
-| WP3 | Server hardening | PR open | `claude/tier0-wp3-server-hardening`, [PR #13](https://github.com/zekusmaximus/client-portfolio/pull/13) | Hosting confirmed 2026-09-24: page on Netlify (gbacpod.com), API on Render (client-portfolio-backend.onrender.com) behind Render's proxy, Render PostgreSQL, env vars in the Render dashboard. **D10 deviation:** page and API are different sites, so a `Lax` cookie would never reach the API; the cookie is `SameSite=None; Secure` in production and `Lax` in development, 7 days for both JWT and cookie as D10 says, and the first 6.4 item reads `SameSite=None; Secure` in production. Where the plan and the code differed, the code won: (1) 6.1 line numbers were taken at `3c745a6`; `server.cjs` had moved down one line (WP2's import), the rest matched; (2) `callback(null, false)` and dropping the form parser do not stop a cross-site form POST from reaching a route, and the AI Advisor's analyze-portfolio and strategic-advice routes need no body (reproduced: a form POST from a foreign origin with a partner's cookie reached the Anthropic call), so `server.cjs` also answers POST/PUT/PATCH/DELETE from a foreign `Origin` with 403, in its own commit; (3) express-rate-limit 8.7.0 logs `ERR_ERL_KEY_GEN_IPV6` for a `keyGenerator` that falls back to `req.ip` without `ipKeyGenerator`, so the fallbacks use it, keys carry `user:`/`ip:` prefixes, and `loginIpLimiter` keeps the library's default key; with `X-Forwarded-For` present and `trust proxy` unset it logs `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and keeps running, it does not refuse as 6.2.6 says; (4) `pg` applies an `sslmode` in `DATABASE_URL` over the `ssl` option, so `.env.example` drops `?sslmode=require`; an unrecognised `DATABASE_SSL` stops startup; (5) the error handler keeps body-parser 4xx statuses (413 over 5 MB, 400 for malformed JSON) instead of answering 500; (6) the password policy returns errors for non-string input instead of throwing, and `create-admin.cjs` also hashes through `utils/hash.cjs`; (7) `.env.example` also gains `NODE_ENV` and `FRONTEND_URL`; the variables 6.2.9 removes lived only in the two deleted files; (8) express-rate-limit brings `ip-address` and moves `debug` 4.4.1 → 4.4.3; (9) section 9's manual deploy assumes a VPS: on Render the variables WP3 needs are already set and deploying is a redeploy. D11 consequence: a succession run over more than 30 clients in an hour lists the rest as failed with the 429 text. Verified end to end in the container on Postgres 16 (PR); the production `Secure` flag and `TRUST_PROXY_HOPS=1` behind Render's real proxy are Jeff's after deploy |
-| WP4 | Backups | not started | | artifacts only; Jeff installs |
+| WP3 | Server hardening | merged | `claude/tier0-wp3-server-hardening`, [PR #13](https://github.com/zekusmaximus/client-portfolio/pull/13) | Hosting confirmed 2026-09-24: page on Netlify (gbacpod.com), API on Render (client-portfolio-backend.onrender.com) behind Render's proxy, Render PostgreSQL, env vars in the Render dashboard. **D10 deviation:** page and API are different sites, so a `Lax` cookie would never reach the API; the cookie is `SameSite=None; Secure` in production and `Lax` in development, 7 days for both JWT and cookie as D10 says, and the first 6.4 item reads `SameSite=None; Secure` in production. Where the plan and the code differed, the code won: (1) 6.1 line numbers were taken at `3c745a6`; `server.cjs` had moved down one line (WP2's import), the rest matched; (2) `callback(null, false)` and dropping the form parser do not stop a cross-site form POST from reaching a route, and the AI Advisor's analyze-portfolio and strategic-advice routes need no body (reproduced: a form POST from a foreign origin with a partner's cookie reached the Anthropic call), so `server.cjs` also answers POST/PUT/PATCH/DELETE from a foreign `Origin` with 403, in its own commit; (3) express-rate-limit 8.7.0 logs `ERR_ERL_KEY_GEN_IPV6` for a `keyGenerator` that falls back to `req.ip` without `ipKeyGenerator`, so the fallbacks use it, keys carry `user:`/`ip:` prefixes, and `loginIpLimiter` keeps the library's default key; with `X-Forwarded-For` present and `trust proxy` unset it logs `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and keeps running, it does not refuse as 6.2.6 says; (4) `pg` applies an `sslmode` in `DATABASE_URL` over the `ssl` option, so `.env.example` drops `?sslmode=require`; an unrecognised `DATABASE_SSL` stops startup; (5) the error handler keeps body-parser 4xx statuses (413 over 5 MB, 400 for malformed JSON) instead of answering 500; (6) the password policy returns errors for non-string input instead of throwing, and `create-admin.cjs` also hashes through `utils/hash.cjs`; (7) `.env.example` also gains `NODE_ENV` and `FRONTEND_URL`; the variables 6.2.9 removes lived only in the two deleted files; (8) express-rate-limit brings `ip-address` and moves `debug` 4.4.1 → 4.4.3; (9) section 9's manual deploy assumes a VPS: on Render the variables WP3 needs are already set and deploying is a redeploy. D11 consequence: a succession run over more than 30 clients in an hour lists the rest as failed with the 429 text. Verified end to end in the container on Postgres 16 (PR); the production `Secure` flag and `TRUST_PROXY_HOPS=1` behind Render's real proxy are Jeff's after deploy. Status is `merged`, not `deployed`: the WP4 session (2026-09-24) could not run the `uptimeSeconds` check, because the session container's proxy refuses CONNECT to client-portfolio-backend.onrender.com (403) |
+| WP4 | Backups | PR open | `claude/tier0-wp4-backups` | **Re-scoped 2026-09-24 (D12 rewritten, section 7 rewritten):** the plan's design assumed a VPS (systemd timer, Hetzner Storage Box, local retention). Production is a Render web service with Render PostgreSQL, so no host exists to run a timer, and this repository is public, so its Actions logs and artifacts cannot hold production data or credentials. Layer 1 is Render's own backups; Layer 2 runs in the private repository `zekusmaximus/client-portfolio-backups` from copied files. Where the plan and the code differed, the code won: (1) the counts and the dump share one exported snapshot (psql holds a REPEATABLE READ transaction, `pg_dump --snapshot`), so a write during the run cannot cause a false mismatch; the self-test proves it and fails when `--snapshot` is removed; (2) on PostgreSQL 16 a non-superuser table owner cannot `GRANT pg_read_all_data` ("Only roles with the ADMIN option"), so `INSTALL.md` falls back to table-level `SELECT` grants, verified to back up and to refuse writes; (3) beyond the brief, the script refuses a non-empty restore target (which also keeps a misconfigured `RESTORE_CHECK_URL` from writing into production), requires `pg_dump`, production and the restore-check server to share a major version, and refuses an `age` private key in `AGE_RECIPIENT` without printing it; (4) render.com and docs.github.com were unreachable from the session (proxy 403), so every Render-specific step reads "confirm in the Render dashboard" with the documentation URL, and no Render plan or retention numbers are stated; (5) `deploy/backup/.gitattributes` forces LF, so a copy made on Windows still runs under bash. Verified in the container on PostgreSQL 16; CI runs the self-test on 16, 17 and 18. Jeff's: instance type, key pair, private repository, secret and variables, first run, restore drill |
 | WP5 | Deployment as code, docs, cleanup | not started | | needs server facts (5.1) |
 
 Status values: `not started`, `in progress (session date)`, `PR open`, `merged`, `deployed`, `verified on gbacpod.com`.
@@ -460,54 +460,58 @@ Rewriting the prompts, sending the whole book with stickiness/effort/partner dat
 
 ## 7. WP4: Backups
 
-**Effort:** half a session to produce the artifacts; about one hour of Jeff's time to install and run the restore drill.
+**Re-scoped 2026-09-24.** The first version of this section assumed a VPS: a systemd timer, an `rsync` or `rclone` copy to a Hetzner Storage Box, 30 days of local retention. Production has no such server. The API is a Render web service and the database is Render PostgreSQL (`CLAUDE.md`, Environment Configuration), and this repository is public, so its Actions logs and artifacts cannot touch production data or credentials. D12 records the replacement decision; this section describes what was built.
+**Effort:** one session for the artifacts; about an hour of Jeff's time to install (`deploy/backup/INSTALL.md`) and run the first restore drill (`deploy/backup/RESTORE.md`).
 **Expected outcomes:**
 
-- Every night an encrypted `pg_dump` of the production database lands off-box; the last 30 days are also kept locally.
+- Every night an encrypted `pg_dump` of the production database lands off-box: outside Render, as a workflow artifact in the private repository `zekusmaximus/client-portfolio-backups`, kept 90 days.
 - A documented restore has been performed once, into a scratch database, and the row counts matched production.
-- The two secrets that a rebuild would need (the `age` private key and the `.env` values) are in the firm's password manager.
+- The two secrets that a rebuild would need (the `age` private key and the server's environment values, which live in the Render dashboard) are in the firm's password manager.
 - A bad deploy, a disk failure, or a fat-finger delete costs at most one day of edits.
 
-### 7.1 Deliverables (a session produces these in `deploy/backup/`)
+### 7.1 Design
 
-1. **`pg-backup.sh`:**
+- **Layer 1: Render.** Whatever Render provides for the database's instance type (backups, point-in-time recovery). Nothing is installed; `INSTALL.md` step 1 has Jeff confirm the instance type and its features in the dashboard, and says what to do if it is Free. Render-specific facts are cited by URL and confirmed in the dashboard, not restated.
+- **Layer 2: a nightly logical backup in GitHub Actions**, in the private repository only, at `0 7 * * *` (07:00 UTC, about 3 am Eastern) and on `workflow_dispatch`. `deploy/backup/backup.yml` runs `deploy/backup/pg-backup.sh`. Both files are copied into the private repository, so the job that holds production credentials never runs code fetched from this public one. The job:
+  1. installs `postgresql-client-$PG_MAJOR` from apt.postgresql.org (`PG_MAJOR` is a repository variable read off the Render dashboard) and `age`;
+  2. in one REPEATABLE READ transaction, counts the rows of every table in the public schema of production (secret `BACKUP_DATABASE_URL`, the External Database URL, preferably a read-only role, `PGSSLMODE=require`) and runs `pg_dump --format=custom --no-owner --no-privileges --snapshot=<that transaction's snapshot>`, so the counts describe exactly what the dump holds;
+  3. fails if `users`, `clients` or `client_revenues` is missing or `users` is empty (a dump of the wrong database), or if `pg_dump`, production and the restore-check server are not the same major version;
+  4. restores the plaintext dump into an empty database on a throwaway `postgres:$PG_MAJOR` service container and requires identical counts for every table;
+  5. only then encrypts the dump with `age` to one recipient (variable `AGE_RECIPIENT`; the private key exists only in the password manager), deletes the plaintext, and uploads `client_portfolio_<UTC stamp>.dump.age` as an artifact with `retention-days: 90`.
+- **Failure signal:** any error exits non-zero, a trap deletes the plaintext and any partial output, and no artifact is uploaded. GitHub's failure email is the alarm. A run that never starts sends no email; the quarterly drill (RESTORE.md (f)) checks the latest run's date.
+- **Recovery point:** at most one day from Layer 2; finer where Layer 1 offers point-in-time recovery.
 
-   ```bash
-   #!/usr/bin/env bash
-   # Nightly encrypted Postgres backup. Config in /etc/client-portfolio/backup.env:
-   #   DATABASE_URL=postgres://...          (a read-only role is fine)
-   #   BACKUP_DIR=/var/backups/client-portfolio
-   #   AGE_RECIPIENT=age1...                (public key; private key lives in the password manager)
-   #   REMOTE=u123456@u123456.your-storagebox.de:client-portfolio/   (rsync target; or set RCLONE_REMOTE=remote:bucket/path)
-   #   KEEP_DAYS=30
-   set -euo pipefail
-   source /etc/client-portfolio/backup.env
-   umask 077
-   mkdir -p "$BACKUP_DIR"
-   STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-   OUT="$BACKUP_DIR/client_portfolio_$STAMP.dump.age"
-   pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" | age -r "$AGE_RECIPIENT" > "$OUT.tmp"
-   test "$(stat -c %s "$OUT.tmp")" -gt 1024
-   mv "$OUT.tmp" "$OUT"
-   find "$BACKUP_DIR" -name '*.dump.age' -mtime +"$KEEP_DAYS" -delete
-   if [ -n "${RCLONE_REMOTE:-}" ]; then rclone copy "$BACKUP_DIR" "$RCLONE_REMOTE" --include '*.dump.age'
-   else rsync -a -e 'ssh -p 23' "$BACKUP_DIR"/ "$REMOTE"; fi
-   echo "backup ok $OUT"
-   ```
+### 7.2 Deliverables (in this repository)
 
-   (Port 23 is Hetzner Storage Box's SSH port; make it a variable.) Never use `--delete` on the remote side.
+| File | What it is |
+|---|---|
+| `deploy/backup/pg-backup.sh` | the backup (bash, `set -euo pipefail`, `umask 077`, configuration from environment variables only, never prints a connection string) |
+| `deploy/backup/backup.yml` | the workflow Jeff copies into the private repository's `.github/workflows/`; not under `.github/workflows/` here |
+| `deploy/backup/selftest.sh` | end-to-end self-test against a throwaway server with synthetic data |
+| `.github/workflows/backup-selftest.yml` | runs the self-test on PostgreSQL 16, 17 and 18 for pull requests and pushes to `main` that touch `deploy/backup/**`, `init-db.sql` or the workflow; no secrets, no artifacts, no connection to Render |
+| `deploy/backup/INSTALL.md` | Jeff's steps in PowerShell: instance type, optional read-only role, external access, key pair, private repository, secret and variables, first run |
+| `deploy/backup/RESTORE.md` | download, decrypt, scratch restore, count comparison, production restore on Render (Render's path first, then from a dump), quarterly drill table |
+| `deploy/backup/.gitattributes` | LF line endings, so the files still run under bash after a Windows copy |
 
-2. **`client-portfolio-backup.service`** (`Type=oneshot`, `ExecStart=/usr/local/bin/pg-backup.sh`, `User=` the app user or `postgres`) and **`client-portfolio-backup.timer`** (`OnCalendar=*-*-* 07:00:00 UTC`, roughly 3 am Eastern; `Persistent=true`).
-3. **`RESTORE.md`:** (a) fetch the latest `.dump.age`; (b) `age -d -i key.txt file.dump.age > file.dump`; (c) `createdb client_portfolio_restoretest && pg_restore --no-owner --dbname client_portfolio_restoretest file.dump`; (d) `psql client_portfolio_restoretest -c 'select count(*) from clients; select count(*) from client_revenues; select max(updated_at) from clients'`; (e) to restore for real: stop the app service, rename the live database, `createdb`, `pg_restore`, start the app, check `/api/health`; (f) quarterly drill checklist with a date table.
-4. **`INSTALL.md`:** `apt install age rsync` (or `rclone`), generate the key pair (`age-keygen -o key.txt`; put `key.txt` in the password manager, keep only the public key on the server), create `/etc/client-portfolio/backup.env` (mode 600), copy the script and units, `systemctl enable --now client-portfolio-backup.timer`, run `systemctl start client-portfolio-backup.service` once and check `journalctl -u client-portfolio-backup`.
-5. A recommendation, not a script: enable Hetzner's server backups or snapshots as a second, independent layer, and add `.env` and the `age` key to the password manager today.
+### 7.3 Tests
 
-### 7.2 Acceptance (Jeff, on the server)
+`deploy/backup/selftest.sh` seeds `init-db.sql` plus synthetic rows, backs them up with an `age` key generated at runtime, decrypts and restores the output, and checks the counts. It also checks that a write during the dump does not cause a false mismatch. Each failure path must exit non-zero with its own message, leave no `.dump.age` and no plaintext, and print no connection string or private key: unreachable database, wrong password (when a password-checking server is available), missing variable, invalid recipient, a private key given as the recipient, restore target equal to the source, empty source, source without users, `pg_dump` failing inside the snapshot, a non-empty restore target, a count mismatch, and output that is not `age`. `shellcheck` covers both scripts; `actionlint` covers both workflows.
 
-- [ ] `systemctl list-timers | grep client-portfolio-backup` shows the next run.
-- [ ] After a manual run, the file exists locally and on the remote, and `journalctl` shows "backup ok".
-- [ ] Restore drill performed per `RESTORE.md`; counts match; the scratch database dropped afterwards.
+### 7.4 Acceptance (Jeff)
+
+- [ ] Instance type, PostgreSQL major version and Layer 1 features confirmed in the Render dashboard (`INSTALL.md` step 1) and written into section 2; a Free instance upgraded.
+- [ ] Key pair generated; the private key is in the password manager and `INSTALL.md` step 4's round trip printed `round trip ok`.
+- [ ] `zekusmaximus/client-portfolio-backups` exists, is private, and holds `pg-backup.sh`, `.github/workflows/backup.yml` and `.gitattributes`.
+- [ ] Secret `BACKUP_DATABASE_URL` (a read-only role where Render allows one) and variables `PG_MAJOR` and `AGE_RECIPIENT` set; artifact retention at least 90 days; failure emails on.
+- [ ] First manual run green, its log shows `row counts match`, and the artifact downloaded.
+- [ ] Restore drill per `RESTORE.md` (a) to (d): counts match the run's log; first row of the drill table filled in.
+- [ ] The Render environment values are in the password manager.
+- [ ] The next scheduled run is green.
 - [ ] Section 2 status set to `verified on gbacpod.com` with the drill date.
+
+### 7.5 Not in scope
+
+A second copy outside GitHub, monitoring beyond GitHub's failure email, and anything in WP5.
 
 ---
 
