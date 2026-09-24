@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,7 @@ const DataUploadManager = () => {
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState(null);
   
-  const { setClients, fetchClients } = usePortfolioStore();
+  const { fetchClients } = usePortfolioStore();
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -27,22 +27,6 @@ const DataUploadManager = () => {
       setError('Please select a valid CSV file');
       setFile(null);
     }
-  };
-
-  const parseCSV = (csvText) => {
-    const lines = csvText.split('\n');
-    const headers = lines[0].split(',').map(header => header.trim().replace(/"/g, ''));
-    
-    return lines.slice(1)
-      .filter(line => line.trim())
-      .map(line => {
-        const values = line.split(',').map(value => value.trim().replace(/"/g, ''));
-        const row = {};
-        headers.forEach((header, index) => {
-          row[header] = values[index] || '';
-        });
-        return row;
-      });
   };
 
 const handleUpload = async () => {

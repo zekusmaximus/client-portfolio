@@ -3,23 +3,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
 import {
   Target,
-  Users,
   TrendingUp,
   AlertTriangle,
   BarChart3,
-  ArrowRight,
-  CheckCircle,
-  DollarSign,
-  Flame
+  CheckCircle
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
-import { LOBBYISTS } from './constants';
 import { apiClient } from './api';
 import SuccessionScenario from './components/scenarios/succession-scenario';
 
@@ -27,7 +20,7 @@ const ScenarioModeler = () => {
   const { clients } = usePortfolioStore();
   const [activeTab, setActiveTab] = useState('succession');
 
-  const [departingLobbyists, setDepartingLobbyists] = useState([]);
+  const [departingLobbyists] = useState([]);
   const [scenarioParams, setScenarioParams] = useState({
     targetRevenue: 500000,
     riskTolerance: 50,
@@ -55,8 +48,9 @@ const ScenarioModeler = () => {
     };
   }, [clients, hasData]);
 
-  // Analyze impact of departing lobbyists
-  const departureAnalysis = useMemo(() => {
+  // Analyze impact of departing lobbyists.
+  // Nothing renders this yet; WP2 (docs/plans/tier-0.md, 5.2) removes it with the Growth tab.
+  const _departureAnalysis = useMemo(() => {
     if (departingLobbyists.length === 0) return null;
 
     // Clients affected by any departing lobbyist

@@ -11,7 +11,6 @@ import {
   Edit,
   DollarSign,
   Target,
-  Shield,
   Building,
   Trash2,
   User,

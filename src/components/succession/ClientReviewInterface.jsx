@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,20 +12,16 @@ import {
   Users,
   CheckCircle,
   AlertTriangle,
-  Clock,
   ArrowRight,
   Edit3,
-  MessageSquare,
   Calendar,
-  Filter,
   Search,
-  Settings,
   Bot,
   Loader2,
   ChevronDown,
   ChevronRight,
   Target,
-  FileText,
+  Save,
   Send
 } from 'lucide-react';
 import usePortfolioStore from '../../portfolioStore';
@@ -415,7 +411,7 @@ const TransitionPlanCard = ({ client, plan, onUpdatePlan, onApprovePlan, onRejec
 };
 
 // Client Triage Grid Component
-const ClientTriageGrid = ({ clients, filters, selectedClients, onSelectClient, onSelectAll, transitionPlans, onUpdatePlan, onApprovePlan, onRejectPlan }) => {
+const ClientTriageGrid = ({ clients, selectedClients, onSelectClient, onSelectAll, transitionPlans, onUpdatePlan, onApprovePlan, onRejectPlan }) => {
   const [expandedClients, setExpandedClients] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [riskFilter, setRiskFilter] = useState('all');

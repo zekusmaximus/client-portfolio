@@ -11,7 +11,6 @@ import {
   User, 
   Lightbulb,
   AlertCircle,
-  Clock,
   Sparkles
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';

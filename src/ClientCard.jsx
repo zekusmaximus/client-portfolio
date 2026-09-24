@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Card, CardHeader, CardContent } from './components/ui/card';
 import { Badge } from './components/ui/badge';
 import usePortfolioStore from './portfolioStore';
@@ -101,8 +101,7 @@ export default function ClientCard({ client }) {
     client_originator,
     lobbyist_team,
     status,
-    strategicValue,
-    revenues
+    strategicValue
   } = client;
 
   const strategicValueNum = parseFloat(strategicValue) || 0;

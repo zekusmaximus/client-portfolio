@@ -18,7 +18,7 @@ export const VALIDATION_RULES = {
     required: true,
     minLength: 1,
     maxLength: 255,
-    pattern: /^[a-zA-Z0-9\s\-\.,&'()\/]+$/,
+    pattern: /^[a-zA-Z0-9\s\-.,&'()/]+$/,
     errorMessages: {
       required: 'Client name is required',
       minLength: 'Client name must be at least 1 character',
@@ -63,7 +63,7 @@ export const VALIDATION_RULES = {
   primary_lobbyist: {
     required: false,
     maxLength: 255,
-    pattern: /^[a-zA-Z\s\-'\.]*$/,
+    pattern: /^[a-zA-Z\s\-'.]*$/,
     errorMessages: {
       maxLength: 'Primary lobbyist name must not exceed 255 characters',
       pattern: 'Primary lobbyist name contains invalid characters'
@@ -73,7 +73,7 @@ export const VALIDATION_RULES = {
   client_originator: {
     required: false,
     maxLength: 255,
-    pattern: /^[a-zA-Z\s\-'\.]*$/,
+    pattern: /^[a-zA-Z\s\-'.]*$/,
     errorMessages: {
       maxLength: 'Client originator name must not exceed 255 characters',
       pattern: 'Client originator name contains invalid characters'
@@ -101,8 +101,6 @@ export const VALIDATION_RULES = {
 // Validate individual field
 export const validateField = (fieldName, value, rules = VALIDATION_RULES[fieldName]) => {
   if (!rules) return null;
-  
-  const errors = [];
   
   // Required validation
   if (rules.required && (!value || (typeof value === 'string' && !value.trim()) || (Array.isArray(value) && value.length === 0))) {
@@ -171,7 +169,7 @@ export const validateField = (fieldName, value, rules = VALIDATION_RULES[fieldNa
 };
 
 // Validate revenue entry
-export const validateRevenueEntry = (revenue, index) => {
+export const validateRevenueEntry = (revenue, _index) => {
   const errors = {};
   const currentYear = new Date().getFullYear();
   
@@ -262,7 +260,7 @@ export const getFieldError = (fieldName, value, currentErrors = {}) => {
   if (error) {
     return { ...currentErrors, [fieldName]: error };
   } else {
-    const { [fieldName]: removed, ...rest } = currentErrors;
+    const { [fieldName]: _removed, ...rest } = currentErrors;
     return rest;
   }
 };

@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Users,
@@ -26,11 +25,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   Cell,
-  BarChart,
-  Bar,
   PieChart,
-  Pie,
-  Legend
+  Pie
 } from 'recharts';
 import usePortfolioStore from '../../portfolioStore';
 import { formatClientName } from '../../utils/textUtils';
@@ -39,13 +35,6 @@ import {
   getRelationshipTypeColor, 
   groupClientsBySuccessionRisk 
 } from '../../utils/successionUtils';
-
-// Risk level colors for heat map
-const RISK_COLORS = {
-  1: '#22c55e', 2: '#22c55e', 3: '#22c55e', // Low risk - Green
-  4: '#f59e0b', 5: '#f59e0b', 6: '#f59e0b', // Medium risk - Orange  
-  7: '#ef4444', 8: '#ef4444', 9: '#ef4444', 10: '#ef4444' // High risk - Red
-};
 
 const PRACTICE_AREA_COLORS = {
   'Healthcare': '#8884d8',
@@ -384,8 +373,6 @@ const ClientCategorization = ({ affectedClients, onClientSelect }) => {
     { key: 'medium', label: 'Moderate Risk', clients: riskGroups.medium, color: 'yellow', bgColor: 'bg-yellow-50' },
     { key: 'low', label: 'Low Risk', clients: riskGroups.low, color: 'green', bgColor: 'bg-green-50' }
   ];
-
-  const activeClients = categories.find(cat => cat.key === activeCategory)?.clients || [];
 
   return (
     <Card>
