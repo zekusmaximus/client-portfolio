@@ -1,15 +1,14 @@
 import { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Brain, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import usePortfolioStore from '../portfolioStore';
 import { formatClientName, formatPartnerName } from '../utils/textUtils';
 
-const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading }) => {
+const RedistributionModeler = ({ model, onModelChange }) => {
   const {
     partners,
     partnershipTransition,
@@ -249,22 +248,6 @@ const RedistributionModeler = ({ model, onModelChange, onRequestAI, aiLoading })
             </div>
           </div>
         )}
-
-        {/* AI Optimization Button */}
-        <div className="pt-4 border-t">
-          <Button 
-            className="w-full" 
-            variant="outline"
-            onClick={onRequestAI}
-            disabled={aiLoading || departingPartners.length === 0 || remainingPartners.length === 0}
-          >
-            <Brain className="h-4 w-4 mr-2" />
-            {aiLoading ? 'Optimizing...' : 'AI Optimize Redistribution'}
-          </Button>
-          <p className="text-xs text-gray-500 mt-2 text-center">
-            Use AI to optimize redistribution based on client needs, partner expertise, and capacity constraints
-          </p>
-        </div>
 
         {/* Warnings */}
         {redistributionPreview.some(p => getCapacityWarning(p)) && (

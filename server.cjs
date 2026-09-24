@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 require('dotenv').config();
 const db = require('./db.cjs');
+const { isConfigured, AI_MODEL } = require('./services/anthropic.cjs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -137,14 +138,10 @@ app.get('/api/health', async (req, res) => {
     health.status = 'DEGRADED';
   }
 
-  // Check Anthropic API key
-  const hasApiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || process.env.OPENAI_API_KEY;
-  if (hasApiKey) {
-    health.services.anthropic = 'configured';
-  } else {
-    health.services.anthropic = 'not configured';
-    if (health.status === 'OK') health.status = 'DEGRADED';
-  }
+  // AI: one client and one model constant, both owned by services/anthropic.cjs
+  health.services.anthropic = isConfigured() ? 'configured' : 'not configured';
+  health.services.model = AI_MODEL;
+  if (!isConfigured() && health.status === 'OK') health.status = 'DEGRADED';
 
   res.json(health);
 });

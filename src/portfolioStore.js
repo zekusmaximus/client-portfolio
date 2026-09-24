@@ -3,6 +3,9 @@ import { persist } from 'zustand/middleware';
 import { apiClient } from './api';
 import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
 import { computeReportingYear, revenueForYear } from './utils/revenue';
+
+// AI Advisor answers start empty and go back to empty on logout.
+const EMPTY_AI_RESULTS = { portfolioAnalysis: null, strategicAdvice: null, clientRecommendations: null };
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
@@ -22,6 +25,12 @@ const usePortfolioStore = create(
       analysisError: null,
       analytics: null,
       
+      // AI Advisor answers (WP2): kept in the store rather than the component so
+      // switching tabs (which unmounts the tab content) does not discard a paid
+      // answer. Not persisted (see partialize); cleared on logout.
+      aiResults: { ...EMPTY_AI_RESULTS },
+      aiError: null,
+
       // Optimization state
       optimization: null,
       optimizationParams: {
@@ -227,6 +236,10 @@ const usePortfolioStore = create(
       
       setCurrentView: (view) => set({ currentView: view }),
 
+      // AI Advisor answers: one slot per action (portfolioAnalysis, strategicAdvice, clientRecommendations)
+      setAiResult: (key, data) => set((state) => ({ aiResults: { ...state.aiResults, [key]: data } })),
+      setAiError: (aiError) => set({ aiError }),
+
       // Authentication actions
       login: async (username, password) => {
         try {
@@ -259,7 +272,9 @@ const usePortfolioStore = create(
             clients: [],
             reportingYear: null,
             clientsLoading: false,
-            fetchError: null
+            fetchError: null,
+            aiResults: { ...EMPTY_AI_RESULTS },
+            aiError: null
           });
         }
       },
