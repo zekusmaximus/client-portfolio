@@ -11,6 +11,12 @@ const {
   calculateStrategicValue,
   calculateStrategicScores,
 } = require('./utils/strategic.cjs');
+const {
+  extractRevenueYears,
+  headerKeys,
+  parseAmount,
+  revenueYearOfHeader,
+} = require('./utils/csvImport.cjs');
 
 // Helper function to decode HTML entities
 function decodeHTMLEntities(text) {
@@ -30,16 +36,16 @@ function decodeHTMLEntities(text) {
 /**
  * Derive contract status based on contract period and current date
  * @param {string} contractPeriod - Format: "M/D/YY-M/D/YY", "Expired M/D/YY", or "expires M/D/YY"
+ * @param {Date} [now] - Date to evaluate against; defaults to today, pass one for deterministic tests
  * @returns {string} Status: 'IF' (In Force), 'D' (Done), 'P' (Proposal), 'H' (Hold)
  */
-function deriveContractStatus(contractPeriod) {
+function deriveContractStatus(contractPeriod, now = new Date()) {
   if (!contractPeriod || typeof contractPeriod !== 'string') {
     return 'H'; // Hold for invalid data
   }
 
   try {
-    // Use current date: July 12, 2025 as specified in requirements
-    const currentDate = new Date();
+    const currentDate = now instanceof Date ? now : new Date(now);
     
     // Handle "Expired" format
     if (contractPeriod.toLowerCase().startsWith('expired')) {
@@ -128,7 +134,11 @@ function optimizePortfolio(clients, _maxCapacity = 2000) {
 }
 
 /**
- * Process raw CSV data into client objects
+ * Process raw CSV data into client objects.
+ *
+ * Revenue years are read from the file's `YYYY Contracts` headers (D5): the
+ * `revenue` object carries exactly those years, and the sorted list is
+ * attached to every client as `revenueYears`.
  * @param {Array} csvData - Raw CSV data from Papaparse
  * @returns {Array} Processed client objects
  */
@@ -137,18 +147,26 @@ function processCSVData(csvData) {
     return [];
   }
 
+  // The file's revenue columns: one `YYYY Contracts` header per year
+  const headers = headerKeys(csvData);
+  const revenueYears = extractRevenueYears(headers);
+  const columnByYear = {};
+  for (const header of headers) {
+    const year = revenueYearOfHeader(header);
+    if (year !== null && !(year in columnByYear)) columnByYear[year] = header;
+  }
+
   return csvData
     .filter(row => row.CLIENT && row.CLIENT.trim()) // Filter out empty rows
     .map(row => {
       const clientName = decodeHTMLEntities(row.CLIENT.trim());
       const contractPeriod = row['Contract Period'] || '';
       
-      // Parse revenue data
-      const revenue = {
-        2023: parseFloat(row['2023 Contracts']?.replace(/[$,]/g, '')) || 0,
-        2024: parseFloat(row['2024 Contracts']?.replace(/[$,]/g, '')) || 0,
-        2025: parseFloat(row['2025 Contracts']?.replace(/[$,]/g, '')) || 0
-      };
+      // Revenue for exactly the years the file covers
+      const revenue = {};
+      for (const year of revenueYears) {
+        revenue[year] = parseAmount(row[columnByYear[year]]);
+      }
       
       // Generate UUID (simple version for demo)
       const id = 'client_' + Math.random().toString(36).substr(2, 9);
@@ -159,6 +177,7 @@ function processCSVData(csvData) {
         contractPeriod,
         status: deriveContractStatus(contractPeriod),
         revenue,
+        revenueYears: [...revenueYears],
         // Default enhancement fields
         practiceArea: [],
         relationshipStrength: 5,
@@ -183,13 +202,13 @@ function validateClientData(clients) {
   const warnings = [];
   
   clients.forEach((client, index) => {
-    // Check for zero revenue
-    const totalRevenue = (client.revenue?.['2023'] || 0) + 
-                        (client.revenue?.['2024'] || 0) + 
-                        (client.revenue?.['2025'] || 0);
-    
-    if (totalRevenue === 0) {
-      warnings.push(`Client "${client.name}" has zero revenue across all years`);
+    // Check for zero revenue across the years the file covered
+    const revenue = client.revenue && typeof client.revenue === 'object' ? client.revenue : {};
+    const importedYears = Object.keys(revenue);
+    const totalRevenue = importedYears.reduce((sum, year) => sum + (parseFloat(revenue[year]) || 0), 0);
+
+    if (importedYears.length > 0 && totalRevenue === 0) {
+      warnings.push(`Client "${client.name}" has zero revenue across all imported years`);
     }
     
     // Check for malformed contract periods

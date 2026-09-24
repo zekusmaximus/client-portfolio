@@ -2,12 +2,14 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient } from './api';
 import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
+import { computeReportingYear, revenueForYear } from './utils/revenue';
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
       // Client data - fetched from server, not persisted locally
       clients: [],
       originalClients: [], // Keep original data for comparison
+      reportingYear: null, // D4: latest year with any revenue row > 0; set with clients, null when logged out
       clientsLoading: false,
       fetchError: null,
       
@@ -72,7 +74,7 @@ const usePortfolioStore = create(
       // Actions
       setClients: (clients) => {
         const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
-        set({ clients: enhancedClients });
+        set({ clients: enhancedClients, reportingYear: computeReportingYear(enhancedClients) });
       },
 
       // Fetch clients from backend
@@ -84,7 +86,12 @@ const usePortfolioStore = create(
           const response = await apiClient.get('/data/clients');
           const clients = response.clients || [];
           const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
-          set({ clients: enhancedClients, clientsLoading: false, fetchError: null });
+          set({
+            clients: enhancedClients,
+            reportingYear: computeReportingYear(enhancedClients),
+            clientsLoading: false,
+            fetchError: null
+          });
         } catch (err) {
           console.error('Failed to fetch clients', err);
           
@@ -98,6 +105,7 @@ const usePortfolioStore = create(
           set({ 
             clients: [], 
             clientsLoading: false, 
+            reportingYear: null,
             fetchError: 'Unable to connect to server. Please try again later or add clients manually.' 
           });
         }
@@ -249,6 +257,7 @@ const usePortfolioStore = create(
             user: null,
             isAuthenticated: false,
             clients: [],
+            reportingYear: null,
             clientsLoading: false,
             fetchError: null
           });
@@ -642,15 +651,17 @@ const usePortfolioStore = create(
         return state.clients.filter(client => client.status === status);
       },
       
-      // Helper function to get 2025 revenue from revenues array
-      getClientRevenue: (client) => {
-        if (client.revenues && Array.isArray(client.revenues) && client.revenues.length > 0) {
-          // Find 2025 revenue specifically
-          const revenue2025 = client.revenues.find(rev => String(rev.year) === '2025');
-          return parseFloat(revenue2025?.revenue_amount) || 0;
-        }
-        return 0;
+      // Reporting year (D4): the latest year in which any client has a revenue
+      // row with amount > 0; falls back to the current calendar year.
+      getReportingYear: () => {
+        const state = get();
+        return state.reportingYear ?? computeReportingYear(state.clients);
       },
+
+      // Revenue for one client in the reporting year, or in an explicit year.
+      // Existing one-argument call sites keep working.
+      getClientRevenue: (client, year = get().reportingYear) =>
+        revenueForYear(client, year ?? get().getReportingYear()),
 
       getTotalRevenue: () => {
         const state = get();
@@ -668,6 +679,7 @@ const usePortfolioStore = create(
       
       // Reset functions
       resetUpload: () => set({ 
+        reportingYear: null,
         clients: [], 
         originalClients: [],
         uploadError: null,

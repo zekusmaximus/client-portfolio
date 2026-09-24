@@ -19,6 +19,7 @@ import { apiClient } from './api';
 import { getEnhancedClientCount } from './utils/clientUtils';
 
 const AIAdvisor = () => {
+  const reportingYear = usePortfolioStore((s) => s.getReportingYear());
   const { clients, fetchClients, clientsLoading } = usePortfolioStore();
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isLoading, setIsLoading] = useState(false);
@@ -410,7 +411,7 @@ const AIAdvisor = () => {
                       </Badge>
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      <p>2025 Revenue: ${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
+                      <p>{reportingYear} Revenue: ${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
                       <p>Strategic Value: {(client.strategicValue || 0).toFixed(1)}</p>
                       {client.practiceArea && client.practiceArea.length > 0 && (
                         <p>Practice Areas: {client.practiceArea.join(', ')}</p>

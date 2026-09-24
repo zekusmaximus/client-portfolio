@@ -33,6 +33,7 @@ import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/succ
 import DataUploadManager from './DataUploadManager';
 
 const DashboardView = () => {
+  const reportingYear = usePortfolioStore((s) => s.getReportingYear());
   const {
     clients,
     fetchError,
@@ -102,7 +103,7 @@ const DashboardView = () => {
     };
     
     clients.forEach(client => {
-      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client); // This already returns 2025 revenue only
+      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client); // reporting-year revenue (D4)
       const clientStatus = client.status || 'Prospect'; // Default to Prospect if status is null
 
       // Always use the status mapping to ensure consistency between legacy codes and new labels
@@ -382,7 +383,7 @@ const DashboardView = () => {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <BarChart3 className="h-5 w-5" />
-                  2025 Revenue by Contract Status
+                  {reportingYear} Revenue by Contract Status
                 </CardTitle>
               </CardHeader>
               <CardContent>
