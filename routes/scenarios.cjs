@@ -1,12 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth.cjs');
+const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs');
 const { handleValidationErrors, sanitizeRequestBody } = require('../middleware/validation.cjs');
 const { complete, describeError } = require('../services/anthropic.cjs');
 const { createTransitionPlanPrompt, parseTransitionPlanResponse } = require('../utils/transitionPlan.cjs');
 
-// Apply middleware
+// Apply middleware: auth first, then the AI budgets (D11) shared with claude.cjs
 router.use(auth);
+router.use(aiUserLimiter);
+router.use(aiGlobalLimiter);
 router.use(sanitizeRequestBody);
 
 /* -------------------------------------------------------------------------- */

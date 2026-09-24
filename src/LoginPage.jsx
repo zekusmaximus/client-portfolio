@@ -3,6 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import usePortfolioStore from './portfolioStore';
+import { apiErrorMessage } from './api';
 
 /**
  * LoginPage – renders a simple authentication form, handles credential
@@ -33,11 +34,9 @@ const LoginPage = () => {
       // Login successful - the store will update the authentication state
       // and App.jsx will handle the navigation
     } catch (err) {
-      const message =
-        err?.response?.data?.message ||
-        err?.message ||
-        'Login failed. Please try again.';
-      setError(message);
+      // The server's own text: "Invalid credentials", or the rate limiter's
+      // "Too many requests. Try again later." (429) verbatim.
+      setError(apiErrorMessage(err, 'Login failed. Please try again.'));
     } finally {
       setLoading(false);
     }
