@@ -1,0 +1,69 @@
+# Self-test for deploy/backup/pg-backup.sh (tier-0 WP4). Synthetic data only:
+# no secrets, no artifacts, no connection to Render. The production backup runs
+# in a separate private repository (deploy/backup/INSTALL.md), never here.
+name: backup-selftest
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/backup/**'
+      - 'init-db.sql'
+      - '.github/workflows/backup-selftest.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/backup/**'
+      - 'init-db.sql'
+      - '.github/workflows/backup-selftest.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: selftest (PostgreSQL ${{ matrix.pg }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [16, 17, 18]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      PG_MAJOR: ${{ matrix.pg }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Same install step as deploy/backup/backup.yml; keep the two in step.
+      - name: Install postgresql-client-${{ matrix.pg }} (apt.postgresql.org) and age
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends "postgresql-client-$PG_MAJOR" age
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" --version
+
+      - name: shellcheck
+        run: shellcheck deploy/backup/*.sh
+
+      - name: Back up synthetic data, decrypt, restore, and run the failure paths
+        run: PATH="/usr/lib/postgresql/$PG_MAJOR/bin:$PATH" bash deploy/backup/selftest.sh
