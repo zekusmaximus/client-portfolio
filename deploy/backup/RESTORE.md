@@ -10,8 +10,10 @@ Two layers exist (see `INSTALL.md`):
   90 days, each restore-checked before it was encrypted. Sections (a) to (d)
   to open one; (e2) to put it into production.
 
-Everything runs in Windows PowerShell with `age`, `gh` and Docker Desktop
-(`INSTALL.md` step 0), plus the age private key from the password manager.
+Everything runs in PowerShell 7 with `age`, `gh` and Docker Desktop
+(`INSTALL.md` step 0), plus the age private key from the password manager; in
+Windows PowerShell 5.1, drop `-MaskInput`. Use one window throughout: the
+commands reuse `$repo`, `$major`, `$run`, `$work` and `$enc`.
 
 ```powershell
 $repo = 'zekusmaximus/client-portfolio-backups'
@@ -35,20 +37,40 @@ one: `gh run list --repo $repo --workflow backup.yml --status success --limit 40
 
 ## (b) Decrypt
 
-Copy the `AGE-SECRET-KEY-1...` line from the password manager, then:
-
 ```powershell
 $key = Join-Path $work 'key.txt'
-[IO.File]::WriteAllText($key, (Get-Clipboard -Raw).Trim() + "`n")
-Set-Clipboard -Value ' '
 $enc = (Get-ChildItem $work -Filter *.dump.age | Select-Object -First 1).FullName
-age -d -i $key -o "$work\client_portfolio.dump" $enc
-Remove-Item $key
 ```
 
+Run the next line on its own. At its prompt, paste the `AGE-SECRET-KEY-1...`
+line copied from the password manager (asterisks show) and press Enter. The
+key goes in at a prompt because copying a command from this page replaces
+whatever is on the clipboard.
+
+```powershell
+$k = Read-Host -MaskInput 'Paste the AGE-SECRET-KEY line from the password manager'
+```
+
+```powershell
+[IO.File]::WriteAllText($key, $k.Trim() + "`n")
+Remove-Variable k
+Set-Clipboard -Value ' '
+age -d -i $key -o "$work\client_portfolio.dump" $enc
+Remove-Item $key
+Test-Path "$work\client_portfolio.dump"
+```
+
+`age` prints nothing when it succeeds, and the last line must print `True`.
 If Windows clipboard history is on, delete the key from it (Win+V). The
 decrypted `client_portfolio.dump` holds the whole book in plain form: keep it
 in `$work`, and delete `$work` when you finish ("Clean up" below).
+
+Go on to (c) straight away. In the first drill the decrypted file disappeared
+from `$work` within minutes, before it was restored; the cause was not
+established, and an antivirus quarantine is the likely one. If `pg_restore`
+then reports `could not open input file`, check Windows Security, Virus &
+threat protection, Protection history (without restoring or allowing
+anything), and decrypt again.
 
 ## (c) Restore into a scratch database
 
@@ -169,4 +191,5 @@ each drill here, and in `docs/plans/tier-0.md` section 2 for the first one.
 
 | Date | Backup run (id, UTC stamp) | Restored without errors | Counts match the run log | Minutes | By | Notes |
 |---|---|---|---|---|---|---|
+| 2026-09-24 | 36047210847, `20260924T191851Z` | yes, on the second decryption | yes: `client_revenues` 251, `clients` 100, `users` 7 | about 30, including troubleshooting | Jeff | first drill, the day the job was installed; the first decrypted copy disappeared from disk before `pg_restore` (cause not established) |
 | | | | | | | |

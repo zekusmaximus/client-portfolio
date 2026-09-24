@@ -19,8 +19,10 @@ You copy the two files the job needs into the private repository (step 5), so
 the job holding the production credentials never runs code fetched from the
 public one.
 
-Everything below runs in Windows PowerShell on your machine. Allow about an
-hour, including the restore drill in `RESTORE.md`.
+Everything below runs in PowerShell 7 on your machine; in Windows PowerShell
+5.1, drop `-MaskInput` from the `Read-Host` lines. Run steps 2 to 7 in one
+window: later steps reuse `$major`, `$backupUrl`, `$recipient` and `$repo`.
+Allow about an hour, including the restore drill in `RESTORE.md`.
 
 ## 0. Tools
 
@@ -30,12 +32,24 @@ winget install --id GitHub.cli -e
 winget install --id Docker.DockerDesktop -e
 ```
 
-Open a new PowerShell window afterwards so `age`, `gh` and `docker` are on
-`PATH`, start Docker Desktop once, and sign in to GitHub:
+Start Docker Desktop once and wait until it reports the engine running. The
+installers change `PATH` for windows opened afterwards, and a new Windows
+Terminal tab can keep the old one, so either close every terminal window and
+open a fresh one, or reload `PATH` in place:
+
+```powershell
+$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+age --version; gh --version; docker version --format '{{.Server.Version}}'
+```
+
+All three must print a version. Then sign in to GitHub and add the `workflow`
+permission, without which GitHub refuses a push that creates
+`.github/workflows/backup.yml` (step 5):
 
 ```powershell
 gh auth login
-age --version; gh --version; docker version --format '{{.Server.Version}}'
+gh auth refresh -h github.com -s workflow
+gh auth status      # "Token scopes" must include 'workflow'
 ```
 
 If winget reports that an id is not found, `winget search age`,
@@ -160,36 +174,54 @@ connection timeout, this setting is the cause.
 
 ## 4. Generate the age key pair
 
+Run these one box at a time.
+
 ```powershell
 $dir = Join-Path $env:TEMP 'cp-backup-key'
 New-Item -ItemType Directory -Force $dir | Out-Null
 age-keygen -o "$dir\key.txt"
 $recipient = age-keygen -y "$dir\key.txt"
 $recipient                 # the public key, age1...; it goes into AGE_RECIPIENT
-Get-Content "$dir\key.txt"
 ```
 
-Store the `AGE-SECRET-KEY-1...` line in the password manager as
-"client-portfolio backup age key", with the public key in the same entry's
-notes. That entry is the only copy of the private key: never put it in a
-repository, a secret, a variable or an email. Losing it makes every backup
-unreadable.
-
-Prove the stored copy works before deleting the file: delete it, copy the
-`AGE-SECRET-KEY-1...` line from the password manager, and decrypt a test
-message with it.
+`age-keygen` prints `Public key: age1...`. The private key is the third line
+of `key.txt`, `AGE-SECRET-KEY-1...`. Copy it to the clipboard:
 
 ```powershell
-Remove-Item "$dir\key.txt"
-# copy the AGE-SECRET-KEY-1... line from the password manager, then:
-[IO.File]::WriteAllText("$dir\key.txt", (Get-Clipboard -Raw).Trim() + "`n")
-'round trip ok' | age -r $recipient -o "$dir\test.age"
-age -d -i "$dir\key.txt" "$dir\test.age"   # prints: round trip ok
-Remove-Item -Recurse -Force $dir
-Set-Clipboard -Value ' '
+Get-Content "$dir\key.txt" | Select-Object -Last 1 | Set-Clipboard
 ```
 
-If Windows clipboard history is on, also delete the entry from it (Win+V).
+Paste it into a new password-manager entry, "client-portfolio backup age key",
+as the password, and put the public key in the entry's notes. That entry is
+the only copy of the private key: never put it in a repository, a secret, a
+variable or an email. Losing it makes every backup unreadable.
+
+Prove the stored copy works while the original file still exists. Run the
+next line on its own; at its prompt, paste the key copied from the password
+manager (asterisks show) and press Enter. The key goes in at a prompt because
+copying a command from this page replaces whatever is on the clipboard.
+
+```powershell
+$k = Read-Host -MaskInput 'Paste the AGE-SECRET-KEY line from the password manager'
+```
+
+```powershell
+[IO.File]::WriteAllText("$dir\from-pm.txt", $k.Trim() + "`n")
+Remove-Variable k
+'round trip ok' | age -r $recipient -o "$dir\test.age"
+age -d -i "$dir\from-pm.txt" "$dir\test.age"   # prints: round trip ok
+```
+
+If it prints an error instead, the entry is wrong: fix it from `key.txt` and
+repeat. Then delete the files and clear the clipboard and the screen:
+
+```powershell
+Remove-Item -Recurse -Force $dir
+Set-Clipboard -Value ' '
+Clear-Host
+```
+
+If Windows clipboard history is on, also delete the key from it (Win+V).
 
 ## 5. Create the private repository and copy the files
 
