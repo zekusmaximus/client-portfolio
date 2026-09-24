@@ -77,9 +77,9 @@ set WP4 to `verified on gbacpod.com`.
 ## 2. Optional: a read-only role for the backup
 
 The job needs only to read. A role that cannot write means a leaked
-`BACKUP_DATABASE_URL` cannot damage the book. Skip this step if the first
-command fails with `permission denied to create role`; the job then uses the
-database's own URL.
+`BACKUP_DATABASE_URL` cannot damage the book. If `CREATE ROLE` below fails
+with `permission denied to create role`, skip the rest of this step; the job
+then uses the database's own URL.
 
 Copy the database's External Database URL from its page in the dashboard,
 then:
@@ -272,7 +272,7 @@ restored counts, `row counts match for N tables`, and the file name,
 | `cannot connect ...` with `password authentication failed` | the secret's user or password; set `BACKUP_DATABASE_URL` again |
 | `pg_dump is PostgreSQL X but the source server is Y` | Render upgraded the database: `gh variable set PG_MAJOR --body Y` |
 | `AGE_RECIPIENT is not a valid age recipient` | set it again to the `age1...` public key |
-| `AGE_RECIPIENT holds an age PRIVATE key` | the private key was stored as a variable, which other collaborators and the settings page can read: delete the variable, generate a new pair (step 4), set the new public key |
+| `AGE_RECIPIENT holds an age PRIVATE key` | the private key was stored as a variable, and variables are not secret (the settings page shows them, and any log that printed one would show it): delete the variable, treat that key as exposed, generate a new pair (step 4) and set the new public key |
 | `table users is missing` or `the users table is empty` | the secret points at another database |
 | `pg_restore into the restore-check database failed` | the dump contains something the stock `postgres` image cannot restore; the lines above it name the object |
 | `row counts of the restored dump differ` | the counts table above it shows which table; run the workflow again, and if it repeats, the dump is not faithful and needs investigating |
