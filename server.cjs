@@ -68,6 +68,24 @@ app.use(cors({
   origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin)),
   credentials: true
 }));
+
+// Refuse state-changing requests from a foreign browser origin. CORS only hides
+// the response: a cross-site form POST still reaches the route, with the
+// partner's SameSite=None cookie, and the AI Advisor's analyze-portfolio and
+// strategic-advice routes need no body at all, so dropping the form parser
+// alone would still let any website spend the AI budget. Browsers send Origin on
+// every cross-origin POST, PUT and DELETE; one that is neither allowlisted nor
+// this server's own origin is refused before any route runs. Requests without
+// Origin (curl, server to server) do not carry a partner's browser cookie.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  if (SAFE_METHODS.has(req.method) || !origin || allowedOrigins.includes(origin)) return next();
+  if (origin === `${req.protocol}://${req.get('host')}`) return next();
+  console.warn(JSON.stringify({ event: 'origin_refused', origin, method: req.method, path: req.originalUrl }));
+  res.status(403).json({ success: false, error: 'Cross-origin request refused' });
+});
+
 app.use(cookieParser());
 // JSON only: no form-body parser, so a cross-site HTML form cannot submit a
 // body the routes will read (CSRF). 5 MB is ample for a CSV import.
