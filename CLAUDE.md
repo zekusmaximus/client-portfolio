@@ -21,11 +21,13 @@ data scoping by design).
 ### Backend Development
 - `npm start` or `node server.cjs` - Start Express.js backend server on port 5000
 - Backend runs on http://localhost:5000 with CORS enabled for development
+- `npm run create:admin -- <username> <password>` - add a partner (`create-admin.cjs`; refuses an existing username)
+- `npm run reset:password -- <username> <newPassword>` - reset a forgotten password (`scripts/reset-password.cjs`); prints `Updated 1 user`, or `No such user` and exits 1. On Render, run it from the web service's Shell tab, which has the service's environment; locally, set `DATABASE_URL` to the Render database's External Database URL and `DATABASE_SSL=no-verify`. Both scripts validate with `utils/passwordPolicy.cjs` and connect through `db.cjs`
 
 ### Testing
 - `npm test` - Run the test suite with Node's built-in runner (`node --test "tests/**/*.test.mjs"`); no test dependencies to install
 - Tests live in `tests/*.test.mjs` and use `node:test` + `node:assert/strict`. Import CommonJS modules with a default import (`import strategic from '../utils/strategic.cjs'`)
-- Current suites: `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
+- Current suites: `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site), `password-policy` and `session-ttl` (WP3). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
 - Never import `db.cjs`, `data.cjs`, `models/*`, or `utils/jwt.cjs` from tests: they throw at load time without `DATABASE_URL` / `JWT_SECRET`
 - `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`
 
@@ -43,7 +45,7 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
 ### Backend (Node.js + Express)
 - **Server**: Express.js server in `server.cjs` (port 5000)
 - **API Routes**:
-  - `/api/auth/*` - login, logout, session (`routes/auth.cjs`)
+  - `/api/auth/*` - login, logout, me, change-password (`routes/auth.cjs`)
   - `/api/data/*` - Data processing endpoints (`data.cjs`)
   - `/api/claude/analyze-portfolio`, `/api/claude/strategic-advice`, `/api/claude/client-recommendations` - the AI Advisor tab (`claude.cjs`)
   - `POST /api/scenarios/transition-plan` - one succession transition plan for one client (`routes/scenarios.cjs`)
@@ -131,6 +133,11 @@ Tier 0 work.
 - `routes/scenarios.cjs` - `POST /transition-plan`; its prompt and parser are the pure helpers in `utils/transitionPlan.cjs`
 - `data.cjs` - Data processing API endpoints
 - `clientAnalyzer.cjs` - Core business logic and calculations
+- `routes/auth.cjs` - login, logout, me, change-password; the auth cookie attributes
+- `config/session.cjs` - `SESSION_TTL` / `SESSION_TTL_MS`, one lifetime for the JWT and the cookie
+- `middleware/rateLimit.cjs` - the four limiters (D11)
+- `utils/passwordPolicy.cjs` - `validatePassword`, `validateUsername` (pure, importable from tests)
+- `db.cjs` - the one `pg` pool (`DATABASE_URL`, `DATABASE_SSL`); pool errors are logged, never fatal
 
 ### Frontend Structure
 - `src/App.jsx` - Main application with tab navigation
@@ -140,15 +147,36 @@ Tier 0 work.
 
 ## Environment Configuration
 
-### Required Environment Variables
+### Hosting (confirmed 2026-09-24; the runbook is WP5)
+- **Frontend:** built and served by Netlify (project `client-portfolio2`, auto-deployed from `main`) at https://gbacpod.com. `VITE_API_BASE_URL` is a Netlify build variable.
+- **Backend:** a Render web service running `node server.cjs` behind Render's proxy, with a Render PostgreSQL database; the browser reaches it at https://client-portfolio-backend.onrender.com. The page and the API are therefore different sites (this shapes the cookie, below).
+- Server environment variables live in the Render dashboard, not in a `.env` file; changing one, or restarting, means a redeploy. Render has `FRONTEND_URL=https://gbacpod.com`, `TRUST_PROXY_HOPS=1`, `SESSION_TTL=7d` and `DATABASE_SSL=no-verify` set.
+- The plan's nginx/VPS assumptions (D13, section 9, WP5) predate these facts.
+
+### Server Environment Variables (`.env.example` locally, the Render dashboard in production)
+- `NODE_ENV` - `production` on Render: Secure SameSite=None cookie, HTTPS redirect, `FRONTEND_URL` as the CORS allowlist
+- `PORT` - Server port (defaults to 5000)
+- `DATABASE_URL` - Postgres connection string. Do not put `?sslmode=` in it: `pg` reads it after the `ssl` option, so it overrides `DATABASE_SSL`
+- `DATABASE_SSL` - `false` (default, local Postgres), `no-verify` (TLS without certificate checks; Render), or `verify` (with `DATABASE_SSL_CA=<path>` for a private CA). Any other value stops the server at startup
+- `JWT_SECRET` - signs the session JWT; rotating it signs every partner out
+- `SESSION_TTL` - one lifetime for the JWT and the cookie, `<number><d|h|m>`, default `7d` (D10); an invalid value falls back to `7d` with a startup warning
+- `FRONTEND_URL` - the one browser origin allowed in production (`https://gbacpod.com`); unset means no browser origin is allowed, with a startup warning
+- `TRUST_PROXY_HOPS` - proxies in front of the app (Render: `1`; default `0`). `req.ip`, and so every IP-keyed rate limit, depends on it: too low and all partners share the proxy's address, too high and a client can choose its own IP with `X-Forwarded-For`
+- `BCRYPT_SALT_ROUNDS` - default 12
 - `ANTHROPIC_API_KEY` - For AI functionality (Claude API); unset means every AI button reports "not configured"
 - `AI_MODEL` - model id for every AI call (default `claude-opus-5`; `claude-sonnet-5` is the cheaper alternative, D7)
-- `PORT` - Server port (defaults to 5000)
-- `NODE_ENV` - Environment mode
 
 ### Vite Configuration
-- API base URL configured as `http://localhost:5000` in `vite.config.js`
+- `src/api.js` prefixes every call with `import.meta.env.VITE_API_BASE_URL`. Production builds require an `https://` value (`vite.config.js` enforces it). For `npm run dev`, start Vite with `VITE_API_BASE_URL=http://localhost:5000`: without it the frontend calls relative `/api`, which Vite does not proxy (the `http://localhost:5000` fallback in `vite.config.js` only defines `process.env.VITE_API_BASE_URL`, which `api.js` does not read)
 - Path alias `@` points to `./src`
+
+### Auth, sessions and rate limits (WP3)
+- **Cookie:** `authToken`, `HttpOnly`, `Path=/`, `Max-Age` = `SESSION_TTL` (604800 s for `7d`), the same span as the JWT's `exp`. In production `SameSite=None; Secure`, because the API (onrender.com) and the page (gbacpod.com) are different sites and a `Lax` cookie would never reach the API; in development `SameSite=Lax` (page and API are both on localhost, one site). This deviates from D10, which assumed a same-origin API. `res.clearCookie` gets the same attributes.
+- **Cross-site requests:** no form-body parser (`express.json` only, 5 MB; a larger body answers 413), CORS allows only the allowlist (`FRONTEND_URL` in production, `localhost:3000`/`5173` in development) and answers other origins without CORS headers rather than with an error, and `server.cjs` refuses POST/PUT/PATCH/DELETE whose `Origin` is neither allowlisted nor the server's own with 403 (`origin_refused` log line). The origin check is what stops a cross-site form from triggering the body-less AI Advisor POSTs; do not remove it while the cookie is `SameSite=None`.
+- **Rate limits (D11, `middleware/rateLimit.cjs`, express-rate-limit 8):** login 20 per 15 min per IP (`/login` and `/change-password` share it) and 5 failed per 15 min per username (case-folded; successful logins do not count); AI 30 per hour per partner and 300 per day for the firm, one budget across `/api/claude/*` and `/api/scenarios/*`, mounted after `authenticateToken`. Over the limit: 429 `{ success: false, error: 'Too many requests. Try again later.' }`, which the login page shows verbatim, and a `rate_limited` log line with the limiter and key. Counters are in memory: a redeploy resets them. A custom `keyGenerator` that falls back to the IP must wrap it in `ipKeyGenerator` (the library logs `ERR_ERL_KEY_GEN_IPV6` otherwise). Five wrong passwords lock that username for 15 minutes, including for its owner.
+- **Passwords:** `POST /api/auth/change-password` `{ currentPassword, newPassword }` (the header's "Change password" dialog): 200, 400 with the policy's errors, 401 for a wrong current password. `npm run reset:password` for a forgotten one. Neither ends sessions already issued (the JWT is stateless); rotate `JWT_SECRET` to sign everyone out.
+- **Database:** a dropped connection logs `{"event":"pg_pool_error",...}`; the pool reconnects on the next query and the process keeps running.
+- **Health:** `GET /api/health` returns `status`, `timestamp`, `uptimeSeconds`, `environment` and `services` (`database`, `anthropic`, `model`).
 
 ## Development Notes
 
