@@ -198,6 +198,11 @@ describe('withPeopleFields (P6)', () => {
     assert.deepEqual(out.lobbyist_team, ['Kevin']);
     assert.equal(out.client_originator, 'Steve');
   });
+
+  test('the retired status column never reaches a response (P13)', () => {
+    assert.ok(!('status' in withPeopleFields({ ...joined, status: 'IF' })));
+    assert.ok(!('status' in withPeopleFields({ ...joined, lead_id: null, lead_name: null, status: 'Prospect' })));
+  });
 });
 
 describe('src/utils/people.js pickers', () => {

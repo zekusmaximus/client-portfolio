@@ -27,7 +27,7 @@ const template = readFileSync(new URL('../public/client-book-template.csv', impo
 const serverUrl = process.env.SCHEMA_TEST_SERVER_URL;
 const execFileAsync = promisify(execFile);
 
-const HEADER = 'CLIENT,Contract Period,2024 Contracts,2025 Contracts,2026 Contracts,Lead,Second Chair,Originator,Credit To Firm,Stickiness,Cadence,Handful,Conflict Risk,Practice Area,Notes';
+const HEADER = 'CLIENT,2024 Contracts,2025 Contracts,2026 Contracts,Lead,Second Chair,Originator,Credit To Firm,Stickiness,Cadence,Handful,Conflict Risk,Practice Area,Notes';
 const HEALTH = 'Example Health Network';
 const ENERGY = 'Example Energy Coalition';
 
@@ -186,7 +186,6 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     assert.equal(health.conflict_risk, 'Low');
     assert.deepEqual(health.practice_area, ['Healthcare']);
     assert.equal(health.notes, '');
-    assert.equal(health.status, 'IF');
     assert.deepEqual(await revenue(HEALTH), { 2024: 60000, 2025: 66000, 2026: 72000 });
 
     const energy = await clientRow(ENERGY);
@@ -209,6 +208,10 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     const { body: list } = await call('GET', '/api/data/clients');
     const apiHealth = list.clients.find((c) => c.name === HEALTH);
     assert.equal(apiHealth.lead.name, 'Kevin');
+    // Contract status is retired (P13): no client the API returns carries it
+    assert.equal(list.clients.length, 2);
+    assert.ok(list.clients.every((c) => !('status' in c)), 'no client has a status key');
+    assert.deepEqual(body.clients.flatMap((c) => Object.keys(c).filter((key) => /status|contract/i.test(key))), []);
     assert.equal(apiHealth.secondChair.name, 'Jay');
     assert.equal(apiHealth.originator.name, 'Jay');
     assert.equal(apiHealth.client_originator, 'Firm');
@@ -229,10 +232,10 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     const before = await snapshot();
     const { status, body } = await importCsv([
       HEADER,
-      `${HEALTH},1/1/26-12/31/26,,,"$99,000",Jhon,,,,5,Weekly,,Low,Healthcare,`,
-      `${ENERGY},7/1/25-6/30/27,,,"$1",Paula,,,,9,Monthly,,Medium,Energy,`,
-      'Brand New Client,1/1/26-12/31/26,,,"$5,000",Kevin,,,,3,Monthly,,Low,Other,',
-      `${HEALTH.toUpperCase()},1/1/26-12/31/26,,,"$1",Kevin,,,,5,Weekly,,Low,Healthcare,`,
+      `${HEALTH},,,"$99,000",Jhon,,,,5,Weekly,,Low,Healthcare,`,
+      `${ENERGY},,,"$1",Paula,,,,9,Monthly,,Medium,Energy,`,
+      'Brand New Client,,,"$5,000",Kevin,,,,3,Monthly,,Low,Other,',
+      `${HEALTH.toUpperCase()},,,"$1",Kevin,,,,5,Weekly,,Low,Healthcare,`,
     ].join('\n'));
 
     assert.equal(status, 400);
@@ -248,7 +251,7 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
 
   test('a header problem refuses the file as row 1', async () => {
     const before = await snapshot();
-    const { status, body } = await importCsv(`CLIENT,Contract Period,Second Chair\n${HEALTH},1/1/26-12/31/26,Anna\n`);
+    const { status, body } = await importCsv(`CLIENT,Second Chair\n${HEALTH},Anna\n`);
     assert.equal(status, 400);
     assert.deepEqual(body.errors.map((e) => e.row), [1]);
     assert.match(body.errors[0].message, /no Lead column/);
@@ -258,9 +261,9 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
   test('a file without the people and judgment columns leaves them untouched', async () => {
     const health = await clientRow(HEALTH);
     const { status, body } = await importCsv([
-      'CLIENT,Contract Period,2026 Contracts',
-      `${HEALTH},1/1/26-12/31/26,"$75,000"`,
-      'Plain Client,1/1/26-12/31/26,"$10,000"',
+      'CLIENT,2026 Contracts',
+      `${HEALTH},"$75,000"`,
+      'Plain Client,"$10,000"',
     ].join('\n'));
     assert.equal(status, 200, JSON.stringify(body));
     assert.deepEqual(body.summary.sheetColumns, []);
@@ -298,7 +301,7 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
   test('blank cells in the columns a file has clear those fields', async () => {
     const { status, body } = await importCsv([
       HEADER,
-      `${ENERGY},7/1/25-6/30/27,,"$40,000","$85,000",Paula,,,,,,,,,`,
+      `${ENERGY},,"$40,000","$85,000",Paula,,,,,,,,,`,
     ].join('\n'));
     assert.equal(status, 200, JSON.stringify(body));
 
@@ -323,15 +326,15 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     assert.equal(added.status, 201, JSON.stringify(added.body));
 
     const { status, body } = await importCsv([
-      'client,contract period,2026 contracts, LEAD ,second  chair,ORIGINATOR,credit to firm',
-      `${HEALTH},1/1/26-12/31/26,"$75,000",kevin,mary o'brien,Firm,`,
+      'client,2026 contracts, LEAD ,second  chair,ORIGINATOR,credit to firm',
+      `${HEALTH},"$75,000",kevin,mary o'brien,Firm,`,
     ].join('\n'));
     assert.equal(status, 400, 'a lower-case CLIENT header is refused, as before this change');
     assert.match(JSON.stringify(body), /CLIENT is required/);
 
     const ok = await importCsv([
-      'CLIENT,Contract Period,2026 Contracts, LEAD ,second  chair,ORIGINATOR,credit to firm',
-      `${HEALTH},1/1/26-12/31/26,"$75,000",kevin,mary o'brien,Firm,`,
+      'CLIENT,2026 Contracts, LEAD ,second  chair,ORIGINATOR,credit to firm',
+      `${HEALTH},"$75,000",kevin,mary o'brien,Firm,`,
     ].join('\n'));
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
 
@@ -348,11 +351,11 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
   });
 
   test('a new lead who is the stored second chair is refused when the file has no Second Chair column', async () => {
-    let result = await importCsv(`CLIENT,Contract Period,Lead,Second Chair\n${ENERGY},7/1/25-6/30/27,Paula,Brendan\n`);
+    let result = await importCsv(`CLIENT,Lead,Second Chair\n${ENERGY},Paula,Brendan\n`);
     assert.equal(result.status, 200, JSON.stringify(result.body));
 
     const before = await snapshot();
-    result = await importCsv(`CLIENT,Contract Period,Lead\n${ENERGY},7/1/25-6/30/27,Brendan\n`);
+    result = await importCsv(`CLIENT,Lead\n${ENERGY},Brendan\n`);
     assert.equal(result.status, 400);
     assert.deepEqual(result.body.errors, [{
       row: 2,
@@ -362,7 +365,7 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     assert.deepEqual(await snapshot(), before);
 
     // A lead-only file keeps the stored second chair and rewrites the legacy text from both
-    result = await importCsv(`CLIENT,Contract Period,Lead\n${ENERGY},7/1/25-6/30/27,Kevin\n`);
+    result = await importCsv(`CLIENT,Lead\n${ENERGY},Kevin\n`);
     assert.equal(result.status, 200, JSON.stringify(result.body));
     const energy = await clientRow(ENERGY);
     assert.equal(energy.lead, 'Kevin');
@@ -405,8 +408,8 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     // A file that changes an existing client's people, judgments and revenue and adds a client
     const good = [
       HEADER,
-      `${HEALTH},1/1/26-12/31/26,"$1","$2","$3",Paula,Kevin,Firm,,4,Daily,Y,High,Energy,changed`,
-      'Dry Run Client,1/1/26-12/31/26,,,"$9,000",Joe,Mike,Joe,,2,Quarterly,,Low,Other,',
+      `${HEALTH},"$1","$2","$3",Paula,Kevin,Firm,,4,Daily,Y,High,Energy,changed`,
+      'Dry Run Client,,,"$9,000",Joe,Mike,Joe,,2,Quarterly,,Low,Other,',
     ].join('\n');
     const dry = await importCsv(good, { dryRun: true });
     assert.equal(dry.status, 200, JSON.stringify(dry.body));
@@ -421,8 +424,8 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     // A refused file: the same 400 and the same list as the import, nothing written
     const bad = [
       HEADER,
-      `${HEALTH},1/1/26-12/31/26,,,"$1",Nobody,,,,5,Weekly,,Low,Healthcare,`,
-      `${ENERGY},7/1/25-6/30/27,,,"$1",Paula,Paula,,,3,Hourly,,Medium,Energy,`,
+      `${HEALTH},,,"$1",Nobody,,,,5,Weekly,,Low,Healthcare,`,
+      `${ENERGY},,,"$1",Paula,Paula,,,3,Hourly,,Medium,Energy,`,
     ].join('\n');
     const dryBad = await importCsv(bad, { dryRun: true });
     assert.equal(dryBad.status, 400);
@@ -454,10 +457,10 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     // The old book: every client the tests above imported, plus three with a
     // revenue year the new sheet does not have
     const old = await importCsv([
-      'CLIENT,Contract Period,2023 Contracts,2024 Contracts,Lead,Second Chair',
-      'Old Book One,Expired 6/30/25,"$10,000","$11,000",Mike,Jay',
-      'Old Book Two,1/1/26-12/31/26,"$20,000",,Jeff,',
-      'Old Book Three,1/1/26-12/31/26,,"$30,000",Brendan,Paula',
+      'CLIENT,2023 Contracts,2024 Contracts,Lead,Second Chair',
+      'Old Book One,"$10,000","$11,000",Mike,Jay',
+      'Old Book Two,"$20,000",,Jeff,',
+      'Old Book Three,,"$30,000",Brendan,Paula',
     ].join('\n'));
     assert.equal(old.status, 200, JSON.stringify(old.body));
 
@@ -524,6 +527,135 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     assert.deepEqual(after.Paula, [1, 0, 1]);
     assert.deepEqual(after.Jay, [0, 1, 1]);
     assert.deepEqual(after.Brendan, [0, 0, 0]);
+  });
+
+  // Contract status is retired (docs/plans/people-and-second-chair.md, P13):
+  // Contract Period is not read, clients.status is neither read nor written,
+  // and no client the API returns carries it.
+  const P13_NAMES = ['P13 Alpha', 'P13 Beta', 'P13 Gamma'];
+  const yearsOnly = [
+    'CLIENT,2025 Contracts,2026 Contracts',
+    'P13 Alpha,"$10,000","$12,000"',
+    'P13 Beta,,"$5,000"',
+    'P13 Gamma,"$7,500",$1',
+  ].join('\n');
+  // The same file with a Contract Period column: a period, DONE and a blank
+  const withPeriod = [
+    'CLIENT,Contract Period,2025 Contracts,2026 Contracts',
+    'P13 Alpha,1/1/26-12/31/26,"$10,000","$12,000"',
+    'P13 Beta,DONE,,"$5,000"',
+    'P13 Gamma,,"$7,500",$1',
+  ].join('\n');
+
+  // The three clients' rows without ids and timestamps, and their revenue by year
+  const p13Rows = async () => ({
+    clients: (await db.query(`
+      SELECT to_jsonb(c) - 'id' - 'created_at' - 'updated_at' AS row
+        FROM clients c WHERE name = ANY($1) ORDER BY name`, [P13_NAMES])).rows,
+    revenues: Object.fromEntries(await Promise.all(P13_NAMES.map(async (name) => [name, await revenue(name)]))),
+  });
+  const deleteP13 = () => db.query('DELETE FROM clients WHERE name = ANY($1)', [P13_NAMES]);
+  const noStatusKeys = (clients) => clients.flatMap((c) => Object.keys(c).filter((key) => /status|contract/i.test(key)));
+
+  test('P13 (a) and (b): a file with CLIENT and the years only, and the same file with Contract Period, write identical rows', async () => {
+    await deleteP13();
+    const a = await importCsv(yearsOnly);
+    assert.equal(a.status, 200, JSON.stringify(a.body));
+    assert.deepEqual(a.body.validation.issues, []);
+    assert.deepEqual(a.body.validation.warnings, []);
+    assert.equal(a.body.summary.newClients, 3);
+    assert.deepEqual(a.body.summary.revenueTotals, { 2025: 17500, 2026: 17001 });
+    assert.deepEqual(noStatusKeys(a.body.clients), []);
+    const fromYearsOnly = await p13Rows();
+    assert.deepEqual(fromYearsOnly.revenues, {
+      'P13 Alpha': { 2025: 10000, 2026: 12000 },
+      'P13 Beta': { 2026: 5000 },
+      'P13 Gamma': { 2025: 7500, 2026: 1 },
+    });
+
+    // Check file on the Contract Period file answers the same way and writes nothing
+    const before = await snapshot();
+    const check = await importCsv(withPeriod, { dryRun: true });
+    assert.equal(check.status, 200, JSON.stringify(check.body));
+    assert.equal(check.body.dryRun, true);
+    assert.deepEqual(check.body.validation.issues, []);
+    assert.deepEqual(check.body.validation.warnings, []);
+    assert.deepEqual(await snapshot(), before);
+
+    // Inserted from the Contract Period file: the same rows as from the years-only file
+    await deleteP13();
+    const b = await importCsv(withPeriod);
+    assert.equal(b.status, 200, JSON.stringify(b.body));
+    assert.deepEqual(b.body.validation.issues, []);
+    assert.deepEqual(b.body.validation.warnings, []);
+    assert.deepEqual(b.body.summary, a.body.summary);
+    assert.deepEqual(noStatusKeys(b.body.clients), []);
+    assert.deepEqual(await p13Rows(), fromYearsOnly);
+
+    // Updated from it: still the same rows, and the stored status is not written
+    await db.query("UPDATE clients SET status = 'P13-SENTINEL' WHERE name = ANY($1)", [P13_NAMES]);
+    const sentinel = await p13Rows();
+    const again = await importCsv(withPeriod);
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.summary.updatedClients, 3);
+    assert.deepEqual(await p13Rows(), sentinel);
+    assert.ok(sentinel.clients.every(({ row }) => row.status === 'P13-SENTINEL'));
+  });
+
+  test('P13 (c): PUT with a stray status succeeds and does not write the column', async () => {
+    const { rows: [row] } = await db.query('SELECT id, lead_id, second_chair_id FROM clients WHERE name = $1', [HEALTH]);
+    await db.query("UPDATE clients SET status = 'P13-SENTINEL' WHERE id = $1", [row.id]);
+
+    const { status, body } = await call('PUT', `/api/data/clients/${row.id}`, {
+      name: HEALTH,
+      status: 'IF',
+      practice_area: ['Healthcare'],
+      conflict_risk: 'Low',
+      notes: 'edited with a stale page',
+      interaction_frequency: 'Weekly',
+      stickiness: 5,
+      high_maintenance: false,
+      lead_id: row.lead_id,
+      second_chair_id: row.second_chair_id,
+      originator_id: null,
+      originator_is_firm: true,
+      revenues: [{ year: 2026, revenue_amount: 72000 }],
+    });
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal('status' in body.client, false);
+    assert.equal(body.client.notes, 'edited with a stale page');
+
+    const stored = await clientRow(HEALTH);
+    assert.equal(stored.status, 'P13-SENTINEL');
+    assert.equal(stored.notes, 'edited with a stale page');
+  });
+
+  test('P13 (d): POST with a stray status succeeds, and neither the response nor the list carries a status', async () => {
+    const paula = (await db.query("SELECT id FROM people WHERE name = 'Paula'")).rows[0];
+    const { status, body } = await call('POST', '/api/data/clients', {
+      name: 'P13 Posted',
+      status: 'Former',
+      practice_area: ['Other'],
+      conflict_risk: 'Medium',
+      notes: '',
+      interaction_frequency: 'Monthly',
+      stickiness: 3,
+      high_maintenance: false,
+      lead_id: paula.id,
+      second_chair_id: null,
+      originator_id: null,
+      originator_is_firm: false,
+      revenues: [{ year: 2026, revenue_amount: 1000 }],
+    });
+    assert.equal(status, 201, JSON.stringify(body));
+    assert.equal(body.client.name, 'P13 Posted');
+    assert.equal('status' in body.client, false);
+    // Not written: the column keeps its init-db.sql default
+    assert.equal((await clientRow('P13 Posted')).status, 'Prospect');
+
+    const { body: list } = await call('GET', '/api/data/clients');
+    assert.ok(list.clients.length >= 6);
+    assert.deepEqual(noStatusKeys(list.clients), []);
   });
 });
 

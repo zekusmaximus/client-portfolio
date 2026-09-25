@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS clients (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id INTEGER CONSTRAINT clients_user_id_fkey REFERENCES users(id) ON DELETE SET NULL,
     name VARCHAR(255) NOT NULL,
-    status VARCHAR(50) DEFAULT 'Prospect',
+    status VARCHAR(50) DEFAULT 'Prospect', -- retired (P13): no code reads or writes it; kept for rollback
     practice_area TEXT[],
     relationship_strength INTEGER DEFAULT 5,
     conflict_risk VARCHAR(50) DEFAULT 'Medium',

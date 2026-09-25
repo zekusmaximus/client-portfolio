@@ -130,16 +130,6 @@ const ClientListView = () => {
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'IF': return 'bg-green-500';
-      case 'P': return 'bg-blue-500';
-      case 'D': return 'bg-gray-500';
-      case 'H': return 'bg-yellow-500';
-      default: return 'bg-gray-500';
-    }
-  };
-
   const getRiskColor = (risk) => {
     switch (risk) {
       case 'Low': return 'text-green-600 bg-green-50 border-green-200';
@@ -276,12 +266,6 @@ const ClientListView = () => {
                 <div>
                   <h3 className="font-semibold text-lg">{formatClientName(client.name)}</h3>
                   <div className="flex items-center gap-2 mt-1">
-                    <Badge 
-                      variant="secondary" 
-                      className={`${getStatusColor(client.status)} text-white`}
-                    >
-                      {client.status}
-                    </Badge>
                     <Badge 
                       variant="outline"
                       className={getRiskColor(client.conflictRisk)}

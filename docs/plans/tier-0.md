@@ -598,6 +598,8 @@ What Tier 0 deliberately leaves broken or weak (for the Tier 1 and Tier 2 plans)
 
 **Tier 2, a shared six-partner tool (about a week):** `partners` table replacing `src/constants.js`; `updated_by` and a change log on clients; server-side succession plans and reassignments; one status vocabulary; validation on the live write path; delete the second scoring formula and the three dead `/api/data` endpoints; fix the succession-metric field reads; remove `sanitizeRequestBody`; contract tests per API route. Done early: removing an account can never remove clients (section 12).
 
+Superseded: "one status vocabulary" is replaced by P13 in `docs/plans/people-and-second-chair.md`. Contract status is retired, not merged: the book holds only active contracts, and neither vocabulary remains.
+
 ---
 
 ## 12. Tier 2 work done early

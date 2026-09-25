@@ -322,7 +322,6 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
         toUpdateMap.set(lowerName, {
           id: existingClient.id,
           name: clientData.name || '',
-          status: clientData.status || 'H',
           practice_area: fromFile('practice_area', preservedPracticeArea),
           relationship_strength: preservedRelationshipStrength,
           conflict_risk: fromFile('conflict_risk', preservedConflictRisk),
@@ -339,7 +338,6 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       } else {
         toInsertMap.set(lowerName, {
           name: clientData.name || '',
-          status: clientData.status || 'H',
           practice_area: fromFile('practice_area', clientData.practiceArea || []),
           relationship_strength: clientData.relationshipStrength || 5,
           conflict_risk: fromFile('conflict_risk', clientData.conflictRisk || 'Medium'),
@@ -449,13 +447,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       revenueYears,
       revenueTotals: totalsByYear,
       sheetColumns: SHEET_COLUMNS.filter(({ key }) => key in columns).map(({ header }) => header),
-      totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
-      statusBreakdown: {
-        'Active': clientsWithScores.filter(c => c.status === 'Active' || c.status === 'IF').length,
-        'Prospect': clientsWithScores.filter(c => c.status === 'Prospect' || c.status === 'P').length,
-        'Former': clientsWithScores.filter(c => c.status === 'Former' || c.status === 'D').length,
-        'Inactive': clientsWithScores.filter(c => c.status === 'Inactive' || c.status === 'H').length
-      }
+      totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0)
     };
 
     if (dryRun) {
@@ -538,7 +530,7 @@ router.post('/optimize-portfolio', (req, res) => {
       parameters: {
         maxCapacity,
         totalEligibleClients: clientsWithScores.filter(c => 
-          (c.status === 'IF' || c.status === 'P') && (parseFloat(c.timeCommitment) || 0) > 0
+          (parseFloat(c.timeCommitment) || 0) > 0
         ).length
       }
     });
@@ -580,30 +572,6 @@ router.post('/analytics', (req, res) => {
       }
     });
     
-    // Revenue by status - using new status labels that match client cards
-    const revenueByStatus = {
-      'Active': 0, 'Prospect': 0, 'Inactive': 0, 'Former': 0
-    };
-    clientsWithScores.forEach(client => {
-      const clientStatus = client.status;
-      
-      // Map old status codes to new labels if needed
-      const statusMapping = {
-        'IF': 'Active',
-        'P': 'Prospect', 
-        'D': 'Former',
-        'H': 'Inactive'
-      };
-      
-      const mappedStatus = statusMapping[clientStatus] || clientStatus || 'Prospect';
-      
-      if (Object.prototype.hasOwnProperty.call(revenueByStatus, mappedStatus)) {
-        revenueByStatus[mappedStatus] += client.averageRevenue || 0; // averageRevenue already contains 2025 data only
-      } else {
-        revenueByStatus['Prospect'] += client.averageRevenue || 0; // Default fallback
-      }
-    });
-    
     // Top clients by strategic value
     const topClients = clientsWithScores
       .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0))
@@ -613,7 +581,6 @@ router.post('/analytics', (req, res) => {
       success: true,
       analytics: {
         practiceAreas,
-        revenueByStatus,
         topClients,
         totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
         averageStrategicValue: clientsWithScores.length > 0 ? 
@@ -729,10 +696,11 @@ router.post('/clients', async (req, res) => {
     // a later V4 migration drops them, so existing rows are untouched.
     // People come as ids (lead_id, second_chair_id, originator_id,
     // originator_is_firm); the legacy primary_lobbyist, client_originator and
-    // lobbyist_team are written from them and ignored in the body.
+    // lobbyist_team are written from them and ignored in the body. Contract
+    // status is retired (P13): a `status` in the body is ignored, and the
+    // column is never written.
     const {
       name,
-      status,
       practice_area,
       conflict_risk,
       notes,
@@ -753,14 +721,14 @@ router.post('/clients', async (req, res) => {
     // Insert client record
     const { rows: [newClient] } = await (await client).query(`
       INSERT INTO clients (
-        name, status, practice_area, conflict_risk, notes, primary_lobbyist,
+        name, practice_area, conflict_risk, notes, primary_lobbyist,
         client_originator, lobbyist_team, interaction_frequency,
         stickiness, high_maintenance,
         lead_id, second_chair_id, originator_id, originator_is_firm
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *
     `, [
-      name, status, practice_area, conflict_risk, notes, legacy.primary_lobbyist,
+      name, practice_area, conflict_risk, notes, legacy.primary_lobbyist,
       legacy.client_originator, legacy.lobbyist_team, interaction_frequency,
       stickiness, high_maintenance,
       people.lead_id, people.second_chair_id, people.originator_id, people.originator_is_firm
@@ -821,9 +789,9 @@ router.put('/clients/:id', async (req, res) => {
     // intentionally left out of the SET clause — an edit no longer touches them,
     // preserving any existing values until a later V4 migration drops them.
     // People come as ids, as in POST; the legacy text is written from them.
+    // A `status` in the body is ignored, as in POST.
     const {
       name,
-      status,
       practice_area,
       conflict_risk,
       notes,
@@ -844,17 +812,17 @@ router.put('/clients/:id', async (req, res) => {
     // Update client record
     const { rows: [updatedClient] } = await (await client).query(`
       UPDATE clients SET
-        name = $1, status = $2, practice_area = $3, conflict_risk = $4,
-        notes = $5, primary_lobbyist = $6, client_originator = $7,
-        lobbyist_team = $8, interaction_frequency = $9,
-        stickiness = $10, high_maintenance = $11,
-        lead_id = $12, second_chair_id = $13, originator_id = $14,
-        originator_is_firm = $15,
+        name = $1, practice_area = $2, conflict_risk = $3,
+        notes = $4, primary_lobbyist = $5, client_originator = $6,
+        lobbyist_team = $7, interaction_frequency = $8,
+        stickiness = $9, high_maintenance = $10,
+        lead_id = $11, second_chair_id = $12, originator_id = $13,
+        originator_is_firm = $14,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $16
+      WHERE id = $15
       RETURNING *
     `, [
-      name, status, practice_area, conflict_risk,
+      name, practice_area, conflict_risk,
       notes, legacy.primary_lobbyist, legacy.client_originator,
       legacy.lobbyist_team, interaction_frequency,
       stickiness, high_maintenance,

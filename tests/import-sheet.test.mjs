@@ -52,7 +52,7 @@ const assign = (cells, existing = null) => resolveSheetPeople(
 describe('findSheetColumns', () => {
   test('matches case-insensitively, trimmed, with runs of spaces read as one', () => {
     const { columns, errors } = findSheetColumns([
-      'CLIENT', 'Contract Period', '2026 Contracts', ' lead ', 'SECOND  CHAIR', 'originator',
+      'CLIENT', '2026 Contracts', ' lead ', 'SECOND  CHAIR', 'originator',
       'credit to firm', 'Stickiness ', 'cadence', 'HANDFUL', 'Conflict risk', 'practice area', 'NOTES',
     ]);
     assert.deepEqual(errors, []);
@@ -70,7 +70,7 @@ describe('findSheetColumns', () => {
     });
   });
 
-  test('a file without the sheet columns has none, and unknown headers are ignored', () => {
+  test('a file without the sheet columns has none, and unknown headers, Contract Period among them (P13), are ignored', () => {
     assert.deepEqual(findSheetColumns(['CLIENT', 'Contract Period', '2025 Contracts', 'Lobbyist', 'Leads']), { columns: {}, errors: [] });
     assert.deepEqual(findSheetColumns(undefined), { columns: {}, errors: [] });
   });
@@ -271,7 +271,7 @@ describe('processCSVData and checkSheet', () => {
   const file = (rows) => processCSVData(rows);
 
   test('a file without the new columns reads exactly as before', () => {
-    const [client] = file([{ CLIENT: 'Acme Corp', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '$100,000' }]);
+    const [client] = file([{ CLIENT: 'Acme Corp', '2026 Contracts': '$100,000' }]);
     assert.deepEqual(client.practiceArea, []);
     assert.equal(client.conflictRisk, 'Medium');
     assert.equal(client.notes, '');
@@ -291,7 +291,7 @@ describe('processCSVData and checkSheet', () => {
   test('a file without the new columns writes exactly the columns it always has', () => {
     const base = importWriteColumns({}).map(([column]) => column);
     assert.deepEqual(base, [
-      'name', 'status', 'practice_area', 'relationship_strength', 'conflict_risk',
+      'name', 'practice_area', 'relationship_strength', 'conflict_risk',
       'renewal_probability', 'strategic_fit_score', 'notes', 'primary_lobbyist',
       'client_originator', 'lobbyist_team', 'interaction_frequency', 'relationship_intensity',
     ]);
@@ -313,9 +313,9 @@ describe('processCSVData and checkSheet', () => {
 
   test('row numbers count the header as row 1; the file values replace the defaults', () => {
     const clients = file([
-      { CLIENT: 'Acme', 'Contract Period': '1/1/26-12/31/26', Stickiness: '4', Cadence: 'daily', Handful: 'Y', 'Conflict Risk': 'High', 'Practice Area': 'Energy', Notes: 'n' },
-      { CLIENT: '', 'Contract Period': '', Stickiness: '', Cadence: '', Handful: '', 'Conflict Risk': '', 'Practice Area': '', Notes: '' },
-      { CLIENT: 'Beta', 'Contract Period': '1/1/26-12/31/26', Stickiness: '', Cadence: '', Handful: '', 'Conflict Risk': '', 'Practice Area': '', Notes: '' },
+      { CLIENT: 'Acme', Stickiness: '4', Cadence: 'daily', Handful: 'Y', 'Conflict Risk': 'High', 'Practice Area': 'Energy', Notes: 'n' },
+      { CLIENT: '', Stickiness: '', Cadence: '', Handful: '', 'Conflict Risk': '', 'Practice Area': '', Notes: '' },
+      { CLIENT: 'Beta', Stickiness: '', Cadence: '', Handful: '', 'Conflict Risk': '', 'Practice Area': '', Notes: '' },
     ]);
     assert.deepEqual(clients.map((c) => c.rowNumber), [2, 4]);
     const [acme, beta] = clients;
@@ -338,10 +338,10 @@ describe('processCSVData and checkSheet', () => {
 
   test('refusal: a bad lead, a bad Stickiness and a client named twice are all listed by row', () => {
     const rows = [
-      { CLIENT: 'Acme', 'Contract Period': '1/1/26-12/31/26', Lead: 'Kevin', Stickiness: '3' },
-      { CLIENT: 'Beta', 'Contract Period': '1/1/26-12/31/26', Lead: 'Jhon', Stickiness: '3' },
-      { CLIENT: 'Gamma', 'Contract Period': '1/1/26-12/31/26', Lead: 'Paula', Stickiness: '7' },
-      { CLIENT: 'ACME', 'Contract Period': '1/1/26-12/31/26', Lead: 'Paula', Stickiness: '2' },
+      { CLIENT: 'Acme', Lead: 'Kevin', Stickiness: '3' },
+      { CLIENT: 'Beta', Lead: 'Jhon', Stickiness: '3' },
+      { CLIENT: 'Gamma', Lead: 'Paula', Stickiness: '7' },
+      { CLIENT: 'ACME', Lead: 'Paula', Stickiness: '2' },
     ];
     const { errors } = checkSheet(file(rows), { roster: ROSTER });
     assert.deepEqual(errors, [
@@ -353,8 +353,8 @@ describe('processCSVData and checkSheet', () => {
 
   test('a client named twice refuses a file without the new columns too', () => {
     const rows = [
-      { CLIENT: 'Acme', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '1' },
-      { CLIENT: 'Acme', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '2' },
+      { CLIENT: 'Acme', '2026 Contracts': '1' },
+      { CLIENT: 'Acme', '2026 Contracts': '2' },
     ];
     assert.deepEqual(checkSheet(file(rows)).errors, [
       { row: 3, client: 'Acme', message: '"Acme" is also on row 2; each client may appear once in the file.' },
@@ -362,7 +362,7 @@ describe('processCSVData and checkSheet', () => {
   });
 
   test('header problems come first, as row 1', () => {
-    const rows = [{ CLIENT: 'Acme', 'Contract Period': '1/1/26-12/31/26', 'Second Chair': 'Anna', Stickiness: 'x' }];
+    const rows = [{ CLIENT: 'Acme', 'Second Chair': 'Anna', Stickiness: 'x' }];
     const headerErrors = findSheetColumns(Object.keys(rows[0])).errors;
     const { errors } = checkSheet(file(rows), { headerErrors, roster: ROSTER });
     assert.deepEqual(errors.map((e) => [e.row, e.client]), [[1, ''], [2, 'Acme']]);
@@ -370,7 +370,7 @@ describe('processCSVData and checkSheet', () => {
   });
 
   test('people are checked against the stored client for the columns the file lacks', () => {
-    const rows = [{ CLIENT: 'Acme', 'Contract Period': '1/1/26-12/31/26', Lead: 'Brendan' }];
+    const rows = [{ CLIENT: 'Acme', Lead: 'Brendan' }];
     const existingByName = new Map([['acme', { second_chair_id: 1, originator_id: null, originator_is_firm: false }]]);
     const { errors, people } = checkSheet(file(rows), { roster: ROSTER, existingByName });
     assert.equal(errors.length, 1);

@@ -10,7 +10,7 @@ const { extractRevenueYears, parseAmount, planRevenueWrites, revenueTotals } = c
 
 test('extractRevenueYears: YYYY Contracts headers, any case, stray whitespace, sorted', () => {
   assert.deepEqual(
-    extractRevenueYears(['CLIENT', 'Contract Period', '2024 Contracts', '2026 contracts ', 'Notes']),
+    extractRevenueYears(['CLIENT', '2024 Contracts', '2026 contracts ', 'Notes']),
     [2024, 2026]
   );
   assert.deepEqual(extractRevenueYears(['2026 Contracts', '2025 Contract', '2026 Contracts']), [2025, 2026]);
@@ -71,8 +71,8 @@ test('planRevenueWrites: no year columns means no writes at all', () => {
 
 test('processCSVData: a 2026-only header yields a one-key revenue object', () => {
   const clients = analyzer.processCSVData([
-    { CLIENT: 'Acme Corp', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '$100,000' },
-    { CLIENT: 'Beta LLC', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '' },
+    { CLIENT: 'Acme Corp', '2026 Contracts': '$100,000' },
+    { CLIENT: 'Beta LLC', '2026 Contracts': '' },
   ]);
   assert.equal(clients.length, 2);
   assert.deepEqual(clients[0].revenue, { 2026: 100000 });
@@ -82,7 +82,7 @@ test('processCSVData: a 2026-only header yields a one-key revenue object', () =>
 
 test('processCSVData: the header decides the years, not a fixed list', () => {
   const [client] = analyzer.processCSVData([
-    { CLIENT: 'Acme Corp', 'Contract Period': '1/1/27-12/31/27', '2024 Contracts': '$10', '2027 Contracts': '$30' },
+    { CLIENT: 'Acme Corp', '2024 Contracts': '$10', '2027 Contracts': '$30' },
   ]);
   assert.deepEqual(client.revenue, { 2024: 10, 2027: 30 });
   assert.deepEqual(client.revenueYears, [2024, 2027]);
@@ -90,13 +90,46 @@ test('processCSVData: the header decides the years, not a fixed list', () => {
 
 test('validateClientData: zero revenue is judged across the imported years only', () => {
   const clients = analyzer.processCSVData([
-    { CLIENT: 'Acme Corp', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '' },
-    { CLIENT: 'Beta LLC', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '$5' },
+    { CLIENT: 'Acme Corp', '2026 Contracts': '' },
+    { CLIENT: 'Beta LLC', '2026 Contracts': '$5' },
   ]);
   const { warnings, isValid } = analyzer.validateClientData(clients);
   assert.equal(isValid, true);
   assert.deepEqual(warnings, ['Client "Acme Corp" has zero revenue across all imported years']);
 
-  const noYears = analyzer.processCSVData([{ CLIENT: 'Acme Corp', 'Contract Period': '1/1/26-12/31/26' }]);
+  const noYears = analyzer.processCSVData([{ CLIENT: 'Acme Corp' }]);
   assert.deepEqual(analyzer.validateClientData(noYears).warnings, []);
+});
+
+// Contract status is retired (docs/plans/people-and-second-chair.md, P13): the
+// import neither reads Contract Period nor derives a status from it.
+test('processCSVData: no status or contract period, and a Contract Period column changes nothing', () => {
+  const without = analyzer.processCSVData([
+    { CLIENT: 'Acme Corp', '2026 Contracts': '$100,000' },
+    { CLIENT: 'Beta LLC', '2026 Contracts': '$5' },
+    { CLIENT: 'Gamma Inc', '2026 Contracts': '$7' },
+  ]);
+  const withColumn = analyzer.processCSVData([
+    { CLIENT: 'Acme Corp', 'Contract Period': '1/1/26-12/31/26', '2026 Contracts': '$100,000' },
+    { CLIENT: 'Beta LLC', 'Contract Period': '', '2026 Contracts': '$5' },
+    { CLIENT: 'Gamma Inc', 'Contract Period': 'DONE', '2026 Contracts': '$7' },
+  ]);
+  const comparable = (clients) => clients.map(({ id: _id, ...client }) => client);
+  assert.deepEqual(comparable(withColumn), comparable(without));
+  // No status, contract period or anything else derived from the column
+  for (const client of withColumn) {
+    assert.deepEqual(Object.keys(client).filter((key) => /status|contract/i.test(key)), [], client.name);
+  }
+});
+
+test('validateClientData: a blank or garbage Contract Period is not an issue', () => {
+  const clients = analyzer.processCSVData([
+    { CLIENT: 'Acme Corp', 'Contract Period': '', '2026 Contracts': '$1' },
+    { CLIENT: 'Beta LLC', 'Contract Period': 'garbage', '2026 Contracts': '$1' },
+    { CLIENT: 'Gamma Inc', '2026 Contracts': '$1' },
+  ]);
+  const { issues, warnings, isValid } = analyzer.validateClientData(clients);
+  assert.deepEqual(issues, []);
+  assert.deepEqual(warnings, []);
+  assert.equal(isValid, true);
 });

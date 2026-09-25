@@ -248,7 +248,6 @@ const usePortfolioStore = create(
         // client_originator text from them.
         return {
           name: clientData.name || '',
-          status: clientData.status || 'Prospect',
           practice_area: clientData.practiceArea || [],
           conflict_risk: clientData.conflict_risk || 'Medium',
           notes: clientData.notes || '',
@@ -702,11 +701,6 @@ const usePortfolioStore = create(
       getClientById: (id) => {
         const state = get();
         return state.clients.find(client => client.id === id);
-      },
-      
-      getClientsByStatus: (status) => {
-        const state = get();
-        return state.clients.filter(client => client.status === status);
       },
       
       // Reporting year (D4): the latest year in which any client has a revenue

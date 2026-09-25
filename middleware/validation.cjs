@@ -24,13 +24,6 @@ const clientValidationRules = [
     .withMessage('Client name contains invalid characters')
     .customSanitizer(sanitizeInput),
 
-  // Status validation
-  body('status')
-    .trim()
-    .isIn(['Active', 'Prospect', 'Inactive', 'Former'])
-    .withMessage('Status must be one of: Active, Prospect, Inactive, Former')
-    .customSanitizer(sanitizeInput),
-
   // Practice area validation
   body('practiceArea')
     .isArray({ min: 1 })

@@ -14,20 +14,6 @@ import {
 } from '@radix-ui/react-icons';
 
 /**
- * Mapping of client status → Tailwind color classes
- */
-const statusColors = {
-  'IF': 'bg-green-500',
-  'P': 'bg-yellow-500',
-  'D': 'bg-gray-400',
-  'H': 'bg-red-500',
-  'Prospect': 'bg-blue-500',
-  'active': 'bg-green-500',
-  'inactive': 'bg-gray-400',
-  'prospect': 'bg-yellow-500',
-};
-
-/**
  * Get strategic value badge color based on value
  */
 function getStrategicValueBadgeVariant(value) {
@@ -54,14 +40,6 @@ function formatRevenue(revenue) {
   } else {
     return `$${revenue.toFixed(0)}`;
   }
-}
-
-/**
- * Small coloured dot representing client status.
- */
-function StatusDot({ status }) {
-  const color = statusColors[status] || 'bg-gray-300';
-  return <span className={`inline-block w-3 h-3 rounded-full ${color}`} />;
 }
 
 /**
@@ -100,7 +78,6 @@ export default function ClientCard({ client }) {
     primary_lobbyist, 
     client_originator,
     lobbyist_team,
-    status,
     strategicValue
   } = client;
 
@@ -117,7 +94,6 @@ export default function ClientCard({ client }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h4 className="font-medium leading-none truncate">{name}</h4>
-            <StatusDot status={status} />
           </div>
           <p className="text-sm text-muted-foreground truncate">{practiceAreaText}</p>
         </div>

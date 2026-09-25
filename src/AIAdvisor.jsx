@@ -418,12 +418,7 @@ const AIAdvisor = () => {
                     className="p-3 border rounded-lg hover:bg-muted/30 cursor-pointer transition-colors"
                     onClick={() => handleClientRecommendations(client)}
                   >
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-semibold">{formatClientName(client.name)}</h4>
-                      <Badge variant={client.status === 'IF' ? 'default' : 'secondary'}>
-                        {client.status}
-                      </Badge>
-                    </div>
+                    <h4 className="font-semibold mb-2">{formatClientName(client.name)}</h4>
                     <div className="text-sm text-muted-foreground">
                       <p>{reportingYear} Revenue: ${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
                       <p>Strategic Value: {(client.strategicValue || 0).toFixed(1)}</p>

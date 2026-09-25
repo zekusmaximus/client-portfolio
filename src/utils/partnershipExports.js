@@ -203,7 +203,6 @@ export const exportPartnershipPDF = (partners, transitions, clients, getRevenueF
                   <th>Client Name</th>
                   <th>Revenue</th>
                   <th>Strategic Value</th>
-                  <th>Status</th>
                   <th>Practice Areas</th>
                 </tr>
               </thead>
@@ -218,7 +217,6 @@ export const exportPartnershipPDF = (partners, transitions, clients, getRevenueF
                       <td>${escapeHtml(client.name || 'Unknown')}</td>
                       <td>${formatRevenue(revenue)}</td>
                       <td>${client.strategic_value ? client.strategic_value.toFixed(1) : 'N/A'}</td>
-                      <td>${escapeHtml(client.status || 'Unknown')}</td>
                       <td>${escapeHtml(practiceAreas)}</td>
                     </tr>
                   `;
@@ -360,7 +358,6 @@ export const exportTransitionPlan = (assignments, partners, clients, getRevenueF
       'Revenue',
       'Strategic Value',
       'Practice Areas',
-      'Status',
       'Transition Priority'
     ];
 
@@ -399,14 +396,13 @@ export const exportTransitionPlan = (assignments, partners, clients, getRevenueF
         revenue.toFixed(2),
         strategicValue.toFixed(1),
         practiceAreas,
-        client?.status || 'Unknown',
         priority
       ]);
     });
 
     // Handle empty assignments case
     if (rows.length === 1) {
-      rows.push(['No client reassignments planned', '', '', '', '0', '0', '', '', 'N/A']);
+      rows.push(['No client reassignments planned', '', '', '', '0', '0', '', 'N/A']);
     }
 
     // Convert to CSV format with proper escaping

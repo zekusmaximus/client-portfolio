@@ -23,9 +23,7 @@ import {
   ResponsiveContainer,
   PieChart as RechartsPieChart,
   Pie,
-  Cell,
-  BarChart,
-  Bar
+  Cell
 } from 'recharts';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
@@ -33,7 +31,6 @@ import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/succ
 import DataUploadManager from './DataUploadManager';
 
 const DashboardView = () => {
-  const reportingYear = usePortfolioStore((s) => s.getReportingYear());
   const {
     clients,
     fetchError,
@@ -54,17 +51,7 @@ const DashboardView = () => {
     'Energy': '#ff7300',
     'Financial': '#00ff88',
     'Other': '#8dd1e1',
-    'Not Specified': '#d1d5db',
-    // New status labels that match client cards
-    'Active': '#22c55e',      // Green for active
-    'Prospect': '#3b82f6',    // Blue for prospects
-    'Inactive': '#6b7280',    // Gray for inactive
-    'Former': '#f59e0b',      // Orange for former
-    // Legacy status codes (for backward compatibility)
-    'IF': '#22c55e',
-    'P': '#3b82f6',
-    'D': '#6b7280',
-    'H': '#f59e0b'
+    'Not Specified': '#d1d5db'
   };
 
   // Calculate analytics data
@@ -92,42 +79,6 @@ const DashboardView = () => {
         practiceAreas['Not Specified'].count++;
         practiceAreas['Not Specified'].revenue += clientRevenue;
       }
-    });
-
-    // Revenue by status - using new status labels that match client cards
-    const revenueByStatus = {
-      'Active': 0, 'Prospect': 0, 'Inactive': 0, 'Former': 0
-    };
-    const countByStatus = {
-      'Active': 0, 'Prospect': 0, 'Inactive': 0, 'Former': 0
-    };
-    
-    clients.forEach(client => {
-      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client); // reporting-year revenue (D4)
-      const clientStatus = client.status || 'Prospect'; // Default to Prospect if status is null
-
-      // Always use the status mapping to ensure consistency between legacy codes and new labels
-      const statusMapping = {
-        // New status labels (pass through as-is)
-        'Active': 'Active',
-        'Prospect': 'Prospect', 
-        'Inactive': 'Inactive',
-        'Former': 'Former',
-        // Legacy status codes mapping
-        'IF': 'Active',
-        'P': 'Prospect', 
-        'D': 'Former',
-        'H': 'Inactive',
-        // Handle lowercase versions (just in case)
-        'active': 'Active',
-        'prospect': 'Prospect',
-        'inactive': 'Inactive',
-        'former': 'Former'
-      };
-      
-      const mappedStatus = statusMapping[clientStatus] || 'Prospect';
-      revenueByStatus[mappedStatus] += clientRevenue;
-      countByStatus[mappedStatus]++;
     });
 
     // Top clients by strategic value
@@ -160,8 +111,6 @@ const DashboardView = () => {
 
     return {
       practiceAreas,
-      revenueByStatus,
-      countByStatus,
       topClients,
       totalRevenue,
       averageStrategicValue,
@@ -183,8 +132,7 @@ const DashboardView = () => {
       revenue: revenue,
       practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0)
         ? client.practiceArea[0]
-        : 'Not Specified',
-      status: client.status || 'H'
+        : 'Not Specified'
     };
   });
 
@@ -192,12 +140,6 @@ const DashboardView = () => {
     name: area,
     value: data.revenue,
     count: data.count
-  })) : [];
-
-  const barData = analytics ? Object.entries(analytics.revenueByStatus).map(([status, revenue]) => ({
-    status,
-    revenue,
-    count: analytics.countByStatus[status]
   })) : [];
 
   if (!analytics) {
@@ -269,7 +211,6 @@ const DashboardView = () => {
           <p className="text-sm">Strategic Value: {(data.y || 0).toFixed(2)}</p>
           <p className="text-sm">Revenue: ${(data.revenue || 0).toLocaleString()}</p>
           <p className="text-sm">Practice Area: {data.practiceArea || 'Not Specified'}</p>
-          <p className="text-sm">Status: {data.status || 'Unknown'}</p>
         </div>
       );
     }
@@ -347,76 +288,35 @@ const DashboardView = () => {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Portfolio Composition */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <PieChart className="h-5 w-5" />
-                  Portfolio Composition by Practice Area
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <RechartsPieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[entry.name] || COLORS.Other} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, 'Revenue']} />
-                  </RechartsPieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Revenue Pipeline */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5" />
-                  {reportingYear} Revenue by Contract Status
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={barData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="status" />
-                    <YAxis tickFormatter={(value) => `$${(value / 1000).toFixed(0)}K`} />
-                    <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, 'Revenue']} />
-                    <Bar dataKey="revenue" fill="#8884d8">
-                      {barData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[entry.status]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="mt-4 grid grid-cols-4 gap-2 text-sm">
-                  <div className="text-center">
-                    <Badge variant="default" className="bg-green-500">Active</Badge>
-                  </div>
-                  <div className="text-center">
-                    <Badge variant="default" className="bg-blue-500">Prospect</Badge>
-                  </div>
-                  <div className="text-center">
-                    <Badge variant="secondary">Inactive</Badge>
-                  </div>
-                  <div className="text-center">
-                    <Badge variant="outline">Former</Badge>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Portfolio Composition */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <PieChart className="h-5 w-5" />
+                Portfolio Composition by Practice Area
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <RechartsPieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[entry.name] || COLORS.Other} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, 'Revenue']} />
+                </RechartsPieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="analysis" className="space-y-6">
@@ -600,7 +500,6 @@ const DashboardView = () => {
                       <th className="text-left p-2 font-medium">Client</th>
                       <th className="text-left p-2 font-medium">Strategic Value</th>
                       <th className="text-left p-2 font-medium">Revenue</th>
-                      <th className="text-left p-2 font-medium">Status</th>
                       <th className="text-left p-2 font-medium">Conflict Risk</th>
                       <th className="text-left p-2 font-medium">Succession Risk</th>
                     </tr>
@@ -627,14 +526,6 @@ const DashboardView = () => {
                             </Badge>
                           </td>
                           <td className="p-2">${revenue.toLocaleString()}</td>
-                          <td className="p-2">
-                            <Badge 
-                              variant={client.status === 'IF' ? 'default' : 'secondary'}
-                              className={client.status === 'IF' ? 'bg-green-500' : ''}
-                            >
-                              {client.status || 'Unknown'}
-                            </Badge>
-                          </td>
                           <td className="p-2">
                             <Badge 
                               variant={
