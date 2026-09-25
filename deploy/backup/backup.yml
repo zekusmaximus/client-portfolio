@@ -49,7 +49,7 @@ jobs:
     env:
       PG_MAJOR: ${{ vars.PG_MAJOR }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -73,7 +73,7 @@ jobs:
           BACKUP_OUT_DIR: ${{ runner.temp }}/backup
         run: PATH="/usr/lib/postgresql/$PG_MAJOR/bin:$PATH" bash ./pg-backup.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: client-portfolio-backup
           path: ${{ runner.temp }}/backup/*.dump.age
