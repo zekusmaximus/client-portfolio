@@ -370,8 +370,9 @@ a lower-case letter, a digit and a special character. Avoid `"` in passwords
 typed on a command line.
 
 A partner changes their own password from the header's **Change password**
-button. The scripts below are for adding a partner and for a forgotten
-password. A reset does not end sessions already issued; section 8.1 does.
+button. The scripts below are for adding a partner, for a forgotten password
+and for removing an account (7.3). Neither a reset nor a deletion ends sessions
+already issued; section 8.1 does.
 
 ### 7.1 From the Render Shell (paid instances only)
 
@@ -407,22 +408,57 @@ Remove-Item Env:DATABASE_URL, Env:DATABASE_SSL; Remove-Variable pw
 Calling `node` directly, rather than `npm run create:admin`, keeps `cmd.exe`
 from reinterpreting special characters in the password.
 
-### 7.3 Removing a partner's access: never delete the user
+### 7.3 Removing a partner's account
 
-**Do not delete a row from `users`.** `clients.user_id` references `users` with
-`ON DELETE CASCADE` (`init-db.sql`), so deleting a user deletes every client
-that user imported, and those clients' revenue rows with them. The book is
-shared, so that is other partners' data too. This matters now: the database has
-seven accounts for six partners (WP4 install).
+Deleting a user leaves the book alone. `clients.user_id`, the account that
+created a client as recorded before the book became shared in July 2025,
+references `users` with `ON DELETE SET NULL` (`init-db.sql`): the clients that
+account created stay, with every field and revenue row, and their `user_id`
+becomes empty. No current code reads or writes it. Until the API first started with
+that `init-db.sql`, the key was `ON DELETE CASCADE` and deleting a user deleted
+those clients and their revenue rows, so check the live database before any
+delete. Both scripts run where those in 7.1 and 7.2 do; from your machine:
 
-To revoke access, reset the account's password to a random value nobody keeps:
+```powershell
+Set-Location <path to your clone of client-portfolio>
+git pull; npm ci
+$env:DATABASE_URL = Read-Host 'External Database URL' -MaskInput
+$env:DATABASE_SSL = 'no-verify'
+node scripts/check-schema.cjs          # must end with "OK: ..."
+$user = Read-Host 'Username to delete'
+node scripts/delete-user.cjs $user     # only after OK
+Remove-Item Env:DATABASE_URL, Env:DATABASE_SSL
+```
+
+In the Render Shell (bash): `node scripts/check-schema.cjs`, then
+`read -r -p 'Username: ' U; node scripts/delete-user.cjs "$U"`.
+
+`check-schema` is read-only. It prints each foreign key to `users` with its
+`ON DELETE` action, then the number of clients each account created, then
+`OK: no foreign key to users cascades; deleting a user keeps every client.` If
+it prints `FAIL` instead, do not delete anyone: the API has not started with
+the current `init-db.sql` (section 4, and the start-up lines in 9.2), or the
+database was restored from a backup taken before the change, which carries the
+cascade again until the API next starts (Manual Deploy, then check again).
+
+`delete-user` runs the same check in its transaction and refuses while any key
+cascades. It matches the username exactly, refuses the last account, and
+commits only if the numbers of clients and revenue rows are unchanged. It
+prints `Deleted user <name>. Clients: <n>, of which <k> had been created by
+this account and now have no user_id. Revenue rows: <r>. Accounts left: <a>.`
+and exits 0, or says why not, changes nothing and exits 1.
+
+A deleted account's session stays valid until it expires (`SESSION_TTL`, 7
+days), because the session token is not checked against `users`. To end it now,
+rotate `JWT_SECRET` (8.1), which signs everyone out.
+
+To revoke access and keep the account (and with it the record of which clients
+it created), reset its password to a random value nobody keeps, then run the
+reset in 7.1 or 7.2:
 
 ```powershell
 $pw = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)) + 'aA1!'
 ```
-
-then run the reset (7.1 or 7.2), and rotate `JWT_SECRET` (8.1) if a session
-must end now.
 
 ---
 
