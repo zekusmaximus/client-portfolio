@@ -89,8 +89,8 @@ function parseAmount(cell) {
  *   `upserts` are (client_id, year, amount) for present years with amount > 0;
  *   `deletes` are (client_id, year) for present years with a blank, 0 or
  *   non-positive amount. Years absent from `years` produce no write at all.
- *   Each (client, year) pair appears at most once, so one INSERT ... ON
- *   CONFLICT statement can carry every upsert.
+ *   Each (client, year) pair appears at most once, in one list or the
+ *   other. `/process-csv` deletes every pair and then inserts `upserts`.
  */
 function planRevenueWrites(clients, years) {
   const upserts = new Map();

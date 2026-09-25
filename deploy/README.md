@@ -534,7 +534,9 @@ book.
    on it.
 
 4. **Reset.** First without an argument, which only counts; then with
-   `--confirm`. From your machine (the environment in 7.2):
+   `--confirm`. From your machine (the environment in 7.2). Paste the first
+   block, read the counts (below), and only then paste the second: pasted
+   together, both run without a pause.
 
    ```powershell
    Set-Location <path to your clone of client-portfolio>
@@ -542,6 +544,9 @@ book.
    $env:DATABASE_URL = Read-Host 'External Database URL' -MaskInput
    $env:DATABASE_SSL = 'no-verify'
    node scripts/reset-book.cjs              # counts only; deletes nothing
+   ```
+
+   ```powershell
    node scripts/reset-book.cjs --confirm    # after reading the counts
    Remove-Item Env:DATABASE_URL, Env:DATABASE_SSL
    ```
