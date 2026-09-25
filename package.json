@@ -12,7 +12,6 @@
     "preview": "vite preview",
     "security:audit": "npm audit",
     "security:audit-fix": "npm audit fix",
-    "security:check": "node scripts/security-check.js",
     "deploy:check": "npm run lint && npm test && npm run build:prod",
     "create:admin": "node create-admin.cjs",
     "reset:password": "node scripts/reset-password.cjs"
