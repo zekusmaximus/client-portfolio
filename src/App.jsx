@@ -12,12 +12,14 @@ import ClientEnhancementForm from './ClientEnhancementForm';
 import PartnershipAnalytics from './PartnershipAnalytics';
 import LoginPage from './LoginPage';
 import ChangePasswordDialog from './ChangePasswordDialog';
+import PeopleDialog from './PeopleDialog';
 import './App.css';
 
 function App() {
   const {
     clients,
     fetchClients,
+    fetchPeople,
     currentView,
     setCurrentView,
     isAuthenticated,
@@ -26,6 +28,7 @@ function App() {
   } = usePortfolioStore();
 
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [peopleOpen, setPeopleOpen] = useState(false);
 
   const hasData = clients && clients.length > 0;
 
@@ -34,10 +37,13 @@ function App() {
     checkAuth();
   }, []);
 
-  // Fetch clients after authentication
+  // Fetch clients and the People list after authentication
   useEffect(() => {
     if (isAuthenticated && clients.length === 0) {
       fetchClients();
+    }
+    if (isAuthenticated) {
+      fetchPeople();
     }
   }, [isAuthenticated]);
 
@@ -78,6 +84,9 @@ function App() {
                   </p>
                 </div>
               )}
+              <Button variant="ghost" onClick={() => setPeopleOpen(true)}>
+                People
+              </Button>
               <Button variant="ghost" onClick={() => setChangePasswordOpen(true)}>
                 Change password
               </Button>
@@ -151,6 +160,8 @@ function App() {
       <ClientEnhancementForm />
 
       <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
+
+      <PeopleDialog open={peopleOpen} onOpenChange={setPeopleOpen} />
 
       {/* Footer */}
       <footer className="border-t bg-muted/30 mt-12">

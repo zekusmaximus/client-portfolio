@@ -4,11 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current work plan
 
-Active plan: `docs/plans/tier-0.md` (stabilisation). Read it before making
-changes and update its status table when you finish a work package.
+Active plan: `docs/plans/people-and-second-chair.md` (the People list, one
+partner lead and an optional second chair per client, a fresh book, then the
+Partnership and Scenarios rebuilds). Read it before making changes and update
+its status table when you finish a phase. `docs/plans/tier-0.md` (stabilisation)
+is done in code; its remaining items are Jeff's checks on the live site.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
 `PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
-data scoping by design).
+data scoping by design; an emeritus and associates appear in the book as
+second chairs but do not sign in).
 
 ## Development Commands
 
@@ -30,7 +34,7 @@ data scoping by design).
 ### Testing
 - `npm test` - Run the test suite with Node's built-in runner (`node --test "tests/**/*.test.mjs"`); no test dependencies to install
 - Tests live in `tests/*.test.mjs` and use `node:test` + `node:assert/strict`. Import CommonJS modules with a default import (`import strategic from '../utils/strategic.cjs'`)
-- Current suites: `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site), `password-policy` and `session-ttl` (WP3), `schema` (`init-db.sql` on a real PostgreSQL: `clients.user_id` is `ON DELETE SET NULL` on a new database and after migrating one with the old cascade, deleting a user keeps its clients and revenue rows, and the two scripts above; plan section 12). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
+- Current suites: `people` (the People list's validators, the P5 change rules, the legacy-field shim and the page's picker helpers), `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site), `password-policy` and `session-ttl` (WP3), `schema` (`init-db.sql` on a real PostgreSQL: `clients.user_id` is `ON DELETE SET NULL` on a new database and after migrating one with the old cascade, deleting a user keeps its clients and revenue rows, and the two scripts above, Tier 0 plan section 12; the `people` table's seed, uniqueness and role check, the client foreign keys and the second-chair check, a pre-plan database migrating intact, and a rollback start running the pre-plan file on a migrated database). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
 - Never import `db.cjs`, `data.cjs`, `models/*`, or `utils/jwt.cjs` from tests: they throw at load time without `DATABASE_URL` / `JWT_SECRET`
 - The `schema` suite's database tests need `SCHEMA_TEST_SERVER_URL`, the superuser URL of a throwaway server without a database name; each test creates and drops its own `schema_test_*` database, connects with `pg` directly and runs the scripts as child processes. Without the variable they are skipped. Locally, after plan section 0.4's `service postgresql start`: `sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"`, then `SCHEMA_TEST_SERVER_URL=postgresql://postgres:postgres@127.0.0.1:5432 node --test tests/schema.test.mjs`
 - `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`, and its `schema` job runs `tests/schema.test.mjs` against PostgreSQL 18
@@ -53,9 +57,18 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
   - `GET /api/data/clients`, `POST /api/data/clients`, `PUT /api/data/clients/:id`, `DELETE /api/data/clients/:id`, `POST /api/data/process-csv` (`data.cjs`). `data.cjs` also still defines `POST /update-client`, `/optimize-portfolio` and `/analytics`, which nothing calls and which use a second, retired scoring formula (review 4.5; deleting them is Tier 2)
   - `POST /api/claude/analyze-portfolio`, `/api/claude/strategic-advice`, `/api/claude/client-recommendations` - the AI Advisor tab (`claude.cjs`)
   - `POST /api/scenarios/transition-plan` - one succession transition plan for one client (`routes/scenarios.cjs`)
+  - `GET /api/people`, `POST /api/people` `{ name, role }`, `PUT /api/people/:id` `{ name?, role?, active? }` - the People list (`routes/people.cjs`); no delete. `PUT` answers 409 with the reason when a partner who leads clients would stop being a partner or be deactivated, or anyone who is a second chair would be deactivated, and a rename rewrites the legacy text columns
   - `GET /api/health` - no sign-in; fields under "Auth, sessions and rate limits" below and in `deploy/README.md` section 10
 - **AI service**: every Anthropic call goes through `services/anthropic.cjs` (see "AI Integration" below)
 - **Data Processing**: Client analysis engine in `clientAnalyzer.cjs`
+
+### People (`docs/plans/people-and-second-chair.md`)
+- The `people` table (`name` unique regardless of case, `role` `partner` / `emeritus` / `associate`, `active`) replaces the old `src/constants.js` roster. A new database is seeded with Brendan, Jeff, Joe, Kevin, Mike and Paula as partners and Jay as emeritus, only while the table is empty, so edits survive restarts. People are never deleted, only deactivated.
+- Each client: `lead_id` (required by the API; an active partner), `second_chair_id` (optional; any other active person), `originator_id` (anyone, active or not) and `originator_is_firm` (the origination credit has passed to the firm; the person stays recorded). The database enforces the foreign keys and `second_chair_id <> lead_id`; `utils/people.cjs` enforces the rest, and `POST`/`PUT /api/data/clients` answer 400 `{ success: false, error: 'Validation failed', details: [{ field, message }] }`.
+- Client responses nest `lead`, `secondChair` and `originator` (`{ id, name, role, active }` or null) and keep the legacy fields, filled from them for a client that has a lead: `primary_lobbyist` = lead, `lobbyist_team` = `[lead, second chair]`, `client_originator` = `Firm` or the originator. A client without a lead (saved before this change) returns its stored legacy text. Writes store the legacy text too, so a rollback to older code still shows the right names. The Partnership tab, the Scenarios workflow, the AI prompts and the exports still read the legacy fields until the plan's Phases 4 and 5.
+- Every client query that returns people goes through the join in `utils/people.cjs` (`CLIENT_PEOPLE_COLUMNS`, `CLIENT_PEOPLE_JOINS`, `CLIENT_PEOPLE_GROUP_BY`, `withPeopleFields`), used by `data.cjs` and `models/clientModel.cjs`. The client writes read the people they assign `FOR SHARE` and `routes/people.cjs` reads the person `FOR UPDATE`, so a concurrent assignment cannot slip past the P5 counts.
+- Page: the header's **People** button (`src/PeopleDialog.jsx`); the client form's lead, second chair and originator pickers use `src/utils/people.js` and `NativeSelect` (`src/components/ui/native-select.jsx`), because `ui/select.jsx` shows the raw value in its trigger. The store loads `people` after sign-in and clears it on logout.
+- The form's status accepts both vocabularies (the CSV's `IF`/`P`/`D`/`H` and the manual `Active`/`Prospect`/`Inactive`/`Former`); before this change it refused every imported client.
 
 ### Key Application Components
 
@@ -139,6 +152,7 @@ Tier 0 work.
 - `services/anthropic.cjs` - the one Anthropic client: `AI_MODEL`, `complete()`, `parseResponse()`, `describeError()`
 - `claude.cjs` - the three AI Advisor routes and their prompt builders
 - `routes/scenarios.cjs` - `POST /transition-plan`; its prompt and parser are the pure helpers in `utils/transitionPlan.cjs`
+- `routes/people.cjs` - the People list; its rules are the pure helpers in `utils/people.cjs`
 - `data.cjs` - Data processing API endpoints
 - `clientAnalyzer.cjs` - Core business logic and calculations
 - `routes/auth.cjs` - login, logout, me, change-password; the auth cookie attributes
@@ -147,13 +161,14 @@ Tier 0 work.
 - `utils/passwordPolicy.cjs` - `validatePassword`, `validateUsername` (pure, importable from tests)
 - `utils/schemaCheck.cjs` - the SQL that lists foreign keys to `users` and `checkUserForeignKeys(rows)` (pure, importable from tests)
 - `db.cjs` - the one `pg` pool (`DATABASE_URL`, `DATABASE_SSL`); pool errors are logged, never fatal
-- `init-db.sql` - the schema, applied idempotently by `server.cjs` at every start as one multi-statement query, so it is one transaction: a failing statement leaves the database as it was and, in production, stops the server. `clients.user_id` (the account that created the client; no current code reads or writes it) is `ON DELETE SET NULL`: deleting a user keeps its clients and clears their `user_id`. The `DO` block at the end migrates a database that still has the old `ON DELETE CASCADE`, matching the key by column, and is a catalog read on every later start. Keep migrations in this file idempotent, and do not drop a column an older `init-db.sql` still names: a Render rollback runs the older file at start (plan section 12)
+- `init-db.sql` - the schema (users, clients, client_revenues, people), applied idempotently by `server.cjs` at every start as one multi-statement query, so it is one transaction: a failing statement leaves the database as it was and, in production, stops the server. `clients.user_id` (the account that created the client; no current code reads or writes it) is `ON DELETE SET NULL`: deleting a user keeps its clients and clears their `user_id`. The `DO` block at the end migrates a database that still has the old `ON DELETE CASCADE`, matching the key by column, and is a catalog read on every later start. Keep migrations in this file idempotent, and do not drop a column an older `init-db.sql` still names: a Render rollback runs the older file at start (plan section 12)
 - `create-admin.cjs`, `scripts/reset-password.cjs`, `scripts/check-schema.cjs`, `scripts/delete-user.cjs` - add a partner, reset a password, check that no key to `users` cascades, delete an account
 
 ### Frontend Structure
 - `src/App.jsx` - Main application with tab navigation
 - `src/portfolioStore.js` - Zustand state management
 - `src/api.js` - every API call; prefixes `VITE_API_BASE_URL`, sends the cookie (`credentials: 'include'`)
+- `src/PeopleDialog.jsx`, `src/utils/people.js` - the People dialog and the pickers' rules
 - `src/components/ui/` - Reusable UI components (button, card, etc.)
 - Core feature components at `src/` root level
 

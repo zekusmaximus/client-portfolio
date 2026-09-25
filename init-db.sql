@@ -104,5 +104,51 @@ BEGIN
   END IF;
 END $$;
 
+-- People in the book (docs/plans/people-and-second-chair.md, P1-P5). A role
+-- describes a person's place in the book, not an app permission. People are
+-- never deleted, only deactivated.
+CREATE TABLE IF NOT EXISTS people (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('partner', 'emeritus', 'associate')),
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS people_name_lower_key ON people (lower(name));
+
+-- Seed the roster only into an empty table, so a rename or a role change made
+-- in the app survives every restart.
+INSERT INTO people (name, role)
+SELECT v.name, v.role
+  FROM (VALUES
+    ('Brendan', 'partner'), ('Jeff', 'partner'), ('Joe', 'partner'),
+    ('Kevin', 'partner'), ('Mike', 'partner'), ('Paula', 'partner'),
+    ('Jay', 'emeritus')
+  ) AS v(name, role)
+ WHERE NOT EXISTS (SELECT 1 FROM people);
+
+-- Each client: one lead (an active partner, enforced by the API), at most one
+-- second chair (anyone else), and an originator whose credit can pass to the
+-- firm. The legacy text columns (primary_lobbyist, lobbyist_team,
+-- client_originator) stay and are still written, for older code after a
+-- rollback. When a column already exists ADD COLUMN IF NOT EXISTS skips the
+-- whole clause, foreign key included.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS lead_id INTEGER REFERENCES people(id);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS second_chair_id INTEGER REFERENCES people(id);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS originator_id INTEGER REFERENCES people(id);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS originator_is_firm BOOLEAN NOT NULL DEFAULT false;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'clients'::regclass AND conname = 'clients_second_chair_not_lead'
+  ) THEN
+    ALTER TABLE clients ADD CONSTRAINT clients_second_chair_not_lead
+      CHECK (second_chair_id IS NULL OR second_chair_id <> lead_id);
+  END IF;
+END $$;
+
 -- No default users are created for security reasons
 -- Use the create-admin.cjs script to create your first administrator account

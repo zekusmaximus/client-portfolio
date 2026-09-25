@@ -15,6 +15,12 @@ const usePortfolioStore = create(
       reportingYear: null, // D4: latest year with any revenue row > 0; set with clients, null when logged out
       clientsLoading: false,
       fetchError: null,
+
+      // The People list (docs/plans/people-and-second-chair.md): everyone who can
+      // lead or second-chair a client, with their role and how many clients each
+      // leads, seconds and originated. From GET /api/people; not persisted.
+      people: [],
+      peopleError: null,
       
       // Upload state
       isUploading: false,
@@ -120,6 +126,37 @@ const usePortfolioStore = create(
         }
       },
       
+      // Fetch the People list; the client form's pickers and the People dialog read it
+      fetchPeople: async () => {
+        try {
+          const response = await apiClient.get('/people');
+          set({ people: response.people || [], peopleError: null });
+        } catch (err) {
+          console.error('Failed to fetch people', err);
+          if (err.message.includes('401') || err.message.includes('403')) {
+            get().logout();
+            return;
+          }
+          set({ peopleError: 'Could not load the People list. Reload the page to try again.' });
+        }
+      },
+
+      // Add someone to the People list; the server validates and may refuse
+      addPerson: async ({ name, role }) => {
+        const response = await apiClient.post('/people', { name, role });
+        await get().fetchPeople();
+        return response.person;
+      },
+
+      // Rename, change role, or (de)activate. A rename changes the names the
+      // client views show, so the clients are re-fetched too.
+      updatePerson: async (id, changes) => {
+        const response = await apiClient.put(`/people/${id}`, changes);
+        await get().fetchPeople();
+        if (changes.name !== undefined) await get().fetchClients();
+        return response.person;
+      },
+
       // Retry fetching clients (useful when connection is restored)
       retryFetchClients: async () => {
         set({ fetchError: null });
@@ -206,15 +243,19 @@ const usePortfolioStore = create(
         // relationship_intensity, renewal_probability) and the phantom
         // strategic_fit_score have been retired — succession now derives from
         // stickiness/effort, and the score from stickiness. No longer sent.
+        // People go as ids (docs/plans/people-and-second-chair.md, P3, P4); the
+        // server writes the legacy primary_lobbyist, lobbyist_team and
+        // client_originator text from them.
         return {
           name: clientData.name || '',
           status: clientData.status || 'Prospect',
           practice_area: clientData.practiceArea || [],
           conflict_risk: clientData.conflict_risk || 'Medium',
           notes: clientData.notes || '',
-          primary_lobbyist: clientData.primary_lobbyist || '',
-          client_originator: clientData.client_originator || '',
-          lobbyist_team: clientData.lobbyist_team || [],
+          lead_id: clientData.lead_id ?? null,
+          second_chair_id: clientData.second_chair_id ?? null,
+          originator_id: clientData.originator_id ?? null,
+          originator_is_firm: clientData.originator_is_firm === true,
           interaction_frequency: clientData.interaction_frequency || '',
           stickiness: clientData.stickiness ?? null,
           high_maintenance: clientData.high_maintenance === true,
@@ -273,6 +314,8 @@ const usePortfolioStore = create(
             reportingYear: null,
             clientsLoading: false,
             fetchError: null,
+            people: [],
+            peopleError: null,
             aiResults: { ...EMPTY_AI_RESULTS },
             aiError: null
           });

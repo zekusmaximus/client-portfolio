@@ -8,8 +8,15 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { LOBBYISTS } from './constants';
+import { NativeSelect } from '@/components/ui/native-select';
+import {
+  leadCandidates,
+  secondChairCandidates,
+  originatorCandidates,
+  personLabel,
+  toPersonId,
+  legacyPeopleFields
+} from './utils/people';
 import { 
   validateClientForm, 
   sanitizeFormData, 
@@ -40,7 +47,9 @@ const ClientEnhancementForm = ({ onClose }) => {
     isModalOpen,
     addClient,
     updateClient,
-    closeClientModal 
+    closeClientModal,
+    people,
+    peopleError
   } = usePortfolioStore();
 
   // Determine if this is create or edit mode
@@ -52,9 +61,11 @@ const ClientEnhancementForm = ({ onClose }) => {
     status: 'Prospect',
     practiceArea: [],
     conflict_risk: 'Medium',
-    primary_lobbyist: '',
-    client_originator: '',
-    lobbyist_team: [],
+    // People as select values: a person id as a string, '' for none
+    lead_id: '',
+    second_chair_id: '',
+    originator_id: '',
+    originator_is_firm: false,
     interaction_frequency: 'As-Needed',
     stickiness: 3,
     high_maintenance: false,
@@ -95,9 +106,10 @@ const ClientEnhancementForm = ({ onClose }) => {
         status: client.status || 'Prospect',
         practiceArea: client.practiceArea || [],
         conflict_risk: client.conflict_risk || 'Medium',
-        primary_lobbyist: client.primary_lobbyist || '',
-        client_originator: client.client_originator || '',
-        lobbyist_team: client.lobbyist_team || [],
+        lead_id: client.lead_id ? String(client.lead_id) : '',
+        second_chair_id: client.second_chair_id ? String(client.second_chair_id) : '',
+        originator_id: client.originator_id ? String(client.originator_id) : '',
+        originator_is_firm: client.originator_is_firm === true,
         interaction_frequency: client.interaction_frequency || 'As-Needed',
         stickiness: client.stickiness || 3,
         high_maintenance: client.high_maintenance === true,
@@ -111,9 +123,10 @@ const ClientEnhancementForm = ({ onClose }) => {
         status: 'Prospect',
         practiceArea: [],
         conflict_risk: 'Medium',
-        primary_lobbyist: '',
-        client_originator: '',
-        lobbyist_team: [],
+        lead_id: '',
+        second_chair_id: '',
+        originator_id: '',
+        originator_is_firm: false,
         interaction_frequency: 'As-Needed',
         stickiness: 3,
         high_maintenance: false,
@@ -131,15 +144,18 @@ const ClientEnhancementForm = ({ onClose }) => {
     handleFieldChange('practiceArea', newPracticeArea);
   };
 
-  const handleLobbyistTeamChange = (lobbyist, checked) => {
-    const newTeam = checked 
-      ? [...formData.lobbyist_team, lobbyist]
-      : formData.lobbyist_team.filter(l => l !== lobbyist);
-    
-    setFormData(prev => ({
-      ...prev,
-      lobbyist_team: newTeam
-    }));
+  // A person picker changed. Choosing the current second chair as lead clears
+  // the second chair, since one person cannot hold both seats.
+  const handlePersonChange = (field, value) => {
+    setFormData(prev => {
+      const next = { ...prev, [field]: value };
+      if (field === 'lead_id' && value && value === prev.second_chair_id) next.second_chair_id = '';
+      return next;
+    });
+    setErrors(prev => {
+      const { [field]: _removed, ...rest } = prev;
+      return rest;
+    });
   };
 
   const handleRevenueChange = (index, field, value) => {
@@ -183,6 +199,8 @@ const ClientEnhancementForm = ({ onClose }) => {
 
   const validateForm = () => {
     const validationErrors = validateClientForm(formData);
+    // Every client has a lead partner (P3); the server checks the rest
+    if (!formData.lead_id) validationErrors.lead_id = 'Choose a lead partner.';
     setErrors(validationErrors);
     
     // Log validation for debugging
@@ -228,6 +246,10 @@ const ClientEnhancementForm = ({ onClose }) => {
 
       const clientData = {
         ...sanitizedData,
+        lead_id: toPersonId(formData.lead_id),
+        second_chair_id: toPersonId(formData.second_chair_id),
+        originator_id: toPersonId(formData.originator_id),
+        originator_is_firm: formData.originator_is_firm === true,
         revenues: cleanRevenues
       };
 
@@ -314,20 +336,25 @@ const ClientEnhancementForm = ({ onClose }) => {
 
             <div className="space-y-2">
               <Label htmlFor="status">Status *</Label>
-              <Select 
-                value={formData.status} 
-                onValueChange={(value) => handleFieldChange('status', value)}
+              <NativeSelect
+                id="status"
+                value={formData.status}
+                onChange={(e) => handleFieldChange('status', e.target.value)}
+                className={errors.status ? 'border-red-500 focus:border-red-500' : ''}
               >
-                <SelectTrigger className={errors.status ? 'border-red-500 focus:border-red-500' : ''}>
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Active">Active</SelectItem>
-                  <SelectItem value="Prospect">Prospect</SelectItem>
-                  <SelectItem value="Inactive">Inactive</SelectItem>
-                  <SelectItem value="Former">Former</SelectItem>
-                </SelectContent>
-              </Select>
+                <optgroup label="From the contract period (the CSV import sets these)">
+                  <option value="IF">In Force</option>
+                  <option value="P">Proposal</option>
+                  <option value="D">Done</option>
+                  <option value="H">Hold</option>
+                </optgroup>
+                <optgroup label="Set by hand">
+                  <option value="Active">Active</option>
+                  <option value="Prospect">Prospect</option>
+                  <option value="Inactive">Inactive</option>
+                  <option value="Former">Former</option>
+                </optgroup>
+              </NativeSelect>
               {errors.status && (
                 <p className="text-sm text-red-500 flex items-center gap-1">
                   <AlertCircle className="h-3 w-3" />
@@ -455,90 +482,100 @@ const ClientEnhancementForm = ({ onClose }) => {
             )}
           </div>
 
-          {/* Lobbyist Assignment */}
+          {/* People: lead, second chair, originator (docs/plans/people-and-second-chair.md, P3, P4) */}
           <div className="space-y-4">
             <Label className="flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Team Assignment
+              People
             </Label>
 
-            {/* Primary Lobbyist */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Primary Lobbyist</Label>
-              <Select 
-                value={formData.primary_lobbyist} 
-                onValueChange={(value) => handleFieldChange('primary_lobbyist', value)}
-              >
-                <SelectTrigger className={errors.primary_lobbyist ? 'border-red-500 focus:border-red-500' : ''}>
-                  <SelectValue placeholder="Select primary lobbyist..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">None</SelectItem>
-                  {LOBBYISTS.map((lobbyist) => (
-                    <SelectItem key={lobbyist} value={lobbyist}>
-                      {lobbyist}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors.primary_lobbyist && (
-                <p className="text-sm text-red-500 flex items-center gap-1">
-                  <AlertCircle className="h-3 w-3" />
-                  {errors.primary_lobbyist}
-                </p>
-              )}
-            </div>
+            {peopleError && (
+              <p className="text-sm text-red-500 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {peopleError}
+              </p>
+            )}
 
-            {/* Client Originator */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Client Originator</Label>
-              <Select 
-                value={formData.client_originator} 
-                onValueChange={(value) => handleFieldChange('client_originator', value)}
-              >
-                <SelectTrigger className={errors.client_originator ? 'border-red-500 focus:border-red-500' : ''}>
-                  <SelectValue placeholder="Select client originator..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">None</SelectItem>
-                  {LOBBYISTS.map((lobbyist) => (
-                    <SelectItem key={lobbyist} value={lobbyist}>
-                      {lobbyist}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors.client_originator && (
-                <p className="text-sm text-red-500 flex items-center gap-1">
-                  <AlertCircle className="h-3 w-3" />
-                  {errors.client_originator}
-                </p>
-              )}
-            </div>
+            {isEditMode && !client.lead_id && client.primary_lobbyist && (
+              <p className="text-sm text-muted-foreground">
+                Recorded before the People list: lead {client.primary_lobbyist}
+                {Array.isArray(client.lobbyist_team) && client.lobbyist_team.length > 0 && `, team ${client.lobbyist_team.join(', ')}`}
+                {client.client_originator && `, originator ${client.client_originator}`}. Choose from the list below.
+              </p>
+            )}
 
-            {/* Lobbyist Team */}
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Lobbyist Team</Label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {LOBBYISTS.map((lobbyist) => (
-                  <div key={lobbyist} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`team-${lobbyist}`}
-                      checked={formData.lobbyist_team.includes(lobbyist)}
-                      onCheckedChange={(checked) => handleLobbyistTeamChange(lobbyist, checked)}
-                    />
-                    <Label htmlFor={`team-${lobbyist}`} className="text-sm">
-                      {lobbyist}
-                    </Label>
-                  </div>
-                ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="lead_id" className="text-sm font-medium">Lead partner *</Label>
+                <NativeSelect
+                  id="lead_id"
+                  value={formData.lead_id}
+                  onChange={(e) => handlePersonChange('lead_id', e.target.value)}
+                  className={errors.lead_id ? 'border-red-500 focus:border-red-500' : ''}
+                >
+                  <option value="">Choose the lead partner...</option>
+                  {leadCandidates(people).map((person) => (
+                    <option key={person.id} value={String(person.id)}>{person.name}</option>
+                  ))}
+                </NativeSelect>
+                {errors.lead_id && (
+                  <p className="text-sm text-red-500 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {errors.lead_id}
+                  </p>
+                )}
               </div>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {formData.lobbyist_team.map((lobbyist) => (
-                  <Badge key={lobbyist} variant="secondary">
-                    {lobbyist}
-                  </Badge>
+
+              <div className="space-y-2">
+                <Label htmlFor="second_chair_id" className="text-sm font-medium">Second chair</Label>
+                <NativeSelect
+                  id="second_chair_id"
+                  value={formData.second_chair_id}
+                  onChange={(e) => handlePersonChange('second_chair_id', e.target.value)}
+                  className={errors.second_chair_id ? 'border-red-500 focus:border-red-500' : ''}
+                >
+                  <option value="">None</option>
+                  {secondChairCandidates(people, toPersonId(formData.lead_id)).map((person) => (
+                    <option key={person.id} value={String(person.id)}>{personLabel(person)}</option>
+                  ))}
+                </NativeSelect>
+                {errors.second_chair_id && (
+                  <p className="text-sm text-red-500 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {errors.second_chair_id}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="originator_id" className="text-sm font-medium">Originator</Label>
+              <NativeSelect
+                id="originator_id"
+                value={formData.originator_id}
+                onChange={(e) => handlePersonChange('originator_id', e.target.value)}
+                className={errors.originator_id ? 'border-red-500 focus:border-red-500' : ''}
+              >
+                <option value="">None recorded</option>
+                {originatorCandidates(people, toPersonId(formData.originator_id)).map((person) => (
+                  <option key={person.id} value={String(person.id)}>{personLabel(person)}</option>
                 ))}
+              </NativeSelect>
+              {errors.originator_id && (
+                <p className="text-sm text-red-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  {errors.originator_id}
+                </p>
+              )}
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="originator_is_firm"
+                  checked={formData.originator_is_firm === true}
+                  onCheckedChange={(checked) => handlePersonChange('originator_is_firm', checked === true)}
+                />
+                <Label htmlFor="originator_is_firm" className="text-sm">
+                  Origination credit goes to the firm (the originator's credit has ended, or the firm brought the client in)
+                </Label>
               </div>
             </div>
           </div>
@@ -615,7 +652,10 @@ const ClientEnhancementForm = ({ onClose }) => {
             </CardHeader>
             <CardContent>
               {(() => {
-                const enhancedClient = enhanceClientWithSuccessionMetrics(formData);
+                const enhancedClient = enhanceClientWithSuccessionMetrics({
+                  ...formData,
+                  ...legacyPeopleFields(formData, people)
+                });
                 return (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
