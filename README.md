@@ -60,7 +60,7 @@ it the AI buttons say the AI is not configured.
 Checks, the same three CI runs on every pull request:
 
 ```powershell
-npm run lint                                # errors fail; 7 exhaustive-deps warnings are expected
+npm run lint                                # errors fail; 3 exhaustive-deps warnings are expected
 npm test                                    # node --test, no database needed
 $env:VITE_API_BASE_URL = 'https://gbacpod.com'; npx vite build
 ```

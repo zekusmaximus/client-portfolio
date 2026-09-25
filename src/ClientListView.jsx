@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ConfirmationDialog from './components/ui/confirmation-dialog';
 import {
   Users,
@@ -24,13 +23,14 @@ import { isClientEnhanced, getEnhancedClientCount, getEnhancementRate } from './
 import { formatClientName } from './utils/textUtils';
 import { practiceAreaMatchesSearch } from './utils/dataUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
+import { NativeSelect } from './components/ui/native-select';
+import { personFilterOptions, matchesPersonFilter } from './utils/people';
 
 const ClientListView = () => {
   const reportingYear = usePortfolioStore((s) => s.getReportingYear());
   const {
     clients,
-    partners,
-    fetchPartners,
+    people,
     openClientModal,
     deleteClient
   } = usePortfolioStore();
@@ -38,16 +38,16 @@ const ClientListView = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('strategicValue');
   const [sortOrder, setSortOrder] = useState('desc');
-  const [partnerFilter, setPartnerFilter] = useState('all');
+  // 'all', 'none' or a person id (docs/plans/people-and-second-chair.md, Phase 4)
+  const [leadFilter, setLeadFilter] = useState('all');
+  const [secondChairFilter, setSecondChairFilter] = useState('all');
   const [relationshipTypeFilter, setRelationshipTypeFilter] = useState('all');
   const [successionRiskFilter, setSuccessionRiskFilter] = useState('all');
   const [deleteDialogClient, setDeleteDialogClient] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Fetch partners when component mounts
-  useMemo(() => {
-    fetchPartners();
-  }, [fetchPartners]);
+  const leadOptions = useMemo(() => personFilterOptions(people, clients, 'lead'), [people, clients]);
+  const secondChairOptions = useMemo(() => personFilterOptions(people, clients, 'second'), [people, clients]);
 
   // Filter and sort clients
   const filteredAndSortedClients = useMemo(() => {
@@ -55,14 +55,15 @@ const ClientListView = () => {
     
     return clients
         .filter(client => {
-          // Text search filter
-          const matchesSearch = formatClientName(client.name).toLowerCase().includes(searchTerm.toLowerCase()) ||
-            practiceAreaMatchesSearch(client.practiceArea, searchTerm);
+          // Text search: the client's name, practice areas, lead or second chair
+          const term = searchTerm.toLowerCase();
+          const matchesSearch = formatClientName(client.name).toLowerCase().includes(term) ||
+            practiceAreaMatchesSearch(client.practiceArea, searchTerm) ||
+            [client.lead?.name, client.secondChair?.name].some((name) => name && name.toLowerCase().includes(term));
           
-          // Partner filter
-          const matchesPartner = partnerFilter === 'all' || 
-            client.primary_lobbyist === partnerFilter ||
-            (!client.primary_lobbyist && partnerFilter === 'unassigned');
+          // Lead and second-chair filters
+          const matchesPartner = matchesPersonFilter(client.lead, leadFilter) &&
+            matchesPersonFilter(client.secondChair, secondChairFilter);
           
           // Relationship type filter
           const matchesRelationshipType = relationshipTypeFilter === 'all' ||
@@ -109,7 +110,7 @@ const ClientListView = () => {
             return bValue - aValue;
           }
         });
-  }, [clients, searchTerm, sortBy, sortOrder, partnerFilter, relationshipTypeFilter, successionRiskFilter]);
+  }, [clients, searchTerm, sortBy, sortOrder, leadFilter, secondChairFilter, relationshipTypeFilter, successionRiskFilter]);
 
   const handleEditClient = (client) => {
     openClientModal(client);
@@ -185,54 +186,73 @@ const ClientListView = () => {
             Enhance your client data with detailed information to improve strategic analysis and recommendations.
           </p>
           
-          {/* Search and Sort Controls */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
+          {/* Search, then the filters and the sort */}
+          <div className="space-y-3">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search clients or practice areas..."
+                placeholder="Search clients, practice areas or people..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
               />
             </div>
-            <Select value={partnerFilter} onValueChange={setPartnerFilter}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Filter by partner" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Partners</SelectItem>
-                <SelectItem value="unassigned">Unassigned</SelectItem>
-                {partners?.map(partner => (
-                  <SelectItem key={partner.id} value={partner.name}>
-                    {partner.name}
-                  </SelectItem>
+            <div className="flex flex-wrap items-center gap-3">
+            <div className="w-full sm:w-44">
+              <NativeSelect
+                aria-label="Filter by lead"
+                value={leadFilter}
+                onChange={(e) => setLeadFilter(e.target.value)}
+              >
+                <option value="all">All leads</option>
+                <option value="none">No lead</option>
+                {leadOptions.map((person) => (
+                  <option key={person.id} value={String(person.id)}>
+                    {person.name}{person.active ? '' : ' (inactive)'}
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
-            <Select value={relationshipTypeFilter} onValueChange={setRelationshipTypeFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Relationship Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="primary">Primary</SelectItem>
-                <SelectItem value="secondary">Secondary</SelectItem>
-                <SelectItem value="shared">Shared</SelectItem>
-                <SelectItem value="orphaned">Orphaned</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={successionRiskFilter} onValueChange={setSuccessionRiskFilter}>
-              <SelectTrigger className="w-[150px]">
-                <SelectValue placeholder="Risk Level" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Risk</SelectItem>
-                <SelectItem value="low">Low (1-3)</SelectItem>
-                <SelectItem value="medium">Medium (4-6)</SelectItem>
-                <SelectItem value="high">High (7-10)</SelectItem>
-              </SelectContent>
-            </Select>
+              </NativeSelect>
+            </div>
+            <div className="w-full sm:w-48">
+              <NativeSelect
+                aria-label="Filter by second chair"
+                value={secondChairFilter}
+                onChange={(e) => setSecondChairFilter(e.target.value)}
+              >
+                <option value="all">All second chairs</option>
+                <option value="none">No second chair</option>
+                {secondChairOptions.map((person) => (
+                  <option key={person.id} value={String(person.id)}>
+                    {person.name}{person.active ? '' : ' (inactive)'}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+            <div className="w-full sm:w-40">
+              <NativeSelect
+                aria-label="Filter by relationship type"
+                value={relationshipTypeFilter}
+                onChange={(e) => setRelationshipTypeFilter(e.target.value)}
+              >
+                <option value="all">All types</option>
+                <option value="primary">Primary</option>
+                <option value="secondary">Secondary</option>
+                <option value="shared">Shared</option>
+                <option value="orphaned">Orphaned</option>
+              </NativeSelect>
+            </div>
+            <div className="w-full sm:w-40">
+              <NativeSelect
+                aria-label="Filter by succession risk"
+                value={successionRiskFilter}
+                onChange={(e) => setSuccessionRiskFilter(e.target.value)}
+              >
+                <option value="all">All risk</option>
+                <option value="low">Low (1-3)</option>
+                <option value="medium">Medium (4-6)</option>
+                <option value="high">High (7-10)</option>
+              </NativeSelect>
+            </div>
             <div className="flex gap-2">
               <select
                 value={sortBy}
@@ -252,6 +272,7 @@ const ClientListView = () => {
               >
                 {sortOrder === 'asc' ? '↑' : '↓'}
               </Button>
+            </div>
             </div>
           </div>
         </CardContent>
@@ -355,16 +376,27 @@ const ClientListView = () => {
                 </div>
               )}
 
-              {/* Primary Lobbyist */}
-              {client.primary_lobbyist && (
+              {/* Lead and second chair */}
+              <div className="grid grid-cols-2 gap-3" data-testid="client-people">
                 <div className="flex items-center gap-2">
                   <User className="h-4 w-4 text-blue-500" />
                   <div>
-                    <p className="text-xs text-muted-foreground">Primary Lobbyist</p>
-                    <p className="font-medium text-sm">{client.primary_lobbyist}</p>
+                    <p className="text-xs text-muted-foreground">Lead</p>
+                    <p className={`font-medium text-sm ${client.lead ? '' : 'text-amber-700'}`}>
+                      {client.lead?.name || 'No lead'}
+                    </p>
                   </div>
                 </div>
-              )}
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-blue-400" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Second chair</p>
+                    <p className={`font-medium text-sm ${client.secondChair ? '' : 'text-muted-foreground'}`}>
+                      {client.secondChair?.name || 'None'}
+                    </p>
+                  </div>
+                </div>
+              </div>
 
               {/* Interaction Frequency */}
               {client.interaction_frequency && (

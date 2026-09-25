@@ -13,6 +13,8 @@ import {
   originatorLabel,
   toPersonId,
   legacyPeopleFields,
+  personFilterOptions,
+  matchesPersonFilter,
 } from '../src/utils/people.js';
 
 const { validatePersonInput, parseId, validateAssignment, legacyText, personChangeBlockers, withPeopleFields } = people;
@@ -249,5 +251,39 @@ describe('src/utils/people.js pickers', () => {
     assert.equal(toPersonId('4'), 4);
     assert.equal(toPersonId(''), null);
     assert.equal(toPersonId('none'), null);
+  });
+});
+
+describe('the client list\'s lead and second-chair filters (Phase 4)', () => {
+  const MIKE = { id: 6, name: 'Mike', role: 'partner', active: true };
+  const people = [...ROSTER, MIKE];
+  const clients = [
+    { id: 'a', lead: KEVIN, secondChair: JAY },
+    { id: 'b', lead: PAULA, secondChair: null },
+    { id: 'c', lead: STEVE, secondChair: ANNA },
+    { id: 'd', lead: null, secondChair: null },
+  ];
+
+  test('the lead filter offers active partners and anyone else leading a client', () => {
+    assert.deepEqual(personFilterOptions(people, clients, 'lead').map((p) => p.name),
+      ['Kevin', 'Mike', 'Paula', 'Steve']);
+  });
+
+  test('the second-chair filter offers everyone active and anyone inactive in a seat', () => {
+    assert.deepEqual(personFilterOptions(people, clients, 'second').map((p) => p.name),
+      ['Kevin', 'Mike', 'Paula', 'Jay', 'Anna']);
+    const withSteve = [...clients, { id: 'e', lead: KEVIN, secondChair: STEVE }];
+    assert.ok(personFilterOptions(people, withSteve, 'second').some((p) => p.name === 'Steve'));
+  });
+
+  test('matchesPersonFilter: all, none, or one person by id as the select gives it', () => {
+    assert.equal(matchesPersonFilter(KEVIN, 'all'), true);
+    assert.equal(matchesPersonFilter(null, 'all'), true);
+    assert.equal(matchesPersonFilter(null, 'none'), true);
+    assert.equal(matchesPersonFilter(KEVIN, 'none'), false);
+    assert.equal(matchesPersonFilter(KEVIN, '1'), true);
+    assert.equal(matchesPersonFilter(KEVIN, '2'), false);
+    assert.equal(matchesPersonFilter(null, '1'), false);
+    assert.deepEqual(clients.filter((c) => matchesPersonFilter(c.secondChair, 'none')).map((c) => c.id), ['b', 'd']);
   });
 });
