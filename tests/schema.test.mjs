@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import schemaCheck from '../utils/schemaCheck.cjs';
 
-const { USER_FOREIGN_KEYS_SQL, checkUserForeignKeys } = schemaCheck;
+const { USER_FOREIGN_KEYS_SQL, checkUserForeignKeys, checkClientForeignKeys, checkBookReset } = schemaCheck;
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const initSql = readFileSync(new URL('../init-db.sql', import.meta.url), 'utf8');
 const serverUrl = process.env.SCHEMA_TEST_SERVER_URL;
@@ -373,6 +373,217 @@ describe('people on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER
       assert.equal((await roster(db)).length, 7);
 
       await applyInit(db);
+      assert.equal((await roster(db)).length, 7);
+    });
+  });
+});
+
+// --- reset-book (docs/plans/people-and-second-chair.md, P7 and Phase 3) ------
+
+const CLIENT_CASCADE = 'FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE';
+const CLIENT_NO_ACTION = 'FOREIGN KEY (client_id) REFERENCES clients(id)';
+const CLIENT_SET_NULL = 'FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL';
+
+test('checkClientForeignKeys: cascading keys pass; the other tables are listed once, without clients and client_revenues', () => {
+  const result = checkClientForeignKeys([
+    { table_name: 'client_revenues', constraint_name: 'client_revenues_client_id_fkey', on_delete: 'c', definition: CLIENT_CASCADE },
+    { table_name: 'clients', constraint_name: 'clients_parent_fkey', on_delete: 'c', definition: 'FOREIGN KEY (parent_id) REFERENCES clients(id) ON DELETE CASCADE' },
+    { table_name: 'revenues', constraint_name: 'revenues_client_id_fkey', on_delete: 'c', definition: CLIENT_CASCADE },
+    { table_name: 'revenues', constraint_name: 'revenues_other_fkey', on_delete: 'c', definition: CLIENT_CASCADE },
+  ]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.refused, []);
+  assert.deepEqual(result.otherTables, ['revenues']);
+  assert.deepEqual(result.lines[0], `ok  client_revenues.client_revenues_client_id_fkey: ${CLIENT_CASCADE}`);
+  assert.equal(result.lines.length, 4);
+});
+
+test('checkClientForeignKeys: any key that does not cascade fails and is named', () => {
+  const result = checkClientForeignKeys([
+    { table_name: 'client_notes', constraint_name: 'client_notes_client_id_fkey', on_delete: 'a', definition: CLIENT_NO_ACTION },
+    { table_name: 'client_revenues', constraint_name: 'client_revenues_client_id_fkey', on_delete: 'c', definition: CLIENT_CASCADE },
+    { table_name: 'visits', constraint_name: 'visits_client_id_fkey', on_delete: 'n', definition: CLIENT_SET_NULL },
+  ]);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.refused, ['client_notes.client_notes_client_id_fkey', 'visits.visits_client_id_fkey']);
+  assert.deepEqual(result.otherTables, ['client_notes', 'visits']);
+  assert.deepEqual(result.lines, [
+    `DOES NOT CASCADE  client_notes.client_notes_client_id_fkey: ${CLIENT_NO_ACTION}`,
+    `ok  client_revenues.client_revenues_client_id_fkey: ${CLIENT_CASCADE}`,
+    `DOES NOT CASCADE  visits.visits_client_id_fkey: ${CLIENT_SET_NULL}`,
+  ]);
+});
+
+test('checkClientForeignKeys: no key referencing clients passes and says so', () => {
+  assert.deepEqual(checkClientForeignKeys([]),
+    { ok: true, lines: ['No foreign key references clients.'], refused: [], otherTables: [] });
+});
+
+test('checkBookReset: commits only on an empty book with the accounts and people unchanged', () => {
+  const before = { users: 6, people: 7, clients: 142, revenueRows: 398, others: [{ table: 'revenues', rows: 12 }] };
+  const empty = { users: 6, people: 7, clients: 0, revenueRows: 0, others: [{ table: 'revenues', rows: 0 }] };
+  assert.deepEqual(checkBookReset(before, empty), { ok: true, problems: [] });
+
+  assert.deepEqual(checkBookReset(before, { ...empty, clients: 1, revenueRows: 2, others: [{ table: 'revenues', rows: 3 }] }), {
+    ok: false,
+    problems: ['clients still holds 1 row', 'client_revenues still holds 2 rows', 'revenues still holds 3 rows'],
+  });
+  assert.deepEqual(checkBookReset(before, { ...empty, users: 5, people: 0 }), {
+    ok: false,
+    problems: ['accounts went from 6 to 5', 'people went from 7 to 0'],
+  });
+});
+
+// V2__update_clients_schema.sql's revenues table, as production may still hold
+// it: the file's steps 4 and 5. Its other steps alter clients, which
+// init-db.sql has absorbed.
+const v2Sql = readFileSync(new URL('../V2__update_clients_schema.sql', import.meta.url), 'utf8');
+const V2_REVENUES_SQL = v2Sql.slice(v2Sql.indexOf('-- Step 4'), v2Sql.lastIndexOf('COMMIT'));
+
+test('V2__update_clients_schema.sql still creates the cascading revenues table the reset tests use', () => {
+  assert.match(V2_REVENUES_SQL, /^-- Step 4/);
+  assert.match(V2_REVENUES_SQL, /CREATE TABLE revenues \(/);
+  assert.match(V2_REVENUES_SQL, /REFERENCES clients\(id\) ON DELETE CASCADE/);
+  assert.doesNotMatch(V2_REVENUES_SQL, /COMMIT/);
+});
+
+test('reset-book: any argument but --confirm prints the usage and exits 1 without a database', async () => {
+  const env = { ...process.env };
+  delete env.DATABASE_URL;
+  for (const args of [['--yes'], ['confirm'], ['--confirm', '--confirm'], ['--confirm', 'extra']]) {
+    const result = await execFileAsync(process.execPath, ['scripts/reset-book.cjs', ...args], { cwd: repo, env })
+      .then(({ stdout, stderr }) => ({ code: 0, stdout, stderr }))
+      .catch((error) => ({ code: error.code, stdout: error.stdout, stderr: error.stderr }));
+    assert.equal(result.code, 1, args.join(' '));
+    assert.match(result.stderr, /^Usage: node scripts\/reset-book\.cjs \[--confirm\]$/m);
+    assert.doesNotMatch(result.stderr, /DATABASE_URL|Reset failed/);
+  }
+});
+
+// Every row of the tables the reset reads, for "unchanged"
+async function bookSnapshot(db) {
+  const rows = async (sql) => (await db.query(sql)).rows;
+  return {
+    users: await rows('SELECT * FROM users ORDER BY id'),
+    people: await rows('SELECT * FROM people ORDER BY id'),
+    clients: await rows('SELECT to_jsonb(c) AS row FROM clients c ORDER BY id'),
+    revenues: await rows('SELECT to_jsonb(r) AS row FROM client_revenues r ORDER BY id'),
+  };
+}
+
+// seed()'s two accounts, five clients and ten revenue rows, with people
+// assigned, an associate and an inactive former partner: nine people.
+async function seedBook(db) {
+  await seed(db);
+  await db.query(`
+    INSERT INTO people (name, role, active) VALUES ('Anna', 'associate', true), ('Steve', 'partner', false);
+    UPDATE clients SET lead_id = (SELECT id FROM people WHERE name = 'Kevin'),
+                       second_chair_id = (SELECT id FROM people WHERE name = 'Anna'),
+                       originator_id = (SELECT id FROM people WHERE name = 'Steve'),
+                       originator_is_firm = true;
+  `);
+}
+
+const RESET_PREVIEW_LAST = /^Nothing was deleted\. Run again with --confirm to delete every client\.$/m;
+
+describe('reset-book on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  test('without an argument: prints the keys and the counts, deletes nothing, exits 1', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      const before = await bookSnapshot(db);
+
+      const result = await runScript('scripts/reset-book.cjs', url);
+      assert.equal(result.code, 1, result.stdout + result.stderr);
+      assert.match(result.stdout, /^ok {2}client_revenues\.client_revenues_client_id_fkey: .*ON DELETE CASCADE$/m);
+      assert.match(result.stdout, /^Accounts: 2$/m);
+      assert.match(result.stdout, /^People: 9$/m);
+      assert.match(result.stdout, /^Clients: 5$/m);
+      assert.match(result.stdout, /^Revenue rows: 10$/m);
+      assert.doesNotMatch(result.stdout, /^Rows of /m);
+      assert.match(result.stdout, RESET_PREVIEW_LAST);
+      assert.deepEqual(await bookSnapshot(db), before);
+    });
+  });
+
+  test('--confirm: every client and revenue row goes; accounts and people are untouched', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      const before = await bookSnapshot(db);
+
+      const result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout,
+        /^Removed 5 clients and 10 revenue rows\. Accounts: 2 and people: 9, unchanged\.$/m);
+
+      const after = await bookSnapshot(db);
+      assert.deepEqual(after.clients, []);
+      assert.deepEqual(after.revenues, []);
+      assert.deepEqual(after.users, before.users);
+      assert.deepEqual(after.people, before.people);
+    });
+  });
+
+  test("a legacy revenues table from V2 is counted, and emptied by its cascade", async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await db.query(V2_REVENUES_SQL);
+      await db.query('INSERT INTO revenues (client_id, year, revenue_amount) SELECT id, 2023, 500 FROM clients');
+
+      let result = await runScript('scripts/reset-book.cjs', url);
+      assert.equal(result.code, 1, result.stdout + result.stderr);
+      assert.match(result.stdout, /^ok {2}revenues\.revenues_client_id_fkey: FOREIGN KEY \(client_id\) REFERENCES clients\(id\) ON DELETE CASCADE$/m);
+      assert.match(result.stdout, /^Rows of revenues: 5$/m);
+      assert.match(result.stdout, RESET_PREVIEW_LAST);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM revenues')).rows[0].n, 5);
+
+      result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout,
+        /^Removed 5 clients and 10 revenue rows \(and 5 rows of revenues\)\. Accounts: 2 and people: 9, unchanged\.$/m);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM revenues')).rows[0].n, 0);
+      assert.deepEqual(await counts(db), { users: 2, clients: 0, revenues: 0 });
+    });
+  });
+
+  test('a foreign key to clients that does not cascade: refused, named, nothing deleted', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await db.query(`
+        CREATE TABLE client_notes (id SERIAL PRIMARY KEY, client_id UUID REFERENCES clients(id), body TEXT);
+        INSERT INTO client_notes (client_id, body) SELECT id, 'note' FROM clients;
+        CREATE TABLE visits (id SERIAL PRIMARY KEY, client_id UUID REFERENCES clients(id) ON DELETE SET NULL);
+      `);
+      const before = await bookSnapshot(db);
+
+      let result = await runScript('scripts/reset-book.cjs', url);
+      assert.equal(result.code, 1);
+      assert.match(result.stdout, /^Rows of client_notes: 5$/m);
+      assert.match(result.stdout, /^Rows of visits: 0$/m);
+      assert.match(result.stdout,
+        /^--confirm will refuse while client_notes\.client_notes_client_id_fkey, visits\.visits_client_id_fkey do not cascade\.$/m);
+
+      result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 1, result.stdout + result.stderr);
+      assert.match(result.stderr, /^DOES NOT CASCADE {2}client_notes\.client_notes_client_id_fkey: FOREIGN KEY \(client_id\) REFERENCES clients\(id\)$/m);
+      assert.match(result.stderr, /^DOES NOT CASCADE {2}visits\.visits_client_id_fkey: .*ON DELETE SET NULL$/m);
+      assert.match(result.stderr,
+        /^Refused: client_notes\.client_notes_client_id_fkey, visits\.visits_client_id_fkey do not cascade, .* Nothing was deleted\.$/m);
+      assert.doesNotMatch(result.stdout, /^Removed /m);
+      assert.deepEqual(await bookSnapshot(db), before);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM client_notes')).rows[0].n, 5);
+    });
+  });
+
+  test('an empty book: --confirm succeeds and removes 0', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      const result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^Removed 0 clients and 0 revenue rows\. Accounts: 0 and people: 7, unchanged\.$/m);
       assert.equal((await roster(db)).length, 7);
     });
   });

@@ -376,9 +376,9 @@ account adds nobody to it, and associates get no account
 (`docs/plans/people-and-second-chair.md`, P1 and P2).
 
 A partner changes their own password from the header's **Change password**
-button. The scripts below are for adding a partner, for a forgotten password
-and for removing an account (7.3). Neither a reset nor a deletion ends sessions
-already issued; section 8.1 does.
+button. The scripts below are for adding a partner, for a forgotten password,
+for removing an account (7.3) and for starting the book over (7.4). Neither a
+reset nor a deletion ends sessions already issued; section 8.1 does.
 
 ### 7.1 From the Render Shell (paid instances only)
 
@@ -465,6 +465,136 @@ reset in 7.1 or 7.2:
 ```powershell
 $pw = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)) + 'aA1!'
 ```
+
+### 7.4 Starting the book over (`reset-book`)
+
+Once, for the people plan's fresh book
+(`docs/plans/people-and-second-chair.md`, P7 and Phase 3): every client and
+revenue row is deleted and the new sheet is imported into the empty book.
+Accounts and the People list are untouched, and partners stay signed in. It
+needs the deploy that contains `scripts/reset-book.cjs` and the upload page's
+**Check file** button, on Render and on Netlify (section 4).
+
+Tell the partners not to change clients from step 3 until step 6 is done: a
+change made after the backup is lost with the old book and is not in the
+backup, and a client added between the reset and the import stays in the new
+book.
+
+1. **Assemble the sheet** in the plan's section 3 format (the Data Upload
+   page's **Download template** has the header). After the reset the sheet's
+   `YYYY Contracts` columns are the only revenue history, so include every year
+   the dashboard should show. Every name in `Lead`, `Second Chair` and
+   `Originator` must be on the People list (header, **People**): add each
+   associate the sheet names (**Add a person**, role Associate), and add a
+   former colleague the sheet names as an originator, such as Steve or Fritz,
+   then **Edit**, clear **Active** and **Save**. `Firm` in `Originator` needs
+   nobody. A lead must be an active partner. Save the sheet as CSV UTF-8.
+
+2. **Check the file until it passes.** On <https://gbacpod.com>, **Data
+   Upload**, choose the file, **Check file**. The server runs every check and
+   every write of the import and then rolls them back: nothing is written.
+   Fix each row the table lists (numbered as in the spreadsheet: the header is
+   row 1) and check again, until it answers `The file is ready to import: <n>
+   clients; years 2024 ($...), 2025 ($...), 2026 ($...); columns ... Nothing
+   was written.` Confirm the client count, each year's total against the
+   sheet's column sum (`=SUM(C2:C500)` under each `YYYY Contracts` column),
+   and the columns. Do not press **Upload and Process CSV** yet: before the
+   reset it merges the sheet into the old book, and the backup in step 3 would
+   then hold the merge instead of the old book.
+
+3. **Back up by hand** (`backup/INSTALL.md` step 7) and keep the file:
+
+   ```powershell
+   $repo = 'zekusmaximus/client-portfolio-backups'
+   gh workflow run backup.yml --repo $repo
+   Start-Sleep 10
+   $run = gh run list --repo $repo --workflow backup.yml --limit 1 --json databaseId --jq '.[0].databaseId'
+   gh run watch $run --repo $repo --exit-status
+   gh run view $run --repo $repo --log | Select-String 'pg-backup:'
+   gh run download $run --repo $repo --name client-portfolio-backup --dir "$HOME\cp-before-reset-$run"
+   Get-ChildItem "$HOME\cp-before-reset-$run"
+   ```
+
+   `gh run watch --exit-status` must end without an error, and the log must
+   show `row counts match for N tables`; write down its `clients` and
+   `client_revenues` counts and the run id. GitHub deletes the artifact after
+   90 days; if the old book should outlive that, copy the `.dump.age` file
+   somewhere you keep records (it is encrypted; the key is in the password
+   manager). If this quarter's restore drill has not been done, run
+   `backup/RESTORE.md` (b) to (d) on this file now, in the same window after
+   `$work = "$HOME\cp-before-reset-$run"` and `$major` from RESTORE.md's
+   opening block: it proves the key opens the file before production depends
+   on it.
+
+4. **Reset.** First without an argument, which only counts; then with
+   `--confirm`. From your machine (the environment in 7.2):
+
+   ```powershell
+   Set-Location <path to your clone of client-portfolio>
+   git pull; npm ci
+   $env:DATABASE_URL = Read-Host 'External Database URL' -MaskInput
+   $env:DATABASE_SSL = 'no-verify'
+   node scripts/reset-book.cjs              # counts only; deletes nothing
+   node scripts/reset-book.cjs --confirm    # after reading the counts
+   Remove-Item Env:DATABASE_URL, Env:DATABASE_SSL
+   ```
+
+   In the Render Shell (bash; it runs the deployed commit, so check that
+   `ls scripts/reset-book.cjs` finds the file): `node scripts/reset-book.cjs`,
+   then `node scripts/reset-book.cjs --confirm`.
+
+   The first run prints a line per foreign key to `clients`, then `Accounts`,
+   `People`, `Clients`, `Revenue rows` and, if production still has the
+   legacy `revenues` table from `V2__update_clients_schema.sql`,
+   `Rows of revenues`; it ends `Nothing was deleted. Run again with --confirm
+   to delete every client.` and exits 1 by design. Check that `Clients` and
+   `Revenue rows` equal the backup log's `clients` and `client_revenues`, and
+   that every key line starts with `ok`. A line starting `DOES NOT CASCADE`
+   names a table this app does not create: stop, `--confirm` will refuse, and
+   find out what it holds before going on.
+
+   `--confirm` runs one transaction: it locks `clients` against writes (the
+   page can still read), deletes every client (revenue rows, and any legacy
+   `revenues` rows, go with them) and commits only if the book is then empty
+   and the numbers of accounts and people are unchanged. It prints
+   `Removed <n> clients and <r> revenue rows. Accounts: <a> and people: <p>,
+   unchanged.` (with `(and <k> rows of revenues)` when that table exists) and
+   exits 0. Anything else starts `Refused:`, changes nothing and exits 1; if a
+   save was in progress it waits 10 seconds and refuses, and running it again
+   is safe.
+
+5. **Import** on gbacpod.com: **Data Upload**, the same file, **Check file**
+   once more (now against the empty book), then **Upload and Process CSV**.
+   The success card lists each year with its total and the columns it read;
+   the header shows `<n> clients loaded`.
+
+6. **Spot-check.** The header's total and the Dashboard's **Total Revenue**
+   show the latest year only: compare them with that year's column sum (the
+   earlier years' totals were compared in steps 2 and 5). On **Client
+   Details**, open a few clients with their **Edit Client** button and check
+   the lead, the second chair and the revenue by year against the sheet (the
+   card itself shows only the lead until Phase 4). On **People**, each
+   person's `leads N clients · second chair on N · originated N` should match
+   the sheet (`=COUNTIF(F:F,"Kevin")` on the `Lead` column, and so on).
+
+7. **Remove Steve's and Fritz's accounts** if they have them (the backup of
+   2026-09-24 counted seven accounts against six partners): 7.3,
+   `check-schema` and then `delete-user`. Deleting an account does not touch
+   the People list, so they stay on it as inactive originators. Do this last:
+   a restore in step 8 would bring the accounts back.
+
+8. **Rollback**, if the new book is wrong. If only the sheet is wrong, fix it
+   and repeat steps 2, 4 and 5: the reset can run again. To get the old book
+   back, restore the dump from step 3 into production with `backup/RESTORE.md`
+   (e2). In its section (a), set `$run` to the run id from step 3 (or use the
+   file you kept) instead of the latest run: every nightly backup after the
+   reset holds the new book. The restore brings back the database as it was at
+   step 3: the old book, and the People list and the accounts as they were
+   then.
+
+The next nightly backup dumps the new book. It needs only the `users`,
+`clients` and `client_revenues` tables to exist and `users` to be non-empty
+(`backup/pg-backup.sh`, check 2), so a small or empty book backs up normally.
 
 ---
 

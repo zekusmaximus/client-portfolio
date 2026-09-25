@@ -8,7 +8,9 @@
 // without it. It creates its own import_test_* database, starts server.cjs on
 // it as a child process (never imported: data.cjs and db.cjs throw without
 // their environment), adds an account with create-admin.cjs, signs in, and
-// parses each file with PapaParse as the upload page does.
+// parses each file with PapaParse as the upload page does. The last tests run
+// Phase 3's flow: Check file (dryRun), then scripts/reset-book.cjs on the
+// suite's database, then the section 3 template into the empty book.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -83,12 +85,13 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
   let server;
   let base;
   let cookie;
+  let env;
 
   before(async () => {
     admin = new pg.Client({ connectionString: urlFor('postgres') });
     await admin.connect();
     await admin.query(`CREATE DATABASE ${dbName}`);
-    const env = {
+    env = {
       ...process.env,
       NODE_ENV: 'development',
       DATABASE_URL: urlFor(dbName),
@@ -131,9 +134,11 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     return { status: res.status, body: await res.json() };
   };
 
-  // As the upload page does: PapaParse in header mode, then the rows as JSON
-  const importCsv = (text) => call('POST', '/api/data/process-csv', {
+  // As the upload page does: PapaParse in header mode, then the rows as JSON;
+  // `extra` is { dryRun: true } for Check file
+  const importCsv = (text, extra = {}) => call('POST', '/api/data/process-csv', {
     csvData: Papa.parse(text, { header: true, skipEmptyLines: true }).data,
+    ...extra,
   });
 
   const clientRow = async (name) => (await db.query(`
@@ -161,6 +166,7 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     assert.equal(status, 200, JSON.stringify(body));
     assert.equal(body.summary.newClients, 2);
     assert.deepEqual(body.summary.revenueYears, [2024, 2025, 2026]);
+    assert.deepEqual(body.summary.revenueTotals, { 2024: 60000, 2025: 106000, 2026: 157000 });
     assert.deepEqual(body.summary.sheetColumns, [
       'Lead', 'Second Chair', 'Originator', 'Credit To Firm', 'Stickiness', 'Cadence',
       'Handful', 'Conflict Risk', 'Practice Area', 'Notes',
@@ -370,4 +376,150 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     assert.equal(status, 409);
     assert.match(body.error, /second chair on 1 client/);
   });
+
+  // Each person's [leads, second chairs, originated], from the People list
+  const peopleCounts = async () => {
+    const { status, body } = await call('GET', '/api/people');
+    assert.equal(status, 200);
+    return Object.fromEntries(body.people.map((p) => [p.name, [p.lead_count, p.second_chair_count, p.originator_count]]));
+  };
+
+  const runResetBook = async (...args) => {
+    try {
+      const { stdout, stderr } = await execFileAsync(process.execPath, ['scripts/reset-book.cjs', ...args], { cwd: repo, env });
+      return { code: 0, stdout, stderr };
+    } catch (error) {
+      if (typeof error.code !== 'number') throw error;
+      return { code: error.code, stdout: error.stdout, stderr: error.stderr };
+    }
+  };
+
+  test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
+    const before = await snapshot();
+    const countsBefore = await peopleCounts();
+
+    // A file that changes an existing client's people, judgments and revenue and adds a client
+    const good = [
+      HEADER,
+      `${HEALTH},1/1/26-12/31/26,"$1","$2","$3",Paula,Kevin,Firm,,4,Daily,Y,High,Energy,changed`,
+      'Dry Run Client,1/1/26-12/31/26,,,"$9,000",Joe,Mike,Joe,,2,Quarterly,,Low,Other,',
+    ].join('\n');
+    const dry = await importCsv(good, { dryRun: true });
+    assert.equal(dry.status, 200, JSON.stringify(dry.body));
+    assert.equal(dry.body.success, true);
+    assert.equal(dry.body.dryRun, true);
+    assert.equal(dry.body.clients, undefined);
+    assert.equal(dry.body.summary.totalClients, 2);
+    assert.deepEqual(dry.body.summary.revenueYears, [2024, 2025, 2026]);
+    assert.deepEqual(await snapshot(), before);
+    assert.deepEqual(await peopleCounts(), countsBefore);
+
+    // A refused file: the same 400 and the same list as the import, nothing written
+    const bad = [
+      HEADER,
+      `${HEALTH},1/1/26-12/31/26,,,"$1",Nobody,,,,5,Weekly,,Low,Healthcare,`,
+      `${ENERGY},7/1/25-6/30/27,,,"$1",Paula,Paula,,,3,Hourly,,Medium,Energy,`,
+    ].join('\n');
+    const dryBad = await importCsv(bad, { dryRun: true });
+    assert.equal(dryBad.status, 400);
+    assert.deepEqual(dryBad.body.errors.map((e) => e.row), [2, 3, 3]);
+    const realBad = await importCsv(bad);
+    assert.equal(realBad.status, 400);
+    assert.deepEqual(dryBad.body, realBad.body);
+    assert.deepEqual(await snapshot(), before);
+
+    // dryRun must be a boolean: a string is refused, not read either way
+    const stringFlag = await importCsv(good, { dryRun: 'true' });
+    assert.equal(stringFlag.status, 400);
+    assert.match(JSON.stringify(stringFlag.body), /dryRun must be true or false/);
+    assert.deepEqual(await snapshot(), before);
+
+    // The import of the same file, against the same book, reports what the check reported
+    const real = await importCsv(good, { dryRun: false });
+    assert.equal(real.status, 200, JSON.stringify(real.body));
+    assert.equal(real.body.dryRun, undefined);
+    assert.deepEqual(real.body.summary, dry.body.summary);
+    // validation.validClients carries ids processCSVData generates per request
+    const stable = ({ isValid, issues, warnings, clientCount }) => ({ isValid, issues, warnings, clientCount });
+    assert.deepEqual(stable(real.body.validation), stable(dry.body.validation));
+    assert.equal((await clientRow('Dry Run Client')).lead, 'Joe');
+    assert.equal((await clientRow(HEALTH)).lead, 'Paula');
+  });
+
+  test('Phase 3: reset-book empties the book while partners stay signed in, and the template imports into it', async () => {
+    // The old book: every client the tests above imported, plus three with a
+    // revenue year the new sheet does not have
+    const old = await importCsv([
+      'CLIENT,Contract Period,2023 Contracts,2024 Contracts,Lead,Second Chair',
+      'Old Book One,Expired 6/30/25,"$10,000","$11,000",Mike,Jay',
+      'Old Book Two,1/1/26-12/31/26,"$20,000",,Jeff,',
+      'Old Book Three,1/1/26-12/31/26,,"$30,000",Brendan,Paula',
+    ].join('\n'));
+    assert.equal(old.status, 200, JSON.stringify(old.body));
+
+    const { rows: [book] } = await db.query(`
+      SELECT (SELECT count(*) FROM clients)::int AS clients,
+             (SELECT count(*) FROM client_revenues)::int AS revenues,
+             (SELECT count(*) FROM users)::int AS users,
+             (SELECT count(*) FROM people)::int AS people`);
+    assert.ok(book.clients >= 7 && book.revenues > 0, JSON.stringify(book));
+    const peopleBefore = (await db.query('SELECT * FROM people ORDER BY id')).rows;
+    const usersBefore = (await db.query('SELECT * FROM users ORDER BY id')).rows;
+    assert.ok(Object.values(await peopleCounts()).some((c) => c.some((n) => n > 0)));
+
+    // Runbook step 4: read the counts, then confirm
+    let result = await runResetBook();
+    assert.equal(result.code, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, new RegExp(`^Clients: ${book.clients}$`, 'm'));
+    assert.match(result.stdout, new RegExp(`^Revenue rows: ${book.revenues}$`, 'm'));
+    assert.match(result.stdout, /^Nothing was deleted\. Run again with --confirm to delete every client\.$/m);
+
+    result = await runResetBook('--confirm');
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, new RegExp(
+      `^Removed ${book.clients} clients and ${book.revenues} revenue rows\\. Accounts: ${book.users} and people: ${book.people}, unchanged\\.$`, 'm'));
+    assert.deepEqual((await db.query('SELECT * FROM people ORDER BY id')).rows, peopleBefore);
+    assert.deepEqual((await db.query('SELECT * FROM users ORDER BY id')).rows, usersBefore);
+
+    // Same session: the book is empty, every People count is 0, and the P5 blocks lift
+    const clients = await call('GET', '/api/data/clients');
+    assert.equal(clients.status, 200);
+    assert.deepEqual(clients.body.clients, []);
+    const counts = await peopleCounts();
+    assert.equal(Object.keys(counts).length, book.people);
+    assert.ok(Object.values(counts).every((c) => c.every((n) => n === 0)), JSON.stringify(counts));
+    const brendan = (await db.query("SELECT id FROM people WHERE name = 'Brendan'")).rows[0];
+    let change = await call('PUT', `/api/people/${brendan.id}`, { active: false });
+    assert.equal(change.status, 200, JSON.stringify(change.body));
+    change = await call('PUT', `/api/people/${brendan.id}`, { active: true });
+    assert.equal(change.status, 200, JSON.stringify(change.body));
+
+    // Runbook steps 2 and 5 on the empty book: check the sheet, then import it
+    const check = await importCsv(template, { dryRun: true });
+    assert.equal(check.status, 200, JSON.stringify(check.body));
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM clients')).rows[0].n, 0);
+
+    const imported = await importCsv(template);
+    assert.equal(imported.status, 200, JSON.stringify(imported.body));
+    assert.deepEqual(imported.body.summary.revenueTotals, check.body.summary.revenueTotals);
+    assert.equal(imported.body.summary.newClients, 2);
+    assert.equal(imported.body.summary.updatedClients, 0);
+
+    const { body: list } = await call('GET', '/api/data/clients');
+    assert.deepEqual(list.clients.map((c) => [c.name, c.lead?.name, c.secondChair?.name ?? null]).sort(), [
+      [ENERGY, 'Paula', null],
+      [HEALTH, 'Kevin', 'Jay'],
+    ]);
+    assert.deepEqual(await revenue(HEALTH), { 2024: 60000, 2025: 66000, 2026: 72000 });
+    assert.deepEqual(await revenue(ENERGY), { 2025: 40000, 2026: 85000 });
+    const { rows: [{ years }] } = await db.query('SELECT array_agg(DISTINCT year ORDER BY year) AS years FROM client_revenues');
+    assert.deepEqual(years, [2024, 2025, 2026], 'no 2023 row survived the reset');
+
+    const after = await peopleCounts();
+    assert.deepEqual(after.Kevin, [1, 0, 0]);
+    assert.deepEqual(after.Paula, [1, 0, 1]);
+    assert.deepEqual(after.Jay, [0, 1, 1]);
+    assert.deepEqual(after.Brendan, [0, 0, 0]);
+  });
 });
+
