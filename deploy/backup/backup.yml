@@ -12,7 +12,10 @@ name: backup
 
 on:
   schedule:
-    - cron: '0 7 * * *'   # 07:00 UTC, about 3 am Eastern
+    # 07:17 UTC, about 3:17 am Eastern. Not on the hour: GitHub delays scheduled
+    # runs at the top of the hour and can drop them under load; the 07:00
+    # schedule's first night produced no run.
+    - cron: '17 7 * * *'
   workflow_dispatch:
 
 permissions:

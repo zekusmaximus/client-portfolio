@@ -7,7 +7,7 @@ Two independent layers protect the production database (tier-0 D12):
   confirms what you have.
 - **Layer 2: a nightly logical backup.** A GitHub Actions job in the private
   repository `zekusmaximus/client-portfolio-backups` runs `pg_dump` against
-  Render's External Database URL at 07:00 UTC (about 3 am Eastern). It restores
+  Render's External Database URL at 07:17 UTC (about 3:17 am Eastern). It restores
   the dump into a throwaway PostgreSQL of the same major version, compares the
   row count of every table with production, and only then encrypts the dump
   with `age` and keeps it as a 90-day workflow artifact. Any failure fails the
