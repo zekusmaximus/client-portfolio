@@ -606,7 +606,7 @@ Tier 0 allows no schema change (0.2). The items here are Tier 2 work (section 11
 
 | Item | Status | Branch / PR | Notes |
 |---|---|---|---|
-| 12.1 Removing an account can never remove clients | merged | `claude/magical-mayer-je13sz`, [PR #18](https://github.com/zekusmaximus/client-portfolio/pull/18) | `clients.user_id` is `ON DELETE SET NULL`; verified in the container on PostgreSQL 16, CI runs PostgreSQL 18. Merged 2026-09-25 13:00 UTC, five minutes after backup run 36137742528 went green. Not recorded: `check-schema` on production before and after, Render's start-up log line, `/api/health` after the deploy (12.1 steps 2 to 4) |
+| 12.1 Removing an account can never remove clients | deployed | `claude/magical-mayer-je13sz`, [PR #18](https://github.com/zekusmaximus/client-portfolio/pull/18) | `clients.user_id` is `ON DELETE SET NULL`; verified in the container on PostgreSQL 16, CI runs PostgreSQL 18. Merged 2026-09-25 13:00 UTC, five minutes after backup run 36137742528 went green. Jeff confirmed the Render deploy on 2026-09-25; the `check-schema` output and the start-up log line were not brought to the session, so the two production boxes below stay open |
 
 ### 12.1 `clients.user_id` no longer cascades
 
