@@ -34,10 +34,10 @@ second chairs but do not sign in).
 ### Testing
 - `npm test` - Run the test suite with Node's built-in runner (`node --test "tests/**/*.test.mjs"`); no test dependencies to install
 - Tests live in `tests/*.test.mjs` and use `node:test` + `node:assert/strict`. Import CommonJS modules with a default import (`import strategic from '../utils/strategic.cjs'`)
-- Current suites: `people` (the People list's validators, the P5 change rules, the legacy-field shim and the page's picker helpers), `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site), `password-policy` and `session-ttl` (WP3), `schema` (`init-db.sql` on a real PostgreSQL: `clients.user_id` is `ON DELETE SET NULL` on a new database and after migrating one with the old cascade, deleting a user keeps its clients and revenue rows, and the two scripts above, Tier 0 plan section 12; the `people` table's seed, uniqueness and role check, the client foreign keys and the second-chair check, a pre-plan database migrating intact, and a rollback start running the pre-plan file on a migrated database). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
+- Current suites: `people` (the People list's validators, the P5 change rules, the legacy-field shim and the page's picker helpers), `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `import-sheet` (the import sheet's people and judgment columns, P8: header matching, each vocabulary, name resolution, every refusal, blank cells clearing, a file without the new columns reading and writing as before, and `public/client-book-template.csv` against the plan's section 3 example), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site), `password-policy` and `session-ttl` (WP3), `schema` (`init-db.sql` on a real PostgreSQL: `clients.user_id` is `ON DELETE SET NULL` on a new database and after migrating one with the old cascade, deleting a user keeps its clients and revenue rows, and the two scripts above, Tier 0 plan section 12; the `people` table's seed, uniqueness and role check, the client foreign keys and the second-chair check, a pre-plan database migrating intact, and a rollback start running the pre-plan file on a migrated database), `import-db` (`POST /api/data/process-csv` on `server.cjs` and a real PostgreSQL: the section 3 example with the People counts, the clients' people and the stored legacy text; a refused file leaving clients, revenue and people byte-for-byte unchanged; a file without the people columns leaving them untouched; blank cells clearing; a name with an apostrophe resolving through the request sanitizer; a kept second chair who would equal a new lead). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
 - Never import `db.cjs`, `data.cjs`, `models/*`, or `utils/jwt.cjs` from tests: they throw at load time without `DATABASE_URL` / `JWT_SECRET`
-- The `schema` suite's database tests need `SCHEMA_TEST_SERVER_URL`, the superuser URL of a throwaway server without a database name; each test creates and drops its own `schema_test_*` database, connects with `pg` directly and runs the scripts as child processes. Without the variable they are skipped. Locally, after plan section 0.4's `service postgresql start`: `sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"`, then `SCHEMA_TEST_SERVER_URL=postgresql://postgres:postgres@127.0.0.1:5432 node --test tests/schema.test.mjs`
-- `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`, and its `schema` job runs `tests/schema.test.mjs` against PostgreSQL 18
+- The `schema` and `import-db` suites' database tests need `SCHEMA_TEST_SERVER_URL`, the superuser URL of a throwaway server without a database name; each `schema` test creates and drops its own `schema_test_*` database, connects with `pg` directly and runs the scripts as child processes; `import-db` creates one `import_test_*` database, starts `server.cjs` on it as a child process on a free port, adds an account with `create-admin.cjs`, signs in and posts files parsed with PapaParse as the page does. Without the variable they are skipped. Locally, after plan section 0.4's `service postgresql start`: `sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"`, then `SCHEMA_TEST_SERVER_URL=postgresql://postgres:postgres@127.0.0.1:5432 node --test tests/schema.test.mjs tests/import-db.test.mjs`
+- `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`, and its `schema` job runs `tests/schema.test.mjs` and `tests/import-db.test.mjs` against PostgreSQL 18
 
 ## Architecture Overview
 
@@ -54,7 +54,7 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
 - **Server**: Express.js server in `server.cjs` (`PORT`, default 5000; Render sets its own). API only: the page is served by Netlify, and Express serves no static files
 - **API Routes**:
   - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/change-password` (`routes/auth.cjs`)
-  - `GET /api/data/clients`, `POST /api/data/clients`, `PUT /api/data/clients/:id`, `DELETE /api/data/clients/:id`, `POST /api/data/process-csv` (`data.cjs`). `data.cjs` also still defines `POST /update-client`, `/optimize-portfolio` and `/analytics`, which nothing calls and which use a second, retired scoring formula (review 4.5; deleting them is Tier 2)
+  - `GET /api/data/clients`, `POST /api/data/clients`, `PUT /api/data/clients/:id`, `DELETE /api/data/clients/:id`, `POST /api/data/process-csv` (`data.cjs`; the year rule and the import sheet, below). `data.cjs` also still defines `POST /update-client`, `/optimize-portfolio` and `/analytics`, which nothing calls and which use a second, retired scoring formula (review 4.5; deleting them is Tier 2)
   - `POST /api/claude/analyze-portfolio`, `/api/claude/strategic-advice`, `/api/claude/client-recommendations` - the AI Advisor tab (`claude.cjs`)
   - `POST /api/scenarios/transition-plan` - one succession transition plan for one client (`routes/scenarios.cjs`)
   - `GET /api/people`, `POST /api/people` `{ name, role }`, `PUT /api/people/:id` `{ name?, role?, active? }` - the People list (`routes/people.cjs`); no delete. `PUT` answers 409 with the reason when a partner who leads clients would stop being a partner or be deactivated, or anyone who is a second chair would be deactivated, and a rename rewrites the legacy text columns
@@ -66,7 +66,7 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
 - The `people` table (`name` unique regardless of case, `role` `partner` / `emeritus` / `associate`, `active`) replaces the old `src/constants.js` roster. A new database is seeded with Brendan, Jeff, Joe, Kevin, Mike and Paula as partners and Jay as emeritus, only while the table is empty, so edits survive restarts. People are never deleted, only deactivated.
 - Each client: `lead_id` (required by the API; an active partner), `second_chair_id` (optional; any other active person), `originator_id` (anyone, active or not) and `originator_is_firm` (the origination credit has passed to the firm; the person stays recorded). The database enforces the foreign keys and `second_chair_id <> lead_id`; `utils/people.cjs` enforces the rest, and `POST`/`PUT /api/data/clients` answer 400 `{ success: false, error: 'Validation failed', details: [{ field, message }] }`.
 - Client responses nest `lead`, `secondChair` and `originator` (`{ id, name, role, active }` or null) and keep the legacy fields, filled from them for a client that has a lead: `primary_lobbyist` = lead, `lobbyist_team` = `[lead, second chair]`, `client_originator` = `Firm` or the originator. A client without a lead (saved before this change) returns its stored legacy text. Writes store the legacy text too, so a rollback to older code still shows the right names. The Partnership tab, the Scenarios workflow, the AI prompts and the exports still read the legacy fields until the plan's Phases 4 and 5.
-- Every client query that returns people goes through the join in `utils/people.cjs` (`CLIENT_PEOPLE_COLUMNS`, `CLIENT_PEOPLE_JOINS`, `CLIENT_PEOPLE_GROUP_BY`, `withPeopleFields`), used by `data.cjs` and `models/clientModel.cjs`. The client writes read the people they assign `FOR SHARE` and `routes/people.cjs` reads the person `FOR UPDATE`, so a concurrent assignment cannot slip past the P5 counts.
+- Every client query that returns people goes through the join in `utils/people.cjs` (`CLIENT_PEOPLE_COLUMNS`, `CLIENT_PEOPLE_JOINS`, `CLIENT_PEOPLE_GROUP_BY`, `withPeopleFields`), used by `data.cjs` and `models/clientModel.cjs`. The client writes read the people they assign `FOR SHARE` (the CSV import reads the whole list `FOR SHARE` when the file has a `Lead` column, and the clients it updates `FOR UPDATE`) and `routes/people.cjs` reads the person `FOR UPDATE`, so a concurrent assignment cannot slip past the P5 counts.
 - Page: the header's **People** button (`src/PeopleDialog.jsx`); the client form's lead, second chair and originator pickers use `src/utils/people.js` and `NativeSelect` (`src/components/ui/native-select.jsx`), because `ui/select.jsx` shows the raw value in its trigger. The store loads `people` after sign-in and clears it on logout.
 - The form's status accepts both vocabularies (the CSV's `IF`/`P`/`D`/`H` and the manual `Active`/`Prospect`/`Inactive`/`Former`); before this change it refused every imported client.
 
@@ -75,7 +75,7 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
 #### Core Views (Tab-based Navigation)
 Six tabs in `src/App.jsx`, switched by the store's `currentView` (a hand-rolled
 tabs component, `src/components/ui/tabs.jsx`; no router, the URL never changes):
-1. **Data Upload** (`DataUploadManager.jsx`, `data-upload`) - CSV import through a file picker, parsed in the browser by PapaParse and posted to `/api/data/process-csv`
+1. **Data Upload** (`DataUploadManager.jsx`, `data-upload`) - CSV import through a file picker, parsed in the browser by PapaParse and posted to `/api/data/process-csv`; lists a refused file's problems by row, shows the sheet's columns (plan section 3) and links `public/client-book-template.csv`
 2. **Dashboard** (`DashboardView.jsx`, `dashboard`) - Analytics and visualizations
 3. **Client Details** (`ClientListView.jsx` + `ClientEnhancementForm.jsx`, `client-details`) - Client management
 4. **Partnership** (`PartnershipAnalytics.jsx`, `partnership`) - per-partner metrics, marking partners as departing, redistribution modelling, and the Export Analysis menu (partnership report in a print window, transition plan and capacity CSVs)
@@ -83,7 +83,7 @@ tabs component, `src/components/ui/tabs.jsx`; no router, the URL never changes):
 6. **Scenarios** (`ScenarioModeler.jsx`, `scenarios`) - the three-stage succession workflow (`src/components/succession/SuccessionScenario.tsx`); the Growth and capacity scenarios were deleted in WP2 (D8)
 
 #### Data Flow
-1. CSV upload → `data.cjs` processes via `clientAnalyzer.cjs`; the pure helpers in `utils/csvImport.cjs` read the years from the header and plan the revenue writes
+1. CSV upload → `data.cjs` processes via `clientAnalyzer.cjs`; the pure helpers in `utils/csvImport.cjs` read the years and the sheet's optional columns from the header, check the file (`checkSheet`) and plan the writes
 2. Clients live in Postgres; the store loads them with `fetchClients()` after sign-in and after every write. localStorage keeps only UI state (`optimizationParams`, `currentView`, `isModalOpen`, `selectedClient`)
 3. Strategic value calculations use the single scorer in `utils/strategic.cjs` (re-exported by `clientAnalyzer.cjs`)
 4. AI endpoints need `ANTHROPIC_API_KEY`; without it they answer 503 `AI is not configured on the server (missing API key).` and `/api/health` reports `anthropic: not configured`
@@ -98,6 +98,42 @@ year columns writes no revenue and returns the validation warning
 ``No `YYYY Contracts` columns found; revenue not changed.``
 `processCSVData` attaches the file's years to every client as `revenueYears`,
 and `POST /api/data/process-csv` returns them as `summary.revenueYears`.
+
+**Import sheet (P8; `docs/plans/people-and-second-chair.md` section 3).** Beside
+`CLIENT`, `Contract Period` and the years, a CSV may carry `Lead`,
+`Second Chair`, `Originator`, `Credit To Firm`, `Stickiness`, `Cadence`,
+`Handful`, `Conflict Risk`, `Practice Area` and `Notes`, matched
+case-insensitively and trimmed (`CLIENT` and `Contract Period` still match
+exactly). As with the years, the file is authoritative for exactly the columns
+it has. A column it lacks leaves that field as it is: the columns the import has
+always written keep their preserve logic, and `stickiness`, `high_maintenance`
+and the four people columns are left out of the `UPDATE` (`importWriteColumns`),
+so a file without the new columns writes what it wrote before. A blank cell in a
+column the file has clears the field: no second chair, no originator,
+stickiness NULL, Handful false, Conflict Risk `Medium`, practice areas `{}`,
+notes and cadence `''`. Names resolve against the People list regardless of case
+and after `decodeHTMLEntities` (`sanitizeRequestBody` escapes `O'Brien` on the
+way in). `Firm` in `Originator` means no person and `originator_is_firm`;
+`Credit To Firm` `Y` sets the flag, and without that column a person in
+`Originator` keeps the stored flag. The rules are `validateAssignment` and
+`legacyText` from `utils/people.cjs`; a people column the file lacks is checked
+with the stored value, so a new lead who is the kept second chair is refused.
+`Second Chair`, `Originator` and `Credit To Firm` need a `Lead` column. Any
+problem refuses the whole file before anything is written: 400
+`{ success: false, error, errors: [{ row, client, message }] }`, rows numbered as
+a spreadsheet shows them (the header is row 1, and header problems are listed as
+row 1). The problems: a name not on the list, a missing lead or one who is not an
+active partner, a second chair who is the lead or inactive, a value outside its
+column's vocabulary (Stickiness `1`-`5`; Cadence `Daily`/`Weekly`/`Monthly`/
+`Quarterly`/`As-Needed`; Conflict Risk `Low`/`Medium`/`High`; Handful and Credit
+To Firm `Y` or blank; Practice Area from the form's twelve, `;`-separated; all
+case-insensitive), a column given twice, a people column without `Lead`, and a
+`CLIENT` named twice regardless of case, which refuses every file, with or
+without the new columns. `validation.issues` (a malformed contract period) still
+do not block. The pure helpers are `findSheetColumns`, `readSheetRow`,
+`resolveSheetPeople`, `checkSheet`, `importWriteColumns` and `valuesList` in
+`utils/csvImport.cjs`; a successful import returns the columns it read as
+`summary.sheetColumns`.
 
 **Reporting year (D4).** The frontend derives `reportingYear`, the latest year
 in which any client has a revenue row with amount > 0, falling back to the
@@ -169,6 +205,7 @@ Tier 0 work.
 - `src/portfolioStore.js` - Zustand state management
 - `src/api.js` - every API call; prefixes `VITE_API_BASE_URL`, sends the cookie (`credentials: 'include'`)
 - `src/PeopleDialog.jsx`, `src/utils/people.js` - the People dialog and the pickers' rules
+- `public/client-book-template.csv` - the import sheet's header and the plan's two example rows (the Data Upload page's "Download template"); `tests/import-sheet.test.mjs` keeps it equal to the plan's section 3 example
 - `src/components/ui/` - Reusable UI components (button, card, etc.)
 - Core feature components at `src/` root level
 
@@ -248,7 +285,7 @@ Contract periods are automatically parsed to derive status
 ## Common Development Patterns
 
 ### Adding New Client Fields
-1. Update CSV processing in `clientAnalyzer.cjs:processCSVData`
+1. Update CSV processing in `clientAnalyzer.cjs:processCSVData`; a column of the import sheet goes in `SHEET_COLUMNS`, `readSheetRow` and `importWriteColumns` (`utils/csvImport.cjs`) and in plan section 3
 2. Add field to strategic value calculation if relevant
 3. Update UI forms in `ClientEnhancementForm.jsx`
 4. Update state management in `portfolioStore.js`

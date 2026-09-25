@@ -37,6 +37,8 @@ sample-data.csv
 sample-upload.csv
 upload-data.*
 *-data.csv
+# The import sheet's template: header and the plan's two example rows only
+!public/client-book-template.csv
 
 # Build outputs
 dist/

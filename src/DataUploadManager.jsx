@@ -4,22 +4,68 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 // import { Alert } from '@/components/ui/alert'; // Alert component not available, using Card instead
-import { Upload, FileText, CheckCircle, AlertCircle } from 'lucide-react';
-import { apiClient } from './api';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Upload, FileText, CheckCircle, AlertCircle, Download } from 'lucide-react';
+import { apiClient, apiErrorBody, apiErrorMessage } from './api';
 import usePortfolioStore from './portfolioStore';
 import Papa from 'papaparse';
+
+// The import sheet (docs/plans/people-and-second-chair.md, section 3). The
+// server's rules are in utils/csvImport.cjs; this is the help text.
+const PRACTICE_AREAS =
+  'Healthcare, Municipal, Corporate, Energy, Financial, Education, Transportation, Environmental, Technology, Real Estate, Non-Profit, Other';
+
+const SHEET_COLUMNS = [
+  { name: 'CLIENT', required: 'yes', values: "the client's name; once per file" },
+  {
+    name: 'Contract Period',
+    required: 'yes',
+    values: '1/1/26-12/31/26, Expired 6/30/25 or expires 6/30/27; the status (In Force, Done, Proposal, Hold) is derived from it',
+  },
+  {
+    name: 'YYYY Contracts',
+    required: 'at least one',
+    values: 'one column per year (2024 Contracts, 2025 Contracts, ...): 72000, $72,000 or $72,000.00; blank or 0 for none',
+  },
+  { name: 'Lead', required: 'yes', values: 'one active partner, as named on the People list (case does not matter)' },
+  { name: 'Second Chair', required: 'no', values: 'any active person other than the lead; blank for none' },
+  { name: 'Originator', required: 'no', values: 'anyone on the People list, active or not, or Firm' },
+  {
+    name: 'Credit To Firm',
+    required: 'no',
+    values: "Y when the originator's origination credit has passed to the firm; implied when Originator is Firm",
+  },
+  {
+    name: 'Stickiness',
+    required: 'no',
+    values: '1 to 5: 5 Personal bond, 4 Strong, established, 3 Solid but transactional, 2 New / still shallow, 1 Cold',
+  },
+  { name: 'Cadence', required: 'no', values: 'Daily, Weekly, Monthly, Quarterly or As-Needed' },
+  { name: 'Handful', required: 'no', values: 'Y when every interaction is heavy (effort × 1.5)' },
+  { name: 'Conflict Risk', required: 'no', values: 'Low, Medium or High' },
+  { name: 'Practice Area', required: 'no', values: `one or more of ${PRACTICE_AREAS}, separated by ;` },
+  { name: 'Notes', required: 'no', values: 'free text' },
+];
+
+const TEMPLATE_URL = `${import.meta.env.BASE_URL}client-book-template.csv`;
+
+// Browsers on Windows often report a CSV as application/vnd.ms-excel.
+const isCsvFile = (file) => Boolean(file) && (file.type === 'text/csv' || /\.csv$/i.test(file.name));
 
 const DataUploadManager = () => {
   const [file, setFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState(null);
+  // The server refused the file: { message, errors: [{ row, client, message }] }
+  const [refusal, setRefusal] = useState(null);
   
   const { fetchClients } = usePortfolioStore();
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
-    if (selectedFile && selectedFile.type === 'text/csv') {
+    setRefusal(null);
+    if (isCsvFile(selectedFile)) {
       setFile(selectedFile);
       setError(null);
       setUploadResult(null);
@@ -37,6 +83,8 @@ const handleUpload = async () => {
 
   setIsUploading(true);
   setError(null);
+  setRefusal(null);
+  setUploadResult(null);
 
   Papa.parse(file, {
     header: true, // Automatically uses the first row as headers
@@ -57,6 +105,7 @@ const handleUpload = async () => {
             clientCount: response.clients.length,
             totalRevenue: response.summary.totalRevenue,
             revenueYears: response.summary.revenueYears || [],
+            sheetColumns: response.summary.sheetColumns || [],
             validation: response.validation
           });
           await fetchClients(); // Refresh client data in the store
@@ -64,8 +113,17 @@ const handleUpload = async () => {
           throw new Error('Failed to process CSV data on the backend');
         }
       } catch (err) {
-        console.error('Upload error:', err);
-        setError(err.message || 'Failed to upload and process CSV file');
+        const body = apiErrorBody(err);
+        if (body && Array.isArray(body.errors) && body.errors.length > 0) {
+          // The file was refused whole; list every problem by row
+          setRefusal({ message: body.error || 'Nothing was imported.', errors: body.errors });
+        } else if (body && Array.isArray(body.details) && body.details.length > 0) {
+          // The request check's refusal (a row without CLIENT, or a malformed one)
+          setError(`${body.error || 'The file was refused'}: ${body.details.map((d) => d.message).join(' ')}`);
+        } else {
+          console.error('Upload error:', err);
+          setError(apiErrorMessage(err, 'Failed to upload and process CSV file'));
+        }
       } finally {
         setIsUploading(false);
       }
@@ -76,15 +134,6 @@ const handleUpload = async () => {
     }
   });
 };
-
-  const expectedColumns = [
-    { name: 'CLIENT', note: 'client name' },
-    { name: 'Contract Period', note: 'for example 1/1/26-12/31/26' },
-    {
-      name: 'YYYY Contracts',
-      note: 'one column per year, for example 2025 Contracts and 2026 Contracts',
-    },
-  ];
 
   return (
     <div className="space-y-6">
@@ -145,6 +194,38 @@ const handleUpload = async () => {
             </Card>
           )}
 
+          {refusal && (
+            <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20" data-testid="import-refusal">
+              <CardContent className="pt-4 space-y-3">
+                <div className="flex items-start gap-2 text-red-700 dark:text-red-400">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <strong>{refusal.message}</strong>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="h-8 px-2 w-16">Row</TableHead>
+                      <TableHead className="h-8 px-2">Client</TableHead>
+                      <TableHead className="h-8 px-2">Problem</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {refusal.errors.map((problem, index) => (
+                      <TableRow key={index}>
+                        <TableCell className="px-2 py-1.5 align-top tabular-nums">{problem.row}</TableCell>
+                        <TableCell className="px-2 py-1.5 align-top">{problem.client || (problem.row === 1 ? 'Header' : '')}</TableCell>
+                        <TableCell className="px-2 py-1.5 align-top">{problem.message}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <p className="text-xs text-muted-foreground">
+                  Rows are numbered as in a spreadsheet: the header is row 1.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {uploadResult && uploadResult.success && (
             <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20">
               <CardContent className="pt-4">
@@ -154,6 +235,11 @@ const handleUpload = async () => {
                     <strong>Success!</strong> Processed {uploadResult.clientCount} clients with total revenue of ${uploadResult.totalRevenue.toLocaleString()}
                     <div className="text-sm mt-1">
                       Imported years: {uploadResult.revenueYears.length > 0 ? uploadResult.revenueYears.join(', ') : 'none'}
+                    </div>
+                    <div className="text-sm mt-1">
+                      {uploadResult.sheetColumns.length > 0
+                        ? `Also imported: ${uploadResult.sheetColumns.join(', ')}`
+                        : 'No people or judgment columns: those were left as they are.'}
                     </div>
                     {uploadResult.validation.issues.length > 0 && (
                       <div className="mt-2">
@@ -190,27 +276,57 @@ const handleUpload = async () => {
         <CardContent>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Your CSV file should contain the following columns:
+              One header row, then one row per client. Save the sheet as CSV (UTF-8). Headers match regardless of case.
             </p>
-            <div className="grid grid-cols-1 gap-2">
-              {expectedColumns.map((column) => (
-                <div key={column.name} className="flex items-center gap-2 text-sm">
-                  <CheckCircle className="h-3 w-3 text-green-500" />
-                  <code className="bg-muted px-2 py-1 rounded text-xs">{column.name}</code>
-                  <span className="text-muted-foreground">{column.note}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 p-3 bg-muted rounded-lg">
-              <p className="text-sm font-medium">Example CSV format:</p>
-              <code className="text-xs block mt-1">
-                CLIENT,Contract Period,2025 Contracts,2026 Contracts<br/>
-                "Acme Corp","1/1/26-12/31/26","$75,000","$100,000"
-              </code>
-              <p className="text-sm text-muted-foreground mt-3">
-                A file is authoritative only for the years in its header: a positive amount sets that year for the client,
-                a blank or $0 cell clears it, and years the file does not mention are left as they are.
-                Importing a 2026-only sheet updates 2026 and keeps every earlier year.
+            <a
+              href={TEMPLATE_URL}
+              download="client-book-template.csv"
+              className="inline-flex items-center gap-2 text-sm font-medium text-primary underline underline-offset-4"
+            >
+              <Download className="h-4 w-4" />
+              Download template
+            </a>
+            <p className="text-sm text-muted-foreground">
+              The template's two example rows show the format; replace them with your clients before importing, or
+              they are added to the book.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="h-8 px-2">Column</TableHead>
+                  <TableHead className="h-8 px-2">Required</TableHead>
+                  <TableHead className="h-8 px-2">Values</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {SHEET_COLUMNS.map((column) => (
+                  <TableRow key={column.name}>
+                    <TableCell className="px-2 py-1.5 align-top whitespace-nowrap">
+                      <code className="bg-muted px-2 py-1 rounded text-xs">{column.name}</code>
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 align-top whitespace-nowrap text-muted-foreground">{column.required}</TableCell>
+                    <TableCell className="px-2 py-1.5 align-top text-muted-foreground">{column.values}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div className="mt-4 p-3 bg-muted rounded-lg space-y-3 text-sm text-muted-foreground">
+              <p>
+                The file is authoritative for exactly the columns it has. A column it lacks leaves that field as it is
+                on clients already in the book, so a sheet with only CLIENT, Contract Period and the years updates
+                revenue and keeps everyone's people and judgments. A blank cell in a column the file has clears the
+                field: no second chair, no originator, no stickiness, Handful off, Conflict Risk back to Medium, no
+                practice areas, no notes. Second Chair, Originator and Credit To Firm need a Lead column in the same file.
+              </p>
+              <p>
+                Revenue: a positive amount sets that year for the client, a blank or $0 cell clears it, and years the
+                file does not mention are left as they are. Importing a 2026-only sheet updates 2026 and keeps every
+                earlier year.
+              </p>
+              <p>
+                Any problem refuses the whole file: a name that is not on the People list, a lead who is not an active
+                partner, a second chair who is the lead, a value outside a column's list, or a client named twice.
+                Nothing is imported, and every problem is listed by row.
               </p>
             </div>
           </div>

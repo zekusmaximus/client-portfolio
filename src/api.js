@@ -169,24 +169,32 @@ async function del(endpoint) {
 }
 
 /**
- * Human-readable message for an error thrown by the helpers above. The backend
- * answers failures as `{ success: false, error: '...' }`, and `post` folds that
- * body into the Error message after the status. Pull the JSON `error` back out
- * when it is there; otherwise return the message as is.
+ * The JSON body of a failed response, from an error thrown by the helpers
+ * above (they fold the body into the Error message after the status), or null
+ * when there is none.
  */
-export function apiErrorMessage(err, fallback = 'Request failed') {
+export function apiErrorBody(err) {
   const message = (err && err.message) || '';
   const start = message.indexOf('{');
-  if (start !== -1) {
-    try {
-      const body = JSON.parse(message.slice(start));
-      if (body && typeof body.error === 'string' && body.error) return body.error;
-      if (body && typeof body.message === 'string' && body.message) return body.message;
-    } catch {
-      /* body was not JSON */
-    }
+  if (start === -1) return null;
+  try {
+    const body = JSON.parse(message.slice(start));
+    return body && typeof body === 'object' ? body : null;
+  } catch {
+    return null; // body was not JSON
   }
-  return message || fallback;
+}
+
+/**
+ * Human-readable message for an error thrown by the helpers above. The backend
+ * answers failures as `{ success: false, error: '...' }`. Pull the JSON `error`
+ * back out when it is there; otherwise return the message as is.
+ */
+export function apiErrorMessage(err, fallback = 'Request failed') {
+  const body = apiErrorBody(err);
+  if (body && typeof body.error === 'string' && body.error) return body.error;
+  if (body && typeof body.message === 'string' && body.message) return body.message;
+  return (err && err.message) || fallback;
 }
 
 export const apiClient = { post, get, put, del };
