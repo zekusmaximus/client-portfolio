@@ -1,0 +1,44 @@
+# Netlify build and page headers for https://gbacpod.com (project client-portfolio2).
+# Tier 0 decision D13; the runbook is deploy/README.md.
+#
+# Settings here override the same settings in the Netlify UI:
+# https://docs.netlify.com/build/configure-builds/file-based-configuration/
+#
+# VITE_API_BASE_URL is NOT set here. It stays a build variable in the Netlify UI
+# (Project configuration > Environment variables), value
+# https://client-portfolio-backend.onrender.com, and it must apply to the
+# Production and Deploy Previews contexts: vite.config.js stops a production
+# build without an https:// value.
+
+[build]
+  # No base: Netlify uses the repository root, which holds package.json.
+  command = "npm run build:prod"
+  publish = "dist"
+
+[build.environment]
+  # The major CI tests on (.github/workflows/ci.yml). Netlify accepts a major
+  # and uses its latest release:
+  # https://docs.netlify.com/build/configure-builds/manage-dependencies/
+  NODE_VERSION = "22"
+
+# No SPA fallback redirect: the app has no client-side routes. Navigation is by
+# tabs held in the Zustand store, the URL never changes, and a refresh always
+# requests "/".
+
+# Page security headers, for every path and every deploy context (headers in
+# netlify.toml cannot be scoped to a context):
+# https://docs.netlify.com/manage/routing/headers/
+# The API sets its own headers in server.cjs; these reach only the page.
+# connect-src names the API because the page calls another site. The built
+# page loads one same-origin module script and one stylesheet, with no inline
+# script, external font or blob: worker; style-src keeps 'unsafe-inline' for the
+# style attributes React, Recharts and the partnership print view write.
+# Never add 'unsafe-inline' or 'unsafe-eval' to script-src.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "DENY"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://client-portfolio-backend.onrender.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
