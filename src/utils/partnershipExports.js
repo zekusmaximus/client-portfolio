@@ -1,532 +1,187 @@
-/**
- * Partnership Export Utilities
- * Production-ready export functions with no external dependencies
- * Handles edge cases and provides fallback values
- */
+// The Partnership tab's exports (docs/plans/people-and-second-chair.md,
+// Phase 4): a printable report and a CSV of everyone's load, both built from
+// partnershipModel in ./load.js, so they show exactly what the tab shows. The
+// builders are pure (strings in, strings out) and tested; the two export
+// functions only open the print window or start the download.
 
-// Utility function to safely format revenue
-const formatRevenue = (revenue) => {
-  if (!revenue || isNaN(revenue)) return '$0';
-  if (revenue >= 1000000) return `$${(revenue / 1000000).toFixed(1)}M`;
-  if (revenue >= 1000) return `$${(revenue / 1000).toFixed(0)}K`;
-  return `$${Math.round(revenue)}`;
-};
+import { formatRatio, formatMoney as money, formatEffort as effort } from './load.js';
+import { ROLE_LABELS } from './people.js';
 
-// Utility to safely get client revenue
-const getClientRevenue = (client, getRevenueFunc) => {
-  if (!client) return 0;
-  try {
-    return getRevenueFunc ? getRevenueFunc(client) : (client.revenue || 0);
-  } catch (error) {
-    console.warn('Error getting client revenue:', error);
-    return 0;
-  }
+const strategic = (client) => {
+  const v = parseFloat(client?.strategicValue);
+  return Number.isFinite(v) ? v.toFixed(1) : '—';
 };
+const roleLabel = (person) =>
+  `${ROLE_LABELS[person.role] || person.role}${person.active === false ? ', inactive' : ''}`;
 
-// Utility to escape HTML content
-const escapeHtml = (text) => {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-};
+/** HTML-escape text for the report; pure, no DOM. */
+export function escapeHtml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 /**
- * Export comprehensive partnership report as PDF-ready HTML
+ * One CSV cell. Quotes cells with a comma, quote or line break, and prefixes a
+ * text cell that starts with = + - @ with an apostrophe so a spreadsheet does
+ * not read it as a formula.
  */
-export const exportPartnershipPDF = (partners, transitions, clients, getRevenueFunc) => {
-  try {
-    // Validate inputs with fallbacks
-    const safePartners = Array.isArray(partners) ? partners : [];
-    const safeTransitions = transitions || {};
-    const safeClients = Array.isArray(clients) ? clients : [];
+export function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  let text = String(value);
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
 
-    // O(1) lookup maps built once, used throughout render
-    const clientById = new Map(safeClients.map(c => [c?.id, c]));
-    const partnerById = new Map(safePartners.map(p => [p?.id, p]));
-    const partnerByClientId = new Map(
-      safePartners.flatMap(p => (p?.clients || []).map(cid => [cid, p]))
-    );
-
-    const styles = `
-      <style>
-        @media print {
-          body { 
-            margin: 0; 
-            font-family: Arial, sans-serif; 
-            line-height: 1.4;
-            color: #333;
-          }
-          .page-break { 
-            page-break-after: always; 
-          }
-          .no-print { 
-            display: none; 
-          }
-          table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin-bottom: 20px;
-          }
-          th, td { 
-            border: 1px solid #ddd; 
-            padding: 8px; 
-            text-align: left;
-            vertical-align: top;
-          }
-          th { 
-            background-color: #f2f2f2; 
-            font-weight: bold;
-          }
-          .header {
-            text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 3px solid #333;
-          }
-          .section {
-            margin-bottom: 30px;
-          }
-          .partner-section {
-            margin-bottom: 25px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-          }
-          .summary-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
-            margin-bottom: 20px;
-          }
-          .summary-item {
-            padding: 10px;
-            background-color: #f9f9f9;
-            border-radius: 5px;
-          }
-          .departing {
-            background-color: #ffe6e6;
-          }
-          .active {
-            background-color: #e6f7ff;
-          }
-        }
-        @media screen {
-          body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-            line-height: 1.6;
-          }
-        }
-      </style>
-    `;
-
-    // Generate executive summary
-    const totalPartners = safePartners.length;
-    const departingPartners = safePartners.filter(p => p?.isDeparting);
-    const remainingPartners = safePartners.filter(p => !p?.isDeparting);
-    const totalRevenue = safePartners.reduce((sum, p) => sum + (p?.totalRevenue || 0), 0);
-    const departingRevenue = departingPartners.reduce((sum, p) => sum + (p?.totalRevenue || 0), 0);
-    
-    const clientsToMove = departingPartners.reduce((sum, p) => sum + (p?.clients?.length || 0), 0);
-
-    const generateExecutiveSummary = () => `
-      <div class="section">
-        <h2>Executive Summary</h2>
-        <div class="summary-grid">
-          <div class="summary-item">
-            <strong>Total Partners:</strong> ${totalPartners}
-          </div>
-          <div class="summary-item">
-            <strong>Departing Partners:</strong> ${departingPartners.length}
-          </div>
-          <div class="summary-item">
-            <strong>Remaining Partners:</strong> ${remainingPartners.length}
-          </div>
-          <div class="summary-item">
-            <strong>Total Portfolio Revenue:</strong> ${formatRevenue(totalRevenue)}
-          </div>
-          <div class="summary-item">
-            <strong>Revenue at Risk:</strong> ${formatRevenue(departingRevenue)}
-          </div>
-          <div class="summary-item">
-            <strong>Clients to Redistribute:</strong> ${clientsToMove}
-          </div>
-        </div>
-        
-        ${departingRevenue > 0 ? `
-          <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin-top: 15px;">
-            <strong>Risk Assessment:</strong> ${((departingRevenue / Math.max(1, totalRevenue)) * 100).toFixed(1)}% 
-            of total revenue requires redistribution. ${clientsToMove > 20 ? 'High complexity transition expected.' : 'Moderate complexity transition.'}
-          </div>
-        ` : ''}
-      </div>
-    `;
-
-    // Generate partner detail section
-    const generatePartnerSection = (partner) => {
-      if (!partner) return '';
-      
-      const partnerClients = (partner.clients || [])
-        .map(clientId => clientById.get(clientId))
-        .filter(Boolean);
-
-      const partnerRevenue = partnerClients.reduce((sum, client) => {
-        return sum + getClientRevenue(client, getRevenueFunc);
-      }, 0);
-
-      return `
-        <div class="partner-section ${partner.isDeparting ? 'departing' : 'active'}">
-          <h3>${escapeHtml(partner.name || 'Unknown Partner')} 
-            ${partner.isDeparting ? '(Departing)' : '(Active)'}
-          </h3>
-          <div class="summary-grid">
-            <div>
-              <strong>Total Revenue:</strong> ${formatRevenue(partnerRevenue)}
-            </div>
-            <div>
-              <strong>Client Count:</strong> ${partnerClients.length}
-            </div>
-            <div>
-              <strong>Capacity Used:</strong> ${Math.round(partner.capacityUsed || 0)}%
-            </div>
-            <div>
-              <strong>Practice Areas:</strong> ${(partner.practiceAreas || []).join(', ') || 'None specified'}
-            </div>
-          </div>
-          
-          ${partnerClients.length > 0 ? `
-            <h4>Client Portfolio</h4>
-            <table>
-              <thead>
-                <tr>
-                  <th>Client Name</th>
-                  <th>Revenue</th>
-                  <th>Strategic Value</th>
-                  <th>Practice Areas</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${partnerClients.map(client => {
-                  const revenue = getClientRevenue(client, getRevenueFunc);
-                  const practiceAreas = Array.isArray(client.practice_area) ? 
-                    client.practice_area.join(', ') : (client.practice_area || 'Not specified');
-                  
-                  return `
-                    <tr>
-                      <td>${escapeHtml(client.name || 'Unknown')}</td>
-                      <td>${formatRevenue(revenue)}</td>
-                      <td>${client.strategic_value ? client.strategic_value.toFixed(1) : 'N/A'}</td>
-                      <td>${escapeHtml(practiceAreas)}</td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          ` : '<p><em>No clients assigned</em></p>'}
-        </div>
-      `;
-    };
-
-    // Generate transition plan if assignments exist
-    const generateTransitionPlan = () => {
-      const assignments = safeTransitions.customAssignments || {};
-      const assignmentEntries = Object.entries(assignments);
-      
-      if (assignmentEntries.length === 0) {
-        return '<div class="section"><h2>Transition Plan</h2><p><em>No client reassignments planned</em></p></div>';
-      }
-
-      return `
-        <div class="section">
-          <h2>Transition Plan</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Client Name</th>
-                <th>Current Partner</th>
-                <th>New Partner</th>
-                <th>Revenue Impact</th>
-                <th>Strategic Value</th>
-                <th>Practice Areas</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${assignmentEntries.map(([clientId, newPartnerId]) => {
-                const client = clientById.get(clientId);
-                const currentPartner = partnerByClientId.get(clientId);
-                const newPartner = partnerById.get(newPartnerId);
-                const revenue = getClientRevenue(client, getRevenueFunc);
-                const practiceAreas = Array.isArray(client?.practice_area) ? 
-                  client.practice_area.join(', ') : (client?.practice_area || 'Not specified');
-                
-                return `
-                  <tr>
-                    <td>${escapeHtml(client?.name || 'Unknown Client')}</td>
-                    <td>${escapeHtml(currentPartner?.name || 'Unknown')}</td>
-                    <td>${escapeHtml(newPartner?.name || 'Unknown')}</td>
-                    <td>${formatRevenue(revenue)}</td>
-                    <td>${client?.strategic_value ? client.strategic_value.toFixed(1) : 'N/A'}</td>
-                    <td>${escapeHtml(practiceAreas)}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
-    };
-
-    // Assemble complete HTML document
-    const html = `
-      <!DOCTYPE html>
-      <html lang="en">
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Partnership Transition Report - ${new Date().toLocaleDateString()}</title>
-          ${styles}
-        </head>
-        <body>
-          <div class="header">
-            <h1>Partnership Transition Analysis</h1>
-            <p>Generated: ${new Date().toLocaleString()}</p>
-            <p><strong>Confidential Document - Internal Use Only</strong></p>
-          </div>
-          
-          ${generateExecutiveSummary()}
-          <div class="page-break"></div>
-          
-          <div class="section">
-            <h2>Partner Portfolio Details</h2>
-            ${safePartners.map(generatePartnerSection).join('')}
-          </div>
-          <div class="page-break"></div>
-          
-          ${generateTransitionPlan()}
-          
-          <div class="section" style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #ddd;">
-            <h2>Report Notes</h2>
-            <ul>
-              <li>Revenue figures are for the portfolio's reporting year (the latest year with revenue on file)</li>
-              <li>Capacity calculations assume 30 clients = 100% capacity benchmark</li>
-              <li>Strategic values rated on 1-10 scale (10 = highest strategic importance)</li>
-              <li>This analysis is based on data as of ${new Date().toLocaleDateString()}</li>
-            </ul>
-          </div>
-        </body>
-      </html>
-    `;
-
-    // Open in new window for printing
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(html);
-      printWindow.document.close();
-      printWindow.focus();
-      
-      // Auto-print after content loads
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    } else {
-      throw new Error('Unable to open print window. Please check popup blocker settings.');
-    }
-
-  } catch (error) {
-    console.error('Error generating PDF report:', error);
-    alert(`Export failed: ${error.message}`);
-  }
-};
+const csvRow = (cells) => cells.map(csvCell).join(',');
+const ratioCell = (r) => (r === null || r === undefined || !Number.isFinite(r) ? '' : Math.round(r * 100) / 100);
 
 /**
- * Export transition plan as CSV file
+ * Everyone's load as CSV: one row per person in the lead books or the
+ * second-chair groups. Ratios are against the role's average (lead books
+ * against the partners'), blank when there is nothing to compare with.
  */
-export const exportTransitionPlan = (assignments, partners, clients, getRevenueFunc) => {
-  try {
-    // Validate inputs with fallbacks
-    const safeAssignments = assignments || {};
-    const safePartners = Array.isArray(partners) ? partners : [];
-    const safeClients = Array.isArray(clients) ? clients : [];
+export function buildLoadCsv(model, year) {
+  const header = [
+    'Person', 'Role', 'Active',
+    'Lead clients', 'Lead clients vs partner avg',
+    `Lead revenue ${year}`, 'Lead revenue vs partner avg',
+    'Lead effort', 'Lead effort vs partner avg',
+    'Second-chair clients', 'Second-chair clients vs role avg',
+    `Second-chair revenue ${year}`, 'Second-chair revenue vs role avg',
+    'Second-chair effort', 'Second-chair effort vs role avg',
+  ];
+  const seen = new Set();
+  const people = [...model.leadBooks, ...model.secondChairs.flatMap((g) => g.rows)]
+    .filter((r) => !seen.has(r.person.id) && seen.add(r.person.id));
 
-    // CSV Headers
-    const headers = [
-      'Client Name',
-      'Client ID', 
-      'Current Partner',
-      'New Partner',
-      'Revenue',
-      'Strategic Value',
-      'Practice Areas',
-      'Transition Priority'
-    ];
+  const rows = people.map((r) => [
+    r.person.name, ROLE_LABELS[r.person.role] || r.person.role, r.person.active ? 'Y' : 'N',
+    r.lead.count, ratioCell(r.leadRatio.count),
+    Math.round(r.lead.revenue * 100) / 100, ratioCell(r.leadRatio.revenue),
+    Math.round(r.lead.effort * 100) / 100, ratioCell(r.leadRatio.effort),
+    r.second.count, ratioCell(r.secondRatio.count),
+    Math.round(r.second.revenue * 100) / 100, ratioCell(r.secondRatio.revenue),
+    Math.round(r.second.effort * 100) / 100, ratioCell(r.secondRatio.effort),
+  ]);
+  return [header, ...rows].map(csvRow).join('\r\n');
+}
 
-    // Generate CSV rows
-    const rows = [headers];
+const loadTable = (rows, which, label) => `
+  <table>
+    <thead><tr><th>${escapeHtml(label)}</th><th>Clients</th><th>vs avg</th><th>Revenue</th><th>vs avg</th><th>Effort</th><th>vs avg</th></tr></thead>
+    <tbody>
+      ${rows.map((r) => `
+        <tr>
+          <td>${escapeHtml(r.person.name)}${r.person.active === false ? ' (inactive)' : ''}</td>
+          <td>${r[which].count}</td><td>${formatRatio(r[`${which}Ratio`].count)}</td>
+          <td>${money(r[which].revenue)}</td><td>${formatRatio(r[`${which}Ratio`].revenue)}</td>
+          <td>${effort(r[which].effort)}</td><td>${formatRatio(r[`${which}Ratio`].effort)}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`;
 
-    // Build lookup maps to avoid O(n²) scans
-    const clientById = new Map(safeClients.map(c => [c?.id, c]));
-    const partnerById = new Map(safePartners.map(p => [p?.id, p]));
-    const currentPartnerByClientId = new Map(
-      safePartners.flatMap(p =>
-        Array.isArray(p?.clients) ? p.clients.map(cid => [cid, p]) : []
-      )
-    );
-
-    Object.entries(safeAssignments).forEach(([clientId, newPartnerId]) => {
-      const client = clientById.get(clientId);
-      const currentPartner = currentPartnerByClientId.get(clientId);
-      const newPartner = partnerById.get(newPartnerId);
-      
-      const revenue = getClientRevenue(client, getRevenueFunc);
-      const practiceAreas = Array.isArray(client?.practice_area) ? 
-        client.practice_area.join('; ') : (client?.practice_area || '');
-      
-      // Determine transition priority based on strategic value and revenue
-      let priority = 'Low';
-      const strategicValue = client?.strategic_value || 0;
-      if (strategicValue > 7 || revenue > 1000000) priority = 'High';
-      else if (strategicValue > 5 || revenue > 500000) priority = 'Medium';
-
-      rows.push([
-        client?.name || 'Unknown Client',
-        clientId || '',
-        currentPartner?.name || 'Unknown',
-        newPartner?.name || 'Unknown', 
-        revenue.toFixed(2),
-        strategicValue.toFixed(1),
-        practiceAreas,
-        priority
-      ]);
-    });
-
-    // Handle empty assignments case
-    if (rows.length === 1) {
-      rows.push(['No client reassignments planned', '', '', '', '0', '0', '', 'N/A']);
-    }
-
-    // Convert to CSV format with proper escaping
-    const csvContent = rows.map(row => 
-      row.map(cell => {
-        // Convert to string and escape quotes
-        const cellStr = String(cell || '');
-        // If cell contains comma, quotes, or newlines, wrap in quotes and escape internal quotes
-        if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
-          return `"${cellStr.replace(/"/g, '""')}"`;
-        }
-        return cellStr;
-      }).join(',')
-    ).join('\n');
-
-    // Add BOM for Excel compatibility
-    const BOM = '\uFEFF';
-    const csvWithBOM = BOM + csvContent;
-
-    // Create and download file
-    const blob = new Blob([csvWithBOM], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `transition_plan_${new Date().toISOString().split('T')[0]}.csv`;
-    link.style.display = 'none';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    // Cleanup
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 100);
-
-  } catch (error) {
-    console.error('Error exporting transition plan:', error);
-    alert(`Export failed: ${error.message}`);
-  }
-};
+const clientTable = (clients, revenueOf, otherLabel, otherOf) => `
+  <table>
+    <thead><tr><th>Client</th><th>Revenue</th><th>Strategic value</th><th>Effort</th><th>${escapeHtml(otherLabel)}</th></tr></thead>
+    <tbody>
+      ${clients.map((c) => `
+        <tr>
+          <td>${escapeHtml(c.name)}</td><td>${money(revenueOf(c))}</td><td>${strategic(c)}</td>
+          <td>${effort(parseFloat(c.effort) || 0)}</td><td>${escapeHtml(otherOf(c) || '—')}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`;
 
 /**
- * Export partner capacity analysis as CSV
+ * The printable report: the summary, the partners' lead books, the
+ * second-chair load by role, then each person's clients.
  */
-export const exportCapacityAnalysis = (partners, clients, getRevenueFunc) => {
-  try {
-    const safePartners = Array.isArray(partners) ? partners : [];
-    const safeClients = Array.isArray(clients) ? clients : [];
+export function buildPartnershipReportHtml(model, year, revenueOf, now = new Date()) {
+  const date = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const people = [...model.leadBooks, ...model.secondChairs.flatMap((g) => g.rows)]
+    .filter((r, i, all) => all.findIndex((x) => x.person.id === r.person.id) === i)
+    .filter((r) => r.lead.count > 0 || r.second.count > 0);
 
-    const headers = [
-      'Partner Name',
-      'Status',
-      'Current Clients',
-      'Total Revenue',
-      'Capacity Used (%)',
-      'Practice Areas',
-      'Avg Strategic Value',
-      'High Value Clients',
-      'Revenue per Client'
-    ];
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Who's carrying what: ${escapeHtml(date)}</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 24px; color: #222; line-height: 1.4; }
+  h1 { margin-bottom: 4px; } h2 { margin-top: 28px; border-bottom: 2px solid #333; padding-bottom: 4px; }
+  h3 { margin: 18px 0 6px; } h4 { margin: 10px 0 4px; font-size: 0.95em; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 0.9em; }
+  th, td { border: 1px solid #ccc; padding: 5px 8px; text-align: left; }
+  th { background: #f2f2f2; }
+  .muted { color: #666; font-size: 0.9em; }
+  .person { page-break-inside: avoid; }
+  @media print { body { margin: 0; } h2 { page-break-after: avoid; } }
+</style>
+</head>
+<body>
+  <h1>Who's carrying what</h1>
+  <p class="muted">${escapeHtml(date)}. Revenue is ${year}'s. Confidential: internal use only.</p>
 
-    const rows = [headers];
+  <h2>Summary</h2>
+  <table>
+    <tbody>
+      <tr><th>Clients</th><td>${model.totals.clients}</td></tr>
+      <tr><th>Revenue ${year}</th><td>${money(model.totals.revenue)}</td></tr>
+      <tr><th>Clients without a second chair</th><td>${model.noSecondChair.length}</td></tr>
+      ${model.unled.length > 0 ? `<tr><th>Clients without a lead</th><td>${model.unled.length}</td></tr>` : ''}
+    </tbody>
+  </table>
 
-    safePartners.forEach(partner => {
-      if (!partner) return;
-      
-      const partnerClients = (partner.clients || [])
-        .map(clientId => safeClients.find(c => c?.id === clientId))
-        .filter(Boolean);
-      
-      const totalRevenue = partnerClients.reduce((sum, client) => {
-        return sum + getClientRevenue(client, getRevenueFunc);
-      }, 0);
-      
-      const avgStrategicValue = partnerClients.length > 0 ? 
-        partnerClients.reduce((sum, c) => sum + (c?.strategic_value || 0), 0) / partnerClients.length : 0;
-      
-      const highValueClients = partnerClients.filter(c => (c?.strategic_value || 0) > 7).length;
-      const revenuePerClient = partnerClients.length > 0 ? totalRevenue / partnerClients.length : 0;
+  <h2>Lead books (partners)</h2>
+  ${loadTable(model.leadBooks, 'lead', 'Partner')}
 
-      rows.push([
-        partner.name || 'Unknown',
-        partner.isDeparting ? 'Departing' : 'Active',
-        partnerClients.length.toString(),
-        totalRevenue.toFixed(2),
-        Math.round(partner.capacityUsed || 0).toString(),
-        (partner.practiceAreas || []).join('; '),
-        avgStrategicValue.toFixed(1),
-        highValueClients.toString(),
-        revenuePerClient.toFixed(2)
-      ]);
-    });
+  <h2>Second-chair load</h2>
+  ${model.secondChairs.map((g) => `<h3>${escapeHtml(g.label)}</h3>${loadTable(g.rows, 'second', ROLE_LABELS[g.role] || g.role)}`).join('')}
 
-    const csvContent = rows.map(row => 
-      row.map(cell => {
-        const cellStr = String(cell || '');
-        if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
-          return `"${cellStr.replace(/"/g, '""')}"`;
-        }
-        return cellStr;
-      }).join(',')
-    ).join('\n');
+  <h2>Clients by person</h2>
+  ${people.map((r) => `
+    <div class="person">
+      <h3>${escapeHtml(r.person.name)} <span class="muted">(${escapeHtml(roleLabel(r.person))})</span></h3>
+      ${r.lead.count > 0 ? `<h4>Leads ${r.lead.count}</h4>${clientTable(r.lead.clients, revenueOf, 'Second chair', (c) => c.secondChair?.name)}` : ''}
+      ${r.second.count > 0 ? `<h4>Second chair on ${r.second.count}</h4>${clientTable(r.second.clients, revenueOf, 'Lead', (c) => c.lead?.name)}` : ''}
+    </div>`).join('')}
 
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `capacity_analysis_${new Date().toISOString().split('T')[0]}.csv`;
-    link.style.display = 'none';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 100);
+  <h2>Notes</h2>
+  <ul class="muted">
+    <li>Each figure is compared with the average of the active people in the same role; lead books with the partners' average. "—" means there is no one to compare with.</li>
+    <li>Effort is each client's contact cadence (Daily 5, Weekly 3, Monthly 2, Quarterly 1, As-Needed 0.5, unset 1), × 1.5 when the client is a handful.</li>
+    <li>A client's effort counts in full for both its lead and its second chair.</li>
+  </ul>
+</body>
+</html>`;
+}
 
-  } catch (error) {
-    console.error('Error exporting capacity analysis:', error);
-    alert(`Export failed: ${error.message}`);
-  }
-};
+/** Open the report in a new window and print it. */
+export function exportPartnershipReport(model, year, revenueOf) {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) throw new Error('The browser blocked the report window; allow pop-ups for this site and try again.');
+  printWindow.document.write(buildPartnershipReportHtml(model, year, revenueOf));
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => printWindow.print(), 500);
+}
+
+/** Download everyone's load as load_<date>.csv (with a BOM, so Excel reads UTF-8). */
+export function exportLoadCsv(model, year) {
+  const blob = new Blob([`\uFEFF${buildLoadCsv(model, year)}`], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `load_${new Date().toISOString().split('T')[0]}.csv`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}

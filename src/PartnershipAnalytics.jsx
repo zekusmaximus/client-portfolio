@@ -1,206 +1,167 @@
-import { useState, useEffect } from 'react';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
+import { useMemo, useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { 
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger 
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { AlertTriangle, Download } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
-import CurrentPartnershipGrid from './components/CurrentPartnershipGrid';
-import PartnerDeepDive from './components/PartnerDeepDive';
-import RedistributionModeler from './components/RedistributionModeler';
-import PostTransitionGrid from './components/PostTransitionGrid';
-import ClientFlowVisualization from './components/ClientFlowVisualization';
-import PartnershipMetrics from './components/PartnershipMetrics';
-import ScenarioComparison from './components/ScenarioComparison';
-import TransitionChecklist from './components/TransitionChecklist';
-import AIErrorBoundary from './components/AIErrorBoundary';
-import { 
-  exportPartnershipPDF, 
-  exportTransitionPlan,
-  exportCapacityAnalysis 
-} from './utils/partnershipExports';
+import LoadTable from './components/LoadTable';
+import PersonLoadSheet from './components/PersonLoadSheet';
+import { partnershipModel, bookYears, formatMoney } from './utils/load';
+import { revenueForYear } from './utils/revenue';
+import { exportPartnershipReport, exportLoadCsv } from './utils/partnershipExports';
 
+// Who's carrying what (docs/plans/people-and-second-chair.md, Phase 4): the
+// partners' lead books and everyone's second-chair load, from the People list
+// and each client's lead and second chair, each against the average of the
+// active people in the same role (P10). Departures are modelled on Scenarios.
 const PartnershipAnalytics = () => {
-  const { 
-    partners, 
-    selectedPartner, 
-    clients,
-    fetchPartners, 
-    setSelectedPartner,
-    markPartnerDeparting,
-    partnershipTransition,
-    updatePartnershipTransition,
-    getClientRevenue
-  } = usePortfolioStore();
+  const clients = usePortfolioStore((s) => s.clients);
+  const people = usePortfolioStore((s) => s.people);
+  const reportingYear = usePortfolioStore((s) => s.getReportingYear());
+  const setCurrentView = usePortfolioStore((s) => s.setCurrentView);
 
-  const [showTransitionView, setShowTransitionView] = useState(false);
-  const [redistributionModel, setRedistributionModel] = useState('balanced');
-  const [aiError, setAIError] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [exportError, setExportError] = useState(null);
 
-  useEffect(() => {
-    fetchPartners();
-  }, [fetchPartners]);
+  const revenueOf = useMemo(() => (client) => revenueForYear(client, reportingYear), [reportingYear]);
+  const model = useMemo(() => partnershipModel(people, clients, revenueOf), [people, clients, revenueOf]);
+  const years = useMemo(() => bookYears(clients), [clients]);
+  const selectedRow = model.rows.find((r) => r.person.id === selectedId) || null;
 
-  const handlePartnerClick = (partner) => {
-    setSelectedPartner(partner);
-  };
-
-  const handlePartnerRightClick = (partner, e) => {
-    e.preventDefault();
-    markPartnerDeparting(partner.id);
-  };
-
-  // Export handlers
-  const handleExportPDF = () => {
+  const runExport = (label, fn) => {
+    setExportError(null);
     try {
-      exportPartnershipPDF(partners, partnershipTransition, clients, getClientRevenue);
+      fn();
     } catch (error) {
-      console.error('Export PDF failed:', error);
-      setAIError('PDF export failed. Please try again.');
+      console.error(`${label} failed:`, error);
+      setExportError(`${label} failed: ${error.message}`);
     }
   };
 
-  const handleExportTransition = () => {
-    try {
-      exportTransitionPlan(
-        partnershipTransition.customAssignments,
-        partners,
-        clients,
-        getClientRevenue
-      );
-    } catch (error) {
-      console.error('Export transition plan failed:', error);
-      setAIError('Transition plan export failed. Please try again.');
-    }
-  };
+  if (!clients.length) {
+    return (
+      <Card>
+        <CardContent className="pt-6 text-center text-muted-foreground">
+          No clients yet. Import the book on Data Upload, and each partner's lead book and everyone's
+          second-chair load appear here.
+        </CardContent>
+      </Card>
+    );
+  }
 
-  const handleExportCapacity = () => {
-    try {
-      exportCapacityAnalysis(partners, clients, getClientRevenue);
-    } catch (error) {
-      console.error('Export capacity analysis failed:', error);
-      setAIError('Capacity analysis export failed. Please try again.');
-    }
-  };
+  const tiles = [
+    ['Clients', model.totals.clients],
+    [`Revenue ${reportingYear}`, formatMoney(model.totals.revenue)],
+    ['Without a second chair', model.noSecondChair.length],
+    ...(model.unled.length > 0 ? [['Without a lead', model.unled.length]] : []),
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Metrics Overview */}
-      <PartnershipMetrics 
-        partners={partners}
-        transitions={partnershipTransition}
-        clients={clients}
-      />
-      
-      {/* Current Partnership State */}
-      <CurrentPartnershipGrid 
-        partners={partners}
-        onPartnerClick={handlePartnerClick}
-        onPartnerRightClick={handlePartnerRightClick}
-      />
-      
-      {/* Transition Controls */}
-      <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-        <div className="flex items-center gap-4">
-          <Switch
-            checked={showTransitionView}
-            onCheckedChange={setShowTransitionView}
-          />
-          <Label className="text-sm font-medium">Show Post-Transition Model</Label>
-          {showTransitionView && (
-            <div className="text-xs text-gray-600">
-              Showing projected partner states after redistribution
-            </div>
-          )}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Who&apos;s carrying what</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Revenue is {reportingYear}&apos;s. Each figure is compared with the average of the active people in the
+            same role; &quot;—&quot; means there is no one to compare with. To model a departure, use Scenarios.
+          </p>
         </div>
-        
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline">
               <Download className="h-4 w-4 mr-2" />
-              Export Analysis
+              Export
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
-            <DropdownMenuItem onClick={handleExportPDF}>
-              Partnership Report (PDF)
+            <DropdownMenuItem onClick={() => runExport('The report', () => exportPartnershipReport(model, reportingYear, revenueOf))}>
+              Report (print or save as PDF)
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleExportTransition}>
-              Transition Plan (CSV)
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleExportCapacity}>
-              Capacity Analysis (CSV)
+            <DropdownMenuItem onClick={() => runExport('The CSV', () => exportLoadCsv(model, reportingYear))}>
+              Everyone&apos;s load (CSV)
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
-      {/* Redistribution Modeler */}
-      <AIErrorBoundary fallbackAction={() => setRedistributionModel('balanced')}>
-        <RedistributionModeler 
-          model={redistributionModel}
-          onModelChange={(model) => {
-            setRedistributionModel(model);
-            updatePartnershipTransition({ redistributionModel: model });
-          }}
-        />
-      </AIErrorBoundary>
-
-      {/* Export error display */}
-      {aiError && (
+      {exportError && (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{exportError}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {tiles.map(([label, value]) => (
+          <Card key={label}>
+            <CardContent className="p-4">
+              <div className="text-sm text-muted-foreground">{label}</div>
+              <div className="text-2xl font-bold tabular-nums">{value}</div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {model.unled.length > 0 && (
+        <Alert data-testid="unled-clients">
+          <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            {aiError}
+            {model.unled.length === 1 ? 'One client has' : `${model.unled.length} clients have`} no lead, so{' '}
+            {model.unled.length === 1 ? 'it counts' : 'they count'} in no one&apos;s book:{' '}
+            {model.unled.slice(0, 10).map((c) => c.name).join(', ')}
+            {model.unled.length > 10 ? ', …' : ''}. Set a lead in{' '}
+            <button type="button" className="underline" onClick={() => setCurrentView('client-details')}>
+              Client Details
+            </button>
+            .
           </AlertDescription>
         </Alert>
       )}
-      
-      {/* Transition View */}
-      {showTransitionView && (
-        <>
-          <ScenarioComparison 
-            scenarios={['balanced', 'expertise', 'relationship', 'custom']}
-            onApply={(model) => {
-              setRedistributionModel(model);
-              updatePartnershipTransition({ redistributionModel: model });
-            }}
-          />
-          
-          <PostTransitionGrid 
-            partners={partners}
-            model={redistributionModel}
-            clients={clients}
-            customAssignments={partnershipTransition.customAssignments}
-          />
-          
-          <ClientFlowVisualization 
-            partners={partners}
-            assignments={partnershipTransition.customAssignments}
-            clients={clients}
-          />
-          
-          <TransitionChecklist 
-            assignments={partnershipTransition.customAssignments}
-            clients={clients}
-          />
-        </>
-      )}
-      
-      {/* Partner Deep Dive */}
-      {selectedPartner && (
-        <PartnerDeepDive 
-          partner={selectedPartner}
-          onClose={() => setSelectedPartner(null)}
-          isTransitionView={showTransitionView}
-        />
-      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Lead books</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            The clients each partner leads, heaviest revenue first, against the partners&apos; average.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <LoadTable rows={model.leadBooks} which="lead" heading="Partner" year={reportingYear} onSelect={setSelectedId} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Second-chair load</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            The clients each person second-chairs, against the average of the others in the same role. A
+            client&apos;s effort counts in full for its lead and for its second chair.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {model.secondChairs.map((group) => (
+            <div key={group.role}>
+              <h3 className="text-sm font-semibold mb-2">{group.label}</h3>
+              <LoadTable rows={group.rows} which="second" heading="Name" year={reportingYear} onSelect={setSelectedId} />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <PersonLoadSheet
+        row={selectedRow}
+        year={reportingYear}
+        years={years}
+        revenueOf={revenueOf}
+        revenueOfYear={revenueForYear}
+        onClose={() => setSelectedId(null)}
+      />
     </div>
   );
 };

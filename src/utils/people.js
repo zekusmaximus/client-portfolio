@@ -77,3 +77,27 @@ export function toPersonId(value) {
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
 }
+
+/**
+ * The client list's lead and second-chair filters: who each offers. The lead
+ * filter offers the active partners and anyone else who leads a client; the
+ * second-chair filter offers everyone active and anyone inactive still in a
+ * seat. `seat` is 'lead' or 'second'.
+ */
+export function personFilterOptions(people = [], clients = [], seat = 'lead') {
+  const key = seat === 'lead' ? 'lead' : 'secondChair';
+  const holding = new Set(clients.map((c) => c?.[key]?.id).filter((id) => id !== null && id !== undefined));
+  return people
+    .filter((p) => holding.has(p.id) || (p.active && (seat !== 'lead' || p.role === 'partner')))
+    .sort(byRoleThenName);
+}
+
+/**
+ * Whether a client's person in one seat passes a filter value: 'all', 'none'
+ * (the seat is empty), or a person id as the select gives it (a string).
+ */
+export function matchesPersonFilter(person, filter = 'all') {
+  if (filter === 'all') return true;
+  if (filter === 'none') return person === null || person === undefined;
+  return person !== null && person !== undefined && String(person.id) === String(filter);
+}

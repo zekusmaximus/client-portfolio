@@ -29,6 +29,8 @@ import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 import DataUploadManager from './DataUploadManager';
+import { partnershipModel, heaviestLeadBook, formatRatio, formatMoney } from './utils/load';
+import { revenueForYear } from './utils/revenue';
 
 const DashboardView = () => {
   const {
@@ -36,10 +38,16 @@ const DashboardView = () => {
     fetchError,
     openClientModal,
     retryFetchClients,
-    getPartnershipHealth,
     setCurrentView,
     getSuccessionAnalytics
   } = usePortfolioStore();
+  const people = usePortfolioStore((s) => s.people);
+  const reportingYear = usePortfolioStore((s) => s.getReportingYear());
+  // The partner leading the most revenue, against the partners' average (P10)
+  const heaviest = useMemo(
+    () => heaviestLeadBook(partnershipModel(people, clients, (c) => revenueForYear(c, reportingYear))),
+    [people, clients, reportingYear]
+  );
   const [selectedTab, setSelectedTab] = useState('overview');
   const [showUpload, setShowUpload] = useState(false);
 
@@ -266,11 +274,14 @@ const DashboardView = () => {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Partnership Health</p>
-                <p className="text-2xl font-bold">{getPartnershipHealth()}%</p>
+                <p className="text-sm font-medium text-muted-foreground">Heaviest lead book</p>
+                <p className="text-2xl font-bold">{heaviest ? heaviest.person.name : '—'}</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Click for detailed analysis
+                  {heaviest
+                    ? `${formatMoney(heaviest.revenue)} in ${reportingYear}, ${formatRatio(heaviest.ratio)} the partners' average`
+                    : 'No partner leads a client yet'}
                 </p>
+                <p className="text-xs text-muted-foreground">Click for who&apos;s carrying what</p>
               </div>
               <Users className="h-8 w-8 text-green-500" />
             </div>
