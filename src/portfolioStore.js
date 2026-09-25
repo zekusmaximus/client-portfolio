@@ -3,9 +3,32 @@ import { persist } from 'zustand/middleware';
 import { apiClient } from './api';
 import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
 import { computeReportingYear, revenueForYear } from './utils/revenue';
+import { toggleId, withChoice } from './utils/departure';
 
 // AI Advisor answers start empty and go back to empty on logout.
 const EMPTY_AI_RESULTS = { portfolioAnalysis: null, strategicAdvice: null, clientRecommendations: null };
+
+// The Scenarios workflow (docs/plans/people-and-second-chair.md, Phase 5,
+// P11): the open stage, the ids of the people leaving, and the partner's
+// picks for each affected client's seats, { [clientId]: { leadId,
+// secondChairId } }, which src/utils/departure.js applies over its defaults.
+const emptySuccessionWorkflow = () => ({ currentStage: 'impact', departingIds: [], choices: {} });
+const emptyExecution = () => ({
+  activeTransitions: [],
+  transitionTasks: [],
+  communicationLog: [],
+  executionMetrics: {
+    totalTransitions: 0,
+    completedTransitions: 0,
+    inProgressTransitions: 0,
+    atRiskTransitions: 0,
+    delayedTransitions: 0,
+    successRate: 0,
+    retentionRate: 0,
+    avgTransitionDays: 0
+  },
+  executionAlerts: []
+});
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
@@ -56,30 +79,15 @@ const usePortfolioStore = create(
       // The Partnership tab and the client list use the People list instead.
       partners: [],
       
-      // Succession planning state
-      transitionPlans: {}, // { clientId: transitionPlan }
-      successionWorkflow: {
-        currentStage: 'impact', // 'impact', 'triage', 'implementation'
-        stage1Data: null,
-        stage2Data: null,
-        selectedDepartingPartners: []
-      },
-      
-      // Execution state
-      activeTransitions: [], // Array of active transition objects
-      transitionTasks: [], // Array of task objects
-      communicationLog: [], // Array of communication records
-      executionMetrics: {
-        totalTransitions: 0,
-        completedTransitions: 0,
-        inProgressTransitions: 0,
-        atRiskTransitions: 0,
-        delayedTransitions: 0,
-        successRate: 0,
-        retentionRate: 0,
-        avgTransitionDays: 0
-      },
-      executionAlerts: [],
+      // Succession planning state (P11): in the store so a tab switch, which
+      // unmounts the tab, keeps the scenario. Not persisted (partialize);
+      // cleared on logout. currentStage is 'impact', 'mitigation' or
+      // 'implementation'.
+      successionWorkflow: emptySuccessionWorkflow(),
+      transitionPlans: {}, // { clientId: transitionPlan }, Stage 2
+
+      // Execution state, Stage 3
+      ...emptyExecution(),
       
       // Actions
       setClients: (clients) => {
@@ -311,7 +319,11 @@ const usePortfolioStore = create(
             people: [],
             peopleError: null,
             aiResults: { ...EMPTY_AI_RESULTS },
-            aiError: null
+            aiError: null,
+            partners: [],
+            successionWorkflow: emptySuccessionWorkflow(),
+            transitionPlans: {},
+            ...emptyExecution()
           });
         }
       },
@@ -473,16 +485,33 @@ const usePortfolioStore = create(
       },
 
       // Succession planning workflow actions
-      setSuccessionStage: (stage, data) => {
-        const current = get().successionWorkflow;
-        set({
+      setSuccessionStage: (stage) => {
+        set((state) => ({ successionWorkflow: { ...state.successionWorkflow, currentStage: stage } }));
+      },
+
+      // Mark someone as leaving, or not; the departure engine does the rest
+      toggleDeparting: (personId) => {
+        set((state) => ({
           successionWorkflow: {
-            ...current,
-            currentStage: stage,
-            ...(stage === 'triage' && { stage1Data: data }),
-            ...(stage === 'implementation' && { stage2Data: data })
+            ...state.successionWorkflow,
+            departingIds: toggleId(state.successionWorkflow.departingIds, personId)
           }
-        });
+        }));
+      },
+
+      clearDeparting: () => {
+        set((state) => ({ successionWorkflow: { ...state.successionWorkflow, departingIds: [] } }));
+      },
+
+      // The partner's pick for one client's seats: { leadId?, secondChairId? }
+      // (a secondChairId of null leaves the seat empty); null forgets the pick
+      setDepartureChoice: (clientId, choice) => {
+        set((state) => ({
+          successionWorkflow: {
+            ...state.successionWorkflow,
+            choices: withChoice(state.successionWorkflow.choices, clientId, choice)
+          }
+        }));
       },
 
       setTransitionPlan: (clientId, plan) => {
@@ -557,15 +586,12 @@ const usePortfolioStore = create(
         set({ transitionPlans: {} });
       },
 
+      // Start the scenario over: nobody leaving, no picks, no plans
       resetSuccessionWorkflow: () => {
         set({
-          successionWorkflow: {
-            currentStage: 'impact',
-            stage1Data: null,
-            stage2Data: null,
-            selectedDepartingPartners: []
-          },
-          transitionPlans: {}
+          successionWorkflow: emptySuccessionWorkflow(),
+          transitionPlans: {},
+          ...emptyExecution()
         });
       },
 
@@ -689,7 +715,8 @@ const usePortfolioStore = create(
           .filter(([_, plan]) => plan.status === 'approved');
 
         const transitions = approvedPlans.map(([clientId, plan]) => {
-          const client = stage2Data.affectedClients?.find(c => c.id === clientId);
+          // Object keys are text; production's client ids are integers
+          const client = stage2Data.affectedClients?.find(c => String(c.id) === clientId);
           return {
             clientId,
             clientName: client?.name || 'Unknown Client',

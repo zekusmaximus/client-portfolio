@@ -841,7 +841,8 @@ const TransitionPlanManager = ({ stage2Data, onBackToStage2 }) => {
       const approvedPlans = Object.entries(stage2Data.transitionPlans)
         .filter(([_, plan]) => plan.status === 'approved')
         .map(([clientId, plan]) => {
-          const client = stage2Data.affectedClients?.find(c => c.id === clientId);
+          // Object keys are text; production's client ids are integers
+          const client = stage2Data.affectedClients?.find(c => String(c.id) === clientId);
           return {
             clientId,
             clientName: client?.name || 'Unknown Client',

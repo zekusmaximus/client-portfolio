@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import transitionPlan from '../utils/transitionPlan.cjs';
 
-const { TRANSITION_PLAN_SYSTEM, createTransitionPlanPrompt, parseTransitionPlanResponse } = transitionPlan;
+const { TRANSITION_PLAN_SYSTEM, checkPlanRequest, createTransitionPlanPrompt, parseTransitionPlanResponse } = transitionPlan;
 
 const client = {
   id: 'c1',
@@ -76,9 +76,11 @@ test('createTransitionPlanPrompt: reads the fields the frontend sends (averageRe
   assert.match(prompt, /\*\*Effort\*\*: 3 /);
   assert.match(prompt, /\*\*Contact Cadence\*\*: Weekly/);
   assert.match(prompt, /\("handful"\)\*\*: Yes/);
-  assert.match(prompt, /\*\*Departing Partners\*\*: John Doe, Jane Roe/);
+  assert.match(prompt, /\*\*Departing\*\*: John Doe, Jane Roe/);
   assert.match(prompt, /\*\*Total Revenue at Risk\*\*: \$250,000/);
-  assert.match(prompt, /\*\*Expected Retention Rate\*\*: 82\.0%/);
+  // The retention estimate was built on the retired relationshipStrength; the
+  // prompt states none, even when a caller still sends one
+  assert.doesNotMatch(prompt, /[Rr]etention/);
   // the retired reads are gone
   assert.doesNotMatch(prompt, /average_revenue|relationshipStrength|Relationship Strength/);
   assert.doesNotMatch(prompt, /undefined|NaN/);
@@ -96,8 +98,8 @@ test('createTransitionPlanPrompt: a bare client and empty stage data fall back t
   assert.match(prompt, /\*\*Contact Cadence\*\*: Not specified/);
   assert.match(prompt, /\("handful"\)\*\*: No/);
   assert.match(prompt, /\*\*Current Partner\*\*: Not assigned/);
-  assert.match(prompt, /\*\*Departing Partners\*\*: Not specified/);
-  assert.match(prompt, /\*\*Expected Retention Rate\*\*: 80\.0%/);
+  assert.match(prompt, /\*\*Departing\*\*: Not specified/);
+  assert.doesNotMatch(prompt, /[Rr]etention/, 'no invented default either');
   assert.doesNotMatch(prompt, /undefined|NaN/);
 });
 
@@ -141,4 +143,19 @@ test('parseTransitionPlanResponse: empty text returns the documented defaults', 
     assert.deepEqual(plan, expected);
     assert.ok(createdAt);
   }
+});
+
+test('checkPlanRequest: a client id is a uuid string or, on production\'s older tables, an integer', () => {
+  const ok = { client: { id: 42, name: 'Acme' }, stage1Data: {} };
+  assert.equal(checkPlanRequest(ok), null, 'production\'s integer ids were refused with a 400 before Phase 5');
+  assert.equal(checkPlanRequest({ ...ok, client: { id: '3f2b8c1e-0000-4000-8000-000000000000', name: 'Acme' } }), null);
+  const refused = 'client.id (a string or a positive integer) and client.name (a string) are required';
+  for (const client of [undefined, null, 'Acme', { name: 'Acme' }, { id: 0, name: 'Acme' }, { id: -1, name: 'Acme' },
+    { id: 1.5, name: 'Acme' }, { id: '', name: 'Acme' }, { id: 1 }, { id: 1, name: '  ' }, { id: true, name: 'Acme' }]) {
+    assert.equal(checkPlanRequest({ ...ok, client }), refused, JSON.stringify(client));
+  }
+  for (const stage1Data of [undefined, null, [], 'x']) {
+    assert.equal(checkPlanRequest({ ...ok, stage1Data }), 'stage1Data (object) is required');
+  }
+  assert.equal(checkPlanRequest(undefined), refused);
 });

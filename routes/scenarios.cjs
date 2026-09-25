@@ -4,7 +4,7 @@ const auth = require('../middleware/auth.cjs');
 const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs');
 const { handleValidationErrors, sanitizeRequestBody } = require('../middleware/validation.cjs');
 const { complete, describeError } = require('../services/anthropic.cjs');
-const { createTransitionPlanPrompt, parseTransitionPlanResponse } = require('../utils/transitionPlan.cjs');
+const { checkPlanRequest, createTransitionPlanPrompt, parseTransitionPlanResponse } = require('../utils/transitionPlan.cjs');
 
 // Apply middleware: auth first, then the AI budgets (D11) shared with claude.cjs
 router.use(auth);
@@ -23,12 +23,9 @@ router.use(sanitizeRequestBody);
 // that would outlive any proxy timeout on a current model.
 router.post('/transition-plan', handleValidationErrors, async (req, res) => {
   const { client, stage1Data } = req.body || {};
-
-  if (!client || typeof client.id !== 'string' || typeof client.name !== 'string') {
-    return res.status(400).json({ success: false, error: 'client.id and client.name (strings) are required' });
-  }
-  if (!stage1Data || typeof stage1Data !== 'object' || Array.isArray(stage1Data)) {
-    return res.status(400).json({ success: false, error: 'stage1Data (object) is required' });
+  const refusal = checkPlanRequest(req.body);
+  if (refusal) {
+    return res.status(400).json({ success: false, error: refusal });
   }
 
   try {

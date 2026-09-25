@@ -3,8 +3,8 @@
  * Provides computed metrics for client succession planning analysis
  */
 
-import { safeFrequencyToLowerCase, safePracticeAreaToArray } from './dataUtils';
-import { resolveStickinessScore, resolveEffort, MAX_EFFORT } from './clientMetrics';
+import { safeFrequencyToLowerCase, safePracticeAreaToArray } from './dataUtils.js';
+import { resolveStickinessScore, resolveEffort, MAX_EFFORT } from './clientMetrics.js';
 
 /**
  * Derives the relationship type based on client's lobbyist structure
@@ -50,6 +50,12 @@ export const deriveRelationshipType = (client) => {
   return 'secondary';
 };
 
+/** A client's conflict risk label, lowercased: 'low', 'medium', 'high' or ''. */
+const conflictRiskLabel = (client) => {
+  const label = client.conflict_risk ?? client.conflictRisk;
+  return typeof label === 'string' ? label.trim().toLowerCase() : '';
+};
+
 /**
  * Calculates transition complexity score based on multiple factors
  * @param {Object} client - Client data object
@@ -69,8 +75,10 @@ export const calculateTransitionComplexity = (client) => {
   const engagement = Math.min(10, (effort / MAX_EFFORT) * 10);
   complexity += engagement * 0.3;
 
-  // Communication frequency factor
-  const frequency = safeFrequencyToLowerCase(client.communication_frequency);
+  // Contact cadence factor. The column is interaction_frequency (the form's
+  // and the import's Cadence); this read communication_frequency, which no
+  // client has, so the factor was always 0 (people plan, Phase 5)
+  const frequency = safeFrequencyToLowerCase(client.interaction_frequency ?? client.interactionFrequency);
   const frequencyScores = {
     'daily': 3,
     'weekly': 2,
@@ -89,9 +97,10 @@ export const calculateTransitionComplexity = (client) => {
     complexity += 1.5;
   }
   
-  // High conflict risk adds complexity
-  const conflictRisk = parseFloat(client.conflict_risk) || 0;
-  if (conflictRisk >= 7) {
+  // High conflict risk adds complexity. Conflict risk is a Low/Medium/High
+  // label; this parseFloat'ed it and compared with 7, so it never counted
+  // (people plan, Phase 5)
+  if (conflictRiskLabel(client) === 'high') {
     complexity += 1;
   }
   

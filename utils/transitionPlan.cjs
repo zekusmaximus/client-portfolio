@@ -14,7 +14,10 @@ const TRANSITION_PLAN_SYSTEM =
 // from GET /api/data/clients (averageRevenue, stickinessScore, effort,
 // strategicValue) plus the succession metrics the store adds (successionRisk,
 // transitionComplexity, relationshipType). `stage1Data` carries the impact
-// analysis: selectedPartners (names) and impactData.
+// analysis: selectedPartners (the names of the people leaving, with their
+// roles) and impactData ({ totalRevenueAtRisk }). The retention estimate
+// Stage 1 used to send, built on the retired relationshipStrength, is gone
+// (people plan, Phase 5), and the prompt no longer states one.
 function createTransitionPlanPrompt(client, stage1Data = {}) {
   const revenue = Number(client.averageRevenue) || 0;
   const practiceAreas = Array.isArray(client.practiceArea)
@@ -35,7 +38,6 @@ function createTransitionPlanPrompt(client, stage1Data = {}) {
     : 'Not specified';
   const impact = stage1Data.impactData || {};
   const revenueAtRisk = Number(impact.totalRevenueAtRisk) || 0;
-  const retentionRate = Number(impact.estimatedRetentionRate) || 0.8;
 
   const prompt = `Create a detailed transition plan for this specific client based on the Stage 1 impact analysis.
 
@@ -53,9 +55,8 @@ function createTransitionPlanPrompt(client, stage1Data = {}) {
 - **High-maintenance ("handful")**: ${handful}
 
 ## STAGE 1 CONTEXT
-- **Departing Partners**: ${departingPartners}
+- **Departing**: ${departingPartners}
 - **Total Revenue at Risk**: $${revenueAtRisk.toLocaleString()}
-- **Expected Retention Rate**: ${(retentionRate * 100).toFixed(1)}%
 
 Please create a comprehensive transition plan with the following structure:
 
@@ -80,6 +81,27 @@ Please create a comprehensive transition plan with the following structure:
 Focus on practical, implementable recommendations. Consider the client's revenue impact, relationship dynamics, and succession risk level in your recommendations.`;
 
   return { system: TRANSITION_PLAN_SYSTEM, prompt };
+}
+
+// A client id as GET /api/data/clients sends it: an integer on production's
+// older tables, a uuid string on the tables init-db.sql creates (CLAUDE.md,
+// File Structure). The route required a string until Phase 5, so on
+// production every plan request answered 400.
+const isClientId = (id) => (typeof id === 'string' && id.trim() !== '') || (Number.isInteger(id) && id > 0);
+
+/**
+ * Check a POST /transition-plan body; returns the 400 message, or null when
+ * the request can go to the model.
+ */
+function checkPlanRequest(body) {
+  const { client, stage1Data } = body || {};
+  if (!client || typeof client !== 'object' || !isClientId(client.id) || typeof client.name !== 'string' || !client.name.trim()) {
+    return 'client.id (a string or a positive integer) and client.name (a string) are required';
+  }
+  if (!stage1Data || typeof stage1Data !== 'object' || Array.isArray(stage1Data)) {
+    return 'stage1Data (object) is required';
+  }
+  return null;
 }
 
 function parseTransitionPlanResponse(aiResponse, client = {}) {
@@ -181,6 +203,7 @@ function extractTasksFromResponse(text) {
 
 module.exports = {
   TRANSITION_PLAN_SYSTEM,
+  checkPlanRequest,
   createTransitionPlanPrompt,
   parseTransitionPlanResponse,
   extractSection,
