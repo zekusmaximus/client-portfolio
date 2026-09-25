@@ -11,6 +11,13 @@
 // parses each file with PapaParse as the upload page does. The last tests run
 // Phase 3's flow: Check file (dryRun), then scripts/reset-book.cjs on the
 // suite's database, then the section 3 template into the empty book.
+//
+// The whole suite runs twice: on the tables init-db.sql creates, and on
+// production's older tables (PRODUCTION_TABLES_SQL), created before
+// init-db.sql runs, as they were on Render. init-db.sql's CREATE TABLE IF NOT
+// EXISTS never replaced them, so production's ids are integers, not uuids; the
+// first real import on Render failed on that ("column client_id is of type
+// integer but expression is of type uuid").
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -78,7 +85,51 @@ function startServer(env) {
   return { child, ready };
 }
 
-describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+// Production's users, clients and client_revenues as they predate init-db.sql:
+// integer ids, and the client_revenues the original code wrote with plain
+// INSERTs (no UNIQUE (client_id, year), no timestamps). init-db.sql then adds
+// its columns and tables on top, as it does at every start on Render.
+const PRODUCTION_TABLES_SQL = `
+  CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE clients (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    status VARCHAR(50) DEFAULT 'Prospect',
+    practice_area TEXT[],
+    relationship_strength INTEGER DEFAULT 5,
+    conflict_risk VARCHAR(50) DEFAULT 'Medium',
+    renewal_probability DECIMAL(3,2) DEFAULT 0.7,
+    strategic_fit_score INTEGER DEFAULT 5,
+    notes TEXT,
+    primary_lobbyist VARCHAR(255),
+    client_originator VARCHAR(255),
+    lobbyist_team TEXT[],
+    interaction_frequency VARCHAR(100),
+    relationship_intensity INTEGER DEFAULT 5,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE client_revenues (
+    id SERIAL PRIMARY KEY,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    year INTEGER NOT NULL,
+    revenue_amount NUMERIC(12, 2) NOT NULL
+  );`;
+
+const SHAPES = [
+  { name: 'init-db.sql tables', tables: null, idType: 'uuid' },
+  { name: "production's older tables", tables: PRODUCTION_TABLES_SQL, idType: 'integer' },
+];
+
+for (const shape of SHAPES)
+describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
   const dbName = `import_test_${randomBytes(6).toString('hex')}`;
   let admin;
   let db;
@@ -91,6 +142,12 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     admin = new pg.Client({ connectionString: urlFor('postgres') });
     await admin.connect();
     await admin.query(`CREATE DATABASE ${dbName}`);
+    if (shape.tables) {
+      const setup = new pg.Client({ connectionString: urlFor(dbName) });
+      await setup.connect();
+      await setup.query(shape.tables);
+      await setup.end();
+    }
     env = {
       ...process.env,
       NODE_ENV: 'development',
@@ -157,8 +214,21 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
   // Every client and revenue row, for "the database is unchanged"
   const snapshot = async () => ({
     clients: (await db.query('SELECT to_jsonb(c) AS row FROM clients c ORDER BY name')).rows,
-    revenues: (await db.query('SELECT client_id, year, revenue_amount, updated_at FROM client_revenues ORDER BY client_id, year')).rows,
+    revenues: (await db.query('SELECT to_jsonb(r) AS row FROM client_revenues r ORDER BY client_id::text, year')).rows,
     people: (await db.query('SELECT * FROM people ORDER BY id')).rows,
+  });
+
+  test('the tables have this run\'s id type', async () => {
+    const { rows } = await db.query(`
+      SELECT table_name, data_type FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND ((table_name = 'clients' AND column_name = 'id')
+           OR (table_name = 'client_revenues' AND column_name = 'client_id'))
+       ORDER BY table_name`);
+    assert.deepEqual(rows, [
+      { table_name: 'client_revenues', data_type: shape.idType },
+      { table_name: 'clients', data_type: shape.idType },
+    ]);
   });
 
   test('the section 3 example imports leads, second chairs, originators and judgments', async () => {

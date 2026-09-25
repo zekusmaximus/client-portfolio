@@ -362,16 +362,20 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     const clientResultMap = new Map(); // lowerName -> returned DB row
 
     // --- Pass 2a: bulk UPDATE existing clients ---
+    // Client ids (and, in pass 3, years) are compared as text. Production's
+    // clients and client_revenues predate init-db.sql, whose CREATE TABLE IF
+    // NOT EXISTS never replaced them: their ids are integers, init-db.sql's are
+    // uuids, and the import must work on both.
     const updateRows = Array.from(toUpdateMap.values());
     if (updateRows.length > 0) {
-      const updateColumns = [['id', 'uuid'], ...writeColumns];
+      const updateColumns = [['id', 'text'], ...writeColumns];
       const { sql, params } = valuesList(updateRows, updateColumns);
       const { rows: updatedRows } = await (await client).query(`
         UPDATE clients c SET
           ${writeColumns.map(([column]) => `${column} = v.${column}`).join(',\n          ')},
           updated_at = CURRENT_TIMESTAMP
         FROM (VALUES ${sql}) AS v(${updateColumns.map(([column]) => column).join(', ')})
-        WHERE c.id = v.id
+        WHERE c.id::text = v.id
         RETURNING c.*
       `, params);
       updatedRows.forEach(r => clientResultMap.set(r.name.toLowerCase(), r));
@@ -393,9 +397,13 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
 
     // --- Pass 3: revenue writes, year-agnostic (D5) ---
     // The file is authoritative for exactly the years its header names: an
-    // amount > 0 upserts the (client, year) row, a blank or 0 cell deletes it,
+    // amount > 0 sets the (client, year) row, a blank or 0 cell deletes it,
     // and years absent from the file are untouched. History survives a
     // single-year import; a corrected sheet can still zero out a year.
+    // Written as the client form writes revenue: delete every (client, year)
+    // the file names, then insert the positive amounts. No ON CONFLICT, which
+    // needs UNIQUE (client_id, year), and no client_revenues.updated_at:
+    // production's older table need not have either (see pass 2a).
     let totalsByYear = {};
     if (revenueYears.length === 0) {
       validation.warnings.push('No `YYYY Contracts` columns found; revenue not changed.');
@@ -409,31 +417,27 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       const { upserts, deletes } = planRevenueWrites(revenueClients, revenueYears);
       totalsByYear = revenueTotals(upserts, revenueYears);
 
+      const pairs = [...upserts.map(([clientId, year]) => [clientId, year]), ...deletes];
+      if (pairs.length > 0) {
+        await (await client).query(`
+          DELETE FROM client_revenues r
+          USING unnest($1::text[], $2::text[]) AS d(client_id, year)
+          WHERE r.client_id::text = d.client_id AND r.year::text = d.year
+        `, [pairs.map(([clientId]) => String(clientId)), pairs.map(([, year]) => String(year))]);
+      }
+
       if (upserts.length > 0) {
+        // Untyped placeholders: each takes its column's type, uuid or integer
         const params = [];
         const valuePlaceholders = [];
-        let paramIndex = 1;
         for (const [clientId, year, amount] of upserts) {
           params.push(clientId, year, amount);
-          valuePlaceholders.push(`($${paramIndex}::uuid, $${paramIndex+1}::int, $${paramIndex+2}::numeric)`);
-          paramIndex += 3;
+          valuePlaceholders.push(`($${params.length - 2}, $${params.length - 1}, $${params.length})`);
         }
-        // UNIQUE(client_id, year) in init-db.sql makes this a true upsert
         await (await client).query(`
           INSERT INTO client_revenues (client_id, year, revenue_amount)
           VALUES ${valuePlaceholders.join(',')}
-          ON CONFLICT (client_id, year) DO UPDATE
-            SET revenue_amount = EXCLUDED.revenue_amount,
-                updated_at = CURRENT_TIMESTAMP
         `, params);
-      }
-
-      if (deletes.length > 0) {
-        await (await client).query(`
-          DELETE FROM client_revenues r
-          USING unnest($1::uuid[], $2::int[]) AS d(client_id, year)
-          WHERE r.client_id = d.client_id AND r.year = d.year
-        `, [deletes.map(([clientId]) => clientId), deletes.map(([, year]) => year)]);
       }
     }
 
