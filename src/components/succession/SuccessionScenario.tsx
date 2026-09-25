@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { ArrowLeft, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,6 @@ import TransitionPlanManager from './TransitionPlanManager';
 import usePortfolioStore from '../../portfolioStore';
 import { departureModel } from '../../utils/departure';
 import { revenueForYear } from '../../utils/revenue';
-import { personLabel } from '../../utils/people';
 
 type Stage = 'impact' | 'mitigation' | 'implementation';
 
@@ -30,18 +29,13 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
   const people = usePortfolioStore((s: any) => s.people);
   const reportingYear = usePortfolioStore((s: any) => s.getReportingYear());
   const workflow = usePortfolioStore((s: any) => s.successionWorkflow);
-  const transitionPlans = usePortfolioStore((s: any) => s.transitionPlans);
   const setSuccessionStage = usePortfolioStore((s: any) => s.setSuccessionStage);
   const toggleDeparting = usePortfolioStore((s: any) => s.toggleDeparting);
   const clearDeparting = usePortfolioStore((s: any) => s.clearDeparting);
-  const fetchPartners = usePortfolioStore((s: any) => s.fetchPartners);
+  const startExecution = usePortfolioStore((s: any) => s.startExecution);
+  const resetSuccessionWorkflow = usePortfolioStore((s: any) => s.resetSuccessionWorkflow);
+  const hasPlans = usePortfolioStore((s: any) => Object.keys(s.transitionPlans).length > 0);
   const currentStage: Stage = workflow.currentStage;
-
-  // Stage 2's successor pickers and Stage 3's assignees still read the
-  // legacy partners list until they are rebuilt on the People list (PR 5b)
-  useEffect(() => {
-    fetchPartners();
-  }, [clients, fetchPartners]);
 
   const revenueOf = useMemo(() => (client: any) => revenueForYear(client, reportingYear), [reportingYear]);
   const departure = useMemo(
@@ -55,37 +49,26 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
     [people, clients, workflow.departingIds, workflow.choices, revenueOf]
   );
 
-  // What Stage 2 and the transition-plan request read: the affected clients,
-  // the names of the people leaving and the revenue on those clients
-  const stage1Data = useMemo(() => {
-    if (departure.decisions.length === 0) return null;
-    return {
-      selectedPartners: departure.departing.map(personLabel),
-      affectedClients: departure.decisions.map((d: any) => d.client),
-      impactData: { totalRevenueAtRisk: departure.totals.revenue },
-      departure,
-    };
-  }, [departure]);
-  const stage2Data = useMemo(
-    () => (stage1Data ? { ...stage1Data, transitionPlans } : null),
-    [stage1Data, transitionPlans]
-  );
-
   // Stage transition handlers
   const handleProceedToStage2 = () => setSuccessionStage('mitigation');
   const handleBackToStage1 = () => setSuccessionStage('impact');
   const handleBackToStage2 = () => setSuccessionStage('mitigation');
 
-  const handleProceedToStage3 = (plans: any) => {
-    setSuccessionStage('implementation');
-    // Initialize transitions in the store for Stage 3
-    usePortfolioStore.getState().initializeTransitionsFromPlans({ ...stage1Data, transitionPlans: plans });
+  // Stage 3 takes the approved plans, keeping what was recorded for them
+  const handleProceedToStage3 = () => startExecution(departure.decisions);
+  const hasDecisions = departure.decisions.length > 0;
+
+  // A new scenario: nobody leaving, no picks, no plans, no transitions
+  const handleStartOver = () => {
+    if (window.confirm('Start over? This clears who is leaving, every pick and plan, and Stage 3. The book is not changed.')) {
+      resetSuccessionWorkflow();
+    }
   };
 
   const renderProgressStepper = () => {
     const stages = [
-      { key: 'impact', label: 'Impact Analysis', completed: stage1Data !== null && currentStage !== 'impact' },
-      { key: 'mitigation', label: 'Client Review & Triage', completed: stage2Data !== null && currentStage === 'implementation' },
+      { key: 'impact', label: 'Impact Analysis', completed: hasDecisions && currentStage !== 'impact' },
+      { key: 'mitigation', label: 'Client Review & Triage', completed: hasDecisions && currentStage === 'implementation' },
       { key: 'implementation', label: 'Transition Execution', completed: false }
     ];
 
@@ -119,6 +102,11 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
                 )}
               </div>
             ))}
+            {(workflow.departingIds.length > 0 || hasPlans) && (
+              <Button variant="ghost" size="sm" onClick={handleStartOver}>
+                Start over
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -144,16 +132,17 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
       )}
 
       {/* Stage 2: Client Review & Triage */}
-      {currentStage === 'mitigation' && stage1Data && (
+      {currentStage === 'mitigation' && hasDecisions && (
         <ClientReviewInterface
-          stage1Data={stage1Data}
+          departure={departure}
+          reportingYear={reportingYear}
           onProceedToStage3={handleProceedToStage3}
           onBackToStage1={handleBackToStage1}
         />
       )}
 
       {/* Stage 2: Fallback when nobody leaving holds a seat (the People list or the book changed) */}
-      {currentStage === 'mitigation' && !stage1Data && (
+      {currentStage === 'mitigation' && !hasDecisions && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
@@ -182,15 +171,16 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
       )}
 
       {/* Stage 3: Transition Execution */}
-      {currentStage === 'implementation' && stage2Data && (
+      {currentStage === 'implementation' && hasDecisions && (
         <TransitionPlanManager
-          stage2Data={stage2Data}
+          departure={departure}
+          people={people}
           onBackToStage2={handleBackToStage2}
         />
       )}
 
       {/* Stage 3: Fallback for no data */}
-      {currentStage === 'implementation' && !stage2Data && (
+      {currentStage === 'implementation' && !hasDecisions && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
@@ -208,7 +198,7 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
             <div className="text-center py-12">
               <h3 className="text-lg font-semibold mb-2">No Execution Data</h3>
               <p className="text-gray-600 mb-4">
-                Complete Stage 2 (Client Review & Triage) to access transition execution management.
+                Mark who is leaving in Stage 1 and approve the affected clients&apos; plans in Stage 2.
               </p>
               <Button onClick={handleBackToStage2}>
                 Go to Stage 2

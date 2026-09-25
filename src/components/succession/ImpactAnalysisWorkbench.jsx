@@ -117,7 +117,7 @@ const SeatProposal = ({ seat, side }) => {
     if (!person) return '';
     if (side.choice !== undefined && !side.problem) return 'your pick';
     const candidate = side.candidates.find((c) => String(c.person.id) === String(person.id));
-    return candidateReason(candidate, seat);
+    return candidateReason(candidate);
   };
   const others = side.candidates
     .filter((c) => String(c.person.id) !== String(side.after?.id))
@@ -162,8 +162,8 @@ const AffectedClientsTable = ({ decisions, year, onClientSelect }) => (
       </CardTitle>
       <p className="text-sm text-muted-foreground">
         The proposed lead is the client&apos;s second chair when that is a partner who is staying, then the partner
-        whose lead book shares the most of the client&apos;s practice areas, then the lighter lead load. A second
-        chair is proposed the same way from everyone staying, by the lighter second-chair load. Each proposal counts
+        whose lead book shares the most of the client&apos;s practice areas, then the lighter total load: lead effort
+        plus the second-chair share. A second chair is proposed the same way from everyone staying. Each proposal counts
         the clients this scenario has already given that person, heaviest clients first. You choose in Stage 2.
       </p>
     </CardHeader>

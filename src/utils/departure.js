@@ -5,15 +5,21 @@
 // - A client a departing person leads needs a new lead: an active partner who
 //   is staying. Candidates: the client's second chair first when that person
 //   is an active partner who is staying, then practice-area fit (the client's
-//   areas that the candidate's current lead book has), then the lighter lead
-//   load (lead effort, then lead revenue, then name).
+//   areas that the candidate's current lead book has), then the lighter total
+//   load (see below).
 // - A second-chair seat a departing person holds becomes empty, and so does
 //   the seat of a second chair promoted to lead. Candidates: every active
 //   person who is staying, other than the client's lead, by practice-area fit
 //   (the areas of every client they hold now, in either seat), then the
-//   lighter second-chair load (effort with SECOND_CHAIR_EFFORT_SHARE, then
-//   revenue, then name). Phase 6 (the associate split) reuses rankCandidates,
+//   lighter total load. Phase 6 (the associate split) reuses rankCandidates,
 //   secondChairPool, createLedger and areaIndex as they are.
+// - "Load", for both seats, is total effort: the lead effort plus the
+//   second-chair effort (SECOND_CHAIR_EFFORT_SHARE of each client's), then the
+//   revenue of both seats, then the name. Jeff, 2026-09-25: "total effort is
+//   the better measure since we are going to be looking for who to add/remove
+//   both lead and second chair responsibilities for." Ranking by one seat's
+//   load made a partner with a heavy lead book and no seats look as free as
+//   an idle associate.
 // - "Lighter load" counts what this scenario has already given each person:
 //   the affected clients are settled one at a time, heaviest effort first,
 //   and each settled seat adds to its holder's load before the next client is
@@ -43,6 +49,21 @@ const compare = (x, y) => (Math.abs(x - y) < 1e-9 ? 0 : x - y);
 const zero = () => ({ count: 0, revenue: 0, effort: 0 });
 
 /**
+ * A person's total load from their two seats: { effort, revenue, lead,
+ * second }, effort being the lead effort plus the second-chair effort (which
+ * already carries the share), revenue both seats' revenue. What candidates
+ * rank on.
+ */
+export function totalLoad({ lead = zero(), second = zero() } = {}) {
+  return {
+    effort: (lead.effort || 0) + (second.effort || 0),
+    revenue: (lead.revenue || 0) + (second.revenue || 0),
+    lead: { ...lead },
+    second: { ...second },
+  };
+}
+
+/**
  * Each person's lead and second-chair load, kept current as seats are settled.
  * `seat` is 'lead' or 'second'; a second chair's effort is the share (P10).
  */
@@ -61,6 +82,7 @@ export function createLedger() {
   };
   return {
     load: (personId) => get(personId),
+    total: (personId) => totalLoad(get(personId)),
     add: (personId, seat, revenue, effort) => change(personId, seat, revenue, effort, 1),
     remove: (personId, seat, revenue, effort) => change(personId, seat, revenue, effort, -1),
   };
@@ -103,7 +125,8 @@ export function secondChairPool(people = [], departing = new Set(), leadId = nul
 /**
  * Rank a seat's candidates: `preferredId` first (a lead's second chair), then
  * the most of the client's practice areas in `areasOf(person)`, then the
- * lighter `loadOf(person)` by effort, revenue and name.
+ * lighter `loadOf(person)` by effort, revenue and name. The engine passes
+ * each person's total load (`totalLoad`), for both seats.
  * @returns {Array<{ person, preferred, sharedAreas, load }>} `load` is a copy
  *   of the load the candidate was ranked on
  */
@@ -158,12 +181,12 @@ export function assignmentProblems(people = [], departingIds = [], { leadId, sec
   return problems;
 }
 
-/** "second chair", "shares Healthcare, Energy", or "lighter load": why a candidate ranks where it does. */
-export function candidateReason(candidate, seat = 'lead') {
+/** "the second chair", "shares Healthcare, Energy", or "lighter total load": why a candidate ranks where it does. */
+export function candidateReason(candidate) {
   if (!candidate) return '';
   if (candidate.preferred) return 'the second chair';
   if (candidate.sharedAreas.length > 0) return `shares ${candidate.sharedAreas.join(', ')}`;
-  return seat === 'lead' ? 'lighter lead load' : 'lighter second-chair load';
+  return 'lighter total load';
 }
 
 const isActivePartner = (p) => !!p && p.active && p.role === 'partner';
@@ -243,7 +266,7 @@ export function departureModel({ people = [], clients = [], departingIds = [], r
       const preferredId = isActivePartner(secondBefore) && !departs(secondBefore) ? secondBefore.id : null;
       lead.candidates = rankCandidates(client, staying, {
         areasOf: (p) => areas.lead(p.id),
-        loadOf: (p) => ledger.load(p.id).lead,
+        loadOf: (p) => ledger.total(p.id),
         preferredId,
       });
       lead.after = lead.candidates[0]?.person || null;
@@ -268,7 +291,7 @@ export function departureModel({ people = [], clients = [], departingIds = [], r
       why: secondWhy,
       candidates: rankCandidates(client, secondChairPool(people, departingKeys, lead.after?.id ?? null), {
         areasOf: (p) => areas.any(p.id),
-        loadOf: (p) => ledger.load(p.id).second,
+        loadOf: (p) => ledger.total(p.id),
       }),
       choice: undefined,
       problem: null,

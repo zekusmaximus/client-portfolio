@@ -60,9 +60,11 @@ const yearsWithTotals = ({ revenueYears = [], revenueTotals = {} }) =>
 
 // Check file's answer. No updated/new split: before the book is reset it is
 // measured against the old book and would mislead.
+// A file without year columns (such as Scenarios' transition sheet) leaves
+// every client's revenue as it is, and says so.
 const readyMessage = (summary) =>
   `The file is ready to import: ${count(summary.totalClients, 'client')}; ` +
-  `years ${yearsWithTotals(summary)}; ` +
+  `${(summary.revenueYears || []).length === 0 ? 'no revenue years, so revenue is unchanged' : `years ${yearsWithTotals(summary)}`}; ` +
   `${summary.sheetColumns?.length > 0 ? `columns ${summary.sheetColumns.join(', ')}` : 'no people or judgment columns'}. ` +
   'Nothing was written.';
 

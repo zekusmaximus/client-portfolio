@@ -13,6 +13,7 @@ import {
   secondChairPool,
   toggleId,
   withChoice,
+  totalLoad,
 } from '../src/utils/departure.js';
 import { partnershipModel, SECOND_CHAIR_EFFORT_SHARE } from '../src/utils/load.js';
 import { revenueForYear } from '../src/utils/revenue.js';
@@ -105,7 +106,7 @@ test('a partner leaves: every client they lead needs a new lead, every seat they
   assertP3(m, PEOPLE, [id('Kevin')]);
 });
 
-test('lead candidates: the second chair first when a partner, then practice-area fit, then lighter lead load', () => {
+test('lead candidates: the second chair first when a partner, then practice-area fit, then the lighter total load', () => {
   const m = model(['Kevin']);
   // c2: Paula, a partner, is the second chair
   const c2 = decision(m, 'c2');
@@ -115,18 +116,21 @@ test('lead candidates: the second chair first when a partner, then practice-area
   assert.ok(!names(c2.lead.candidates).includes('Kevin'), 'never a departing person');
   assert.ok(!names(c2.lead.candidates).includes('Steve'), 'never an inactive partner');
   assert.ok(names(c2.lead.candidates).every((n) => byName.get(n).role === 'partner'), 'only partners lead');
-  // c1 (Healthcare): Joe leads a Healthcare client; then the lighter lead
-  // loads: Jeff leads nothing, Brendan 0.5, Mike 3, Paula 2 + c2's 4.5
+  // c1 (Healthcare): Joe leads a Healthcare client; then the lighter total
+  // loads: Jeff holds nothing, Brendan 0.5, Mike 3, Paula 2 + c2's 4.5 (her
+  // seat on c2 went when she was promoted)
   const c1 = decision(m, 'c1');
   assert.deepEqual(names(c1.lead.candidates), ['Joe', 'Jeff', 'Brendan', 'Mike', 'Paula']);
   assert.deepEqual(c1.lead.candidates[0].sharedAreas, ['Healthcare']);
   assert.equal(candidateReason(c1.lead.candidates[0]), 'shares Healthcare');
-  assert.equal(candidateReason(c1.lead.candidates[1]), 'lighter lead load');
+  assert.equal(candidateReason(c1.lead.candidates[1]), 'lighter total load');
   // c3 (Municipal): Mike leads a Municipal client; Joe now carries c1
   const c3 = decision(m, 'c3');
   assert.deepEqual(names(c3.lead.candidates), ['Mike', 'Jeff', 'Brendan', 'Joe', 'Paula']);
   // The loads candidates were ranked on count what this scenario gave them
-  assert.deepEqual(c3.lead.candidates.find((c) => c.person.name === 'Joe').load, { count: 2, revenue: 80000, effort: 4 });
+  const joe = c3.lead.candidates.find((c) => c.person.name === 'Joe').load;
+  assert.deepEqual(joe.lead, { count: 2, revenue: 80000, effort: 4 });
+  assert.deepEqual([joe.effort, joe.revenue], [4, 80000], 'total: Joe holds no second-chair seat');
 });
 
 test('a second chair promoted to lead leaves the seat empty, and it gets candidates', () => {
@@ -134,11 +138,12 @@ test('a second chair promoted to lead leaves the seat empty, and it gets candida
   assert.equal(nameOf(c2.lead.after), 'Paula');
   assert.deepEqual([c2.secondChair.vacated, c2.secondChair.why], [true, 'promoted']);
   // Everyone active and staying but the new lead; Anna seconds an Energy
-  // client, then the lighter second-chair loads, by name on a tie
-  assert.deepEqual(names(c2.secondChair.candidates), ['Anna', 'Brendan', 'Jeff', 'Joe', 'Mike', 'Ben', 'Jay']);
+  // client, then the lighter total loads: Jeff 0, Ben 0.2, Brendan 0.5 (a
+  // lead), Jay 0.6, Joe 1 (a lead), Mike 3 (a lead)
+  assert.deepEqual(names(c2.secondChair.candidates), ['Anna', 'Jeff', 'Ben', 'Brendan', 'Jay', 'Joe', 'Mike']);
   assert.equal(nameOf(c2.secondChair.after), 'Anna');
-  assert.equal(candidateReason(c2.secondChair.candidates[0], 'second'), 'shares Energy');
-  assert.equal(candidateReason(c2.secondChair.candidates[1], 'second'), 'lighter second-chair load');
+  assert.equal(candidateReason(c2.secondChair.candidates[0]), 'shares Energy');
+  assert.equal(candidateReason(c2.secondChair.candidates[1]), 'lighter total load');
 });
 
 test('a kept second chair stays; a client without one keeps none', () => {
@@ -152,15 +157,30 @@ test('a kept second chair stays; a client without one keeps none', () => {
   assert.ok(!names(c4.secondChair.candidates).includes(nameOf(c4.lead.after)));
 });
 
-test('second-chair candidates rank by fit, then the lighter second-chair load with the 20% share', () => {
+test('second-chair candidates rank by fit, then the lighter total load: lead effort plus the 20% share (Jeff, 2026-09-25)', () => {
   const c7 = decision(model(['Kevin']), 'c7');
-  // Mike leads c7 and is left out; Anna seconds a Municipal client
-  assert.deepEqual(names(c7.secondChair.candidates), ['Anna', 'Brendan', 'Jeff', 'Joe', 'Paula', 'Ben', 'Jay']);
+  // Mike leads c7 and is left out; Anna seconds a Municipal client. Then
+  // total effort: a partner's lead book counts, so Joe (who now leads c1 as
+  // well) and Paula (c2 and c5) rank below the associate and the emeritus
+  assert.deepEqual(names(c7.secondChair.candidates), ['Anna', 'Jeff', 'Ben', 'Brendan', 'Jay', 'Joe', 'Paula']);
   // Ben's one seat on a client of effort 1 counts 0.2; Jay's on c1 (effort 3) 0.6
   close(c7.secondChair.candidates.find((c) => c.person.name === 'Ben').load.effort, 1 * SECOND_CHAIR_EFFORT_SHARE);
   close(c7.secondChair.candidates.find((c) => c.person.name === 'Jay').load.effort, 3 * SECOND_CHAIR_EFFORT_SHARE);
-  // Paula gave up c2's seat when promoted, so she is at zero
-  assert.deepEqual(c7.secondChair.candidates.find((c) => c.person.name === 'Paula').load, { count: 0, revenue: 0, effort: 0 });
+  // Paula gave up c2's seat when promoted; her total is her two leads
+  const paula = c7.secondChair.candidates.find((c) => c.person.name === 'Paula').load;
+  assert.deepEqual(paula.second, { count: 0, revenue: 0, effort: 0 });
+  assert.deepEqual([paula.lead.count, paula.effort, paula.revenue], [2, 6.5, 90000]);
+});
+
+test('totalLoad: lead effort plus second-chair effort (already the share), and both seats\' revenue', () => {
+  const load = totalLoad({ lead: { count: 2, revenue: 100, effort: 5 }, second: { count: 3, revenue: 50, effort: 0.9 } });
+  assert.deepEqual([load.effort, load.revenue], [5.9, 150]);
+  assert.deepEqual(load.lead, { count: 2, revenue: 100, effort: 5 });
+  assert.deepEqual(totalLoad(), { effort: 0, revenue: 0, lead: { count: 0, revenue: 0, effort: 0 }, second: { count: 0, revenue: 0, effort: 0 } });
+  const ledger = createLedger();
+  ledger.add(1, 'lead', 1000, 3);
+  ledger.add(1, 'second', 500, 2);
+  assert.deepEqual([ledger.total(1).effort, ledger.total(1).revenue], [3 + 2 * SECOND_CHAIR_EFFORT_SHARE, 1500]);
 });
 
 test('before and after: each person\'s lead and second-chair load; the departing end at zero', () => {
@@ -233,8 +253,9 @@ test('the emeritus leaves', () => {
   const c1 = decision(m, 'c1');
   assert.equal(nameOf(c1.lead.after), 'Kevin');
   assert.deepEqual([c1.secondChair.why, c1.secondChair.vacated], ['leaves', true]);
-  // Healthcare: Joe leads one and Ben seconds one; Joe has no seat, Ben 0.2
-  assert.deepEqual(names(c1.secondChair.candidates).slice(0, 2), ['Joe', 'Ben']);
+  // Healthcare: Joe leads one and Ben seconds one; by total effort Ben's
+  // seat (0.2) is lighter than Joe's lead (1)
+  assert.deepEqual(names(c1.secondChair.candidates).slice(0, 2), ['Ben', 'Joe']);
   assertP3(m, PEOPLE, [id('Jay')]);
   const jay = m.groups.find((g) => g.role === 'emeritus').rows[0];
   assert.deepEqual([jay.departing, jay.before.second.count, jay.after.second.count], [true, 1, 0]);
