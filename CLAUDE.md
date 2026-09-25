@@ -24,13 +24,16 @@ data scoping by design).
 - Backend runs on http://localhost:5000 with CORS enabled for development
 - `npm run create:admin -- <username> <password>` - add a partner (`create-admin.cjs`; refuses an existing username)
 - `npm run reset:password -- <username> <newPassword>` - reset a forgotten password (`scripts/reset-password.cjs`); prints `Updated 1 user`, or `No such user` and exits 1. On Render, run it from the web service's Shell tab, which has the service's environment; locally, set `DATABASE_URL` to the Render database's External Database URL and `DATABASE_SSL=no-verify`. Both scripts validate with `utils/passwordPolicy.cjs` and connect through `db.cjs`
+- `npm run check:schema` - read-only: lists every foreign key to `users` with its `ON DELETE` action and the clients per creating account; ends `OK: ...` and exits 0, or `FAIL: ...` and exits 1 when any key cascades (`scripts/check-schema.cjs`)
+- `npm run delete:user -- <username>` - delete an account without touching the book (`scripts/delete-user.cjs`): one transaction that refuses while any key to `users` cascades, refuses the last account, and commits only if the client and revenue-row counts are unchanged. Runbook `deploy/README.md` 7.3. Both run where the two scripts above do and share the check in `utils/schemaCheck.cjs`
 
 ### Testing
 - `npm test` - Run the test suite with Node's built-in runner (`node --test "tests/**/*.test.mjs"`); no test dependencies to install
 - Tests live in `tests/*.test.mjs` and use `node:test` + `node:assert/strict`. Import CommonJS modules with a default import (`import strategic from '../utils/strategic.cjs'`)
-- Current suites: `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site), `password-policy` and `session-ttl` (WP3). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
+- Current suites: `smoke` (scoring formula), `strategic` (score regression fixture, D6), `csv-import` (year rule, D5), `contract-status`, `reporting-year` (D4), `ai-service` (response parsing and SDK error mapping, WP2), `transition-plan` (per-client prompt and parser, D9), `ai-grep` (the WP2 grep assertions: no retired model ids or sampling parameters, one SDK call site), `password-policy` and `session-ttl` (WP3), `schema` (`init-db.sql` on a real PostgreSQL: `clients.user_id` is `ON DELETE SET NULL` on a new database and after migrating one with the old cascade, deleting a user keeps its clients and revenue rows, and the two scripts above; plan section 12). Functions that depend on the clock take a `now` argument (`deriveContractStatus(period, now)`, `computeReportingYear(clients, now)`) so tests are deterministic
 - Never import `db.cjs`, `data.cjs`, `models/*`, or `utils/jwt.cjs` from tests: they throw at load time without `DATABASE_URL` / `JWT_SECRET`
-- `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`
+- The `schema` suite's database tests need `SCHEMA_TEST_SERVER_URL`, the superuser URL of a throwaway server without a database name; each test creates and drops its own `schema_test_*` database, connects with `pg` directly and runs the scripts as child processes. Without the variable they are skipped. Locally, after plan section 0.4's `service postgresql start`: `sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"`, then `SCHEMA_TEST_SERVER_URL=postgresql://postgres:postgres@127.0.0.1:5432 node --test tests/schema.test.mjs`
+- `npm run deploy:check` runs lint, tests, and the production build; GitHub Actions (`.github/workflows/ci.yml`) runs the same three on every PR and push to `main`, and its `schema` job runs `tests/schema.test.mjs` against PostgreSQL 18
 
 ## Architecture Overview
 
@@ -142,9 +145,10 @@ Tier 0 work.
 - `config/session.cjs` - `SESSION_TTL` / `SESSION_TTL_MS`, one lifetime for the JWT and the cookie
 - `middleware/rateLimit.cjs` - the four limiters (D11)
 - `utils/passwordPolicy.cjs` - `validatePassword`, `validateUsername` (pure, importable from tests)
+- `utils/schemaCheck.cjs` - the SQL that lists foreign keys to `users` and `checkUserForeignKeys(rows)` (pure, importable from tests)
 - `db.cjs` - the one `pg` pool (`DATABASE_URL`, `DATABASE_SSL`); pool errors are logged, never fatal
-- `init-db.sql` - the schema, applied idempotently by `server.cjs` at every start. `clients.user_id` is `ON DELETE CASCADE`: deleting a user deletes the clients that user imported
-- `create-admin.cjs`, `scripts/reset-password.cjs` - add a partner, reset a password
+- `init-db.sql` - the schema, applied idempotently by `server.cjs` at every start as one multi-statement query, so it is one transaction: a failing statement leaves the database as it was and, in production, stops the server. `clients.user_id` (the account that created the client; no current code reads or writes it) is `ON DELETE SET NULL`: deleting a user keeps its clients and clears their `user_id`. The `DO` block at the end migrates a database that still has the old `ON DELETE CASCADE`, matching the key by column, and is a catalog read on every later start. Keep migrations in this file idempotent, and do not drop a column an older `init-db.sql` still names: a Render rollback runs the older file at start (plan section 12)
+- `create-admin.cjs`, `scripts/reset-password.cjs`, `scripts/check-schema.cjs`, `scripts/delete-user.cjs` - add a partner, reset a password, check that no key to `users` cascades, delete an account
 
 ### Frontend Structure
 - `src/App.jsx` - Main application with tab navigation
@@ -158,7 +162,7 @@ Tier 0 work.
 - `deploy/README.md` - the runbook: hosting, rebuild, deploy, rollback, partners, secrets, logs, health, uptime, remaining advisories
 - `deploy/backup/` - the nightly backup (WP4) and its install and restore guides
 - `.env.example` - the one environment template
-- `.github/workflows/ci.yml` (lint, test, build on every PR and push to `main`), `.github/workflows/backup-selftest.yml`
+- `.github/workflows/ci.yml` (lint, test, build on every PR and push to `main`, plus the `schema` job on PostgreSQL 18), `.github/workflows/backup-selftest.yml`
 - `docs/plans/tier-0.md` - the plan and its status table; `docs/archive/` - superseded status documents, history only
 
 ## Environment Configuration
