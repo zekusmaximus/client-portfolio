@@ -114,8 +114,10 @@ app.get('/api/health', async (req, res) => {
     // What this API can do that an older one cannot. The page asks before
     // Check file: an API without it ignores dryRun and imports the file. And
     // before Stage 2's AI plans (transition-plan-roster): an API without it
-    // ignores the roster and answers with no recommendation from it.
-    features: ['check-file', 'transition-plan-roster'],
+    // ignores the roster and answers with no recommendation from it. And
+    // before the associate split's Accept (second-chair-assign): an API
+    // without it has no PUT /api/data/clients/:id/second-chair.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign'],
     services: {}
   };
 

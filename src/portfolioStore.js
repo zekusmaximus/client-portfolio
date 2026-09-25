@@ -145,6 +145,20 @@ const usePortfolioStore = create(
         return response.person;
       },
 
+      // The associate split (docs/plans/people-and-second-chair.md, Phase 6,
+      // P9): write one client's second chair. `expectedSecondChairId` is the
+      // seat as the page showed it (null for none); the server answers 409 if
+      // it has changed since. Then the book and the People counts reload.
+      assignSecondChair: async (clientId, secondChairId, expectedSecondChairId = null) => {
+        const response = await apiClient.put(`/data/clients/${clientId}/second-chair`, {
+          second_chair_id: secondChairId,
+          expected_second_chair_id: expectedSecondChairId
+        });
+        await get().fetchClients();
+        await get().fetchPeople();
+        return response.client;
+      },
+
       // Retry fetching clients (useful when connection is restored)
       retryFetchClients: async () => {
         set({ fetchError: null });

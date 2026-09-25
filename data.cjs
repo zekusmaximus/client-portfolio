@@ -885,6 +885,83 @@ router.put('/clients/:id', async (req, res) => {
   }
 });
 
+// PUT /api/data/clients/:id/second-chair { second_chair_id, expected_second_chair_id }
+// The associate split (docs/plans/people-and-second-chair.md, Phase 6, P9): a
+// partner accepts a proposed second chair, and only that seat changes. The
+// client's lead, originator, judgments and revenue are untouched; the legacy
+// lobbyist_team text follows the seat (P6). `expected_second_chair_id` is the
+// seat as the page saw it (null for none): if another partner filled it in
+// the meantime, the answer is 409 and nothing is written. The second chair is
+// checked as every write checks it (validateAssignment: an active person on
+// the People list, not the lead), read FOR SHARE, and the client FOR UPDATE.
+// Ids are compared as text: production's client ids are integers.
+router.put('/clients/:id/second-chair', async (req, res) => {
+  const body = req.body || {};
+  const clientId = String(req.params.id);
+  const expected = body.expected_second_chair_id === null ? null : parseId(body.expected_second_chair_id);
+  // Both keys are required; `expected` is null only when the page sent null
+  if (!('second_chair_id' in body) || Number.isNaN(expected) ||
+      (body.expected_second_chair_id !== null && expected === null)) {
+    return res.status(400).json({
+      success: false,
+      error: 'second_chair_id and expected_second_chair_id (a person id, or null for none) are required'
+    });
+  }
+
+  const conn = await db.pool.connect();
+  try {
+    await conn.query('BEGIN');
+    const { rows: [current] } = await conn.query(`
+      SELECT id, lead_id, second_chair_id, originator_id, originator_is_firm
+        FROM clients WHERE id::text = $1 FOR UPDATE`, [clientId]);
+    if (!current) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Client not found' });
+    }
+    if ((current.second_chair_id ?? null) !== expected) {
+      await conn.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: "This client's second chair changed since the page loaded. Reload the page and try again."
+      });
+    }
+    if (current.lead_id === null) {
+      await conn.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: 'This client has no lead yet. Give it a lead in Client Details first.'
+      });
+    }
+
+    const assignment = await resolveAssignment(conn, {
+      lead_id: current.lead_id,
+      second_chair_id: body.second_chair_id,
+      originator_id: current.originator_id,
+      originator_is_firm: current.originator_is_firm
+    });
+    if (assignment.errors.length > 0) {
+      await conn.query('ROLLBACK');
+      return res.status(400).json(assignmentRejected(assignment.errors));
+    }
+
+    await conn.query(`
+      UPDATE clients
+         SET second_chair_id = $1, lobbyist_team = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id::text = $3`,
+      [assignment.value.second_chair_id, assignment.legacy.lobbyist_team, clientId]);
+    await conn.query('COMMIT');
+
+    const { rows } = await db.query(clientsQuery('WHERE c.id::text = $1'), [clientId]);
+    res.json({ success: true, client: calculateStrategicScores(rows.map(toApiClient))[0] });
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    console.error('Error assigning a second chair:', error);
+    res.status(500).json({ success: false, error: 'Failed to assign the second chair' });
+  } finally {
+    conn.release();
+  }
+});
+
 // DELETE /api/data/clients/:id - Delete client and associated revenues
 router.delete('/clients/:id', async (req, res) => {
   const client = db.pool.connect();
