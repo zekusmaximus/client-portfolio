@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import csvImport from '../utils/csvImport.cjs';
 import analyzer from '../clientAnalyzer.cjs';
 
-const { extractRevenueYears, parseAmount, planRevenueWrites } = csvImport;
+const { extractRevenueYears, parseAmount, planRevenueWrites, revenueTotals } = csvImport;
 
 test('extractRevenueYears: YYYY Contracts headers, any case, stray whitespace, sorted', () => {
   assert.deepEqual(
@@ -50,6 +50,19 @@ test('planRevenueWrites: present-positive upserts, present-zero deletes, absent 
   // 2024 is not in the file's header: no write of either kind
   assert.equal(upserts.some(([, year]) => year === 2024), false);
   assert.equal(deletes.some(([, year]) => year === 2024), false);
+});
+
+test('revenueTotals: the written amounts summed by year, to the cent; a year with none is 0', () => {
+  const clients = [
+    { id: 'a', revenue: { 2024: '$60,000', 2025: '66000.10', 2026: 72000 } },
+    { id: 'b', revenue: { 2024: '', 2025: '$40,000.20', 2026: '$85,000' } },
+    { id: 'c', revenue: { 2024: '0', 2025: '', 2026: '$0.70' } },
+  ];
+  const { upserts } = planRevenueWrites(clients, [2024, 2025, 2026, 2027]);
+  assert.deepEqual(revenueTotals(upserts, [2024, 2025, 2026, 2027]), {
+    2024: 60000, 2025: 106000.3, 2026: 157000.7, 2027: 0,
+  });
+  assert.deepEqual(revenueTotals([], []), {});
 });
 
 test('planRevenueWrites: no year columns means no writes at all', () => {

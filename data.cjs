@@ -14,6 +14,7 @@ const {
   extractRevenueYears,
   headerKeys,
   planRevenueWrites,
+  revenueTotals,
   rowNumberOf,
   SHEET_COLUMNS,
   findSheetColumns,
@@ -114,7 +115,12 @@ const csvValidationRules = [
       }
       
       return true;
-    })
+    }),
+  // Check file: a boolean, so that a string "false" can never be read as a dry run or "true" as an import
+  body('dryRun')
+    .optional()
+    .custom((dryRun) => typeof dryRun === 'boolean')
+    .withMessage('dryRun must be true or false')
 ];
 
 // Handle validation errors for CSV
@@ -144,12 +150,15 @@ const problems = (n) => `${n} problem${n === 1 ? '' : 's'}`;
 // columns (docs/plans/people-and-second-chair.md, section 3, P8) are written
 // for exactly the columns the file has. Any problem in the file refuses it
 // whole: 400 { success: false, error, errors: [{ row, client, message }] },
-// nothing written.
+// nothing written. With `dryRun: true` (the upload page's "Check file") every
+// check and every write runs in the same transaction, which is then rolled
+// back: the same 400 on any problem, or
+// { success: true, dryRun: true, validation, summary } with nothing written.
 router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async (req, res) => {
   const client = db.pool.connect();
   
   try {
-    const { csvData } = req.body;
+    const { csvData, dryRun = false } = req.body;
     
     if (!csvData || !Array.isArray(csvData)) {
       return res.status(400).json({ 
@@ -389,6 +398,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     // amount > 0 upserts the (client, year) row, a blank or 0 cell deletes it,
     // and years absent from the file are untouched. History survives a
     // single-year import; a corrected sheet can still zero out a year.
+    let totalsByYear = {};
     if (revenueYears.length === 0) {
       validation.warnings.push('No `YYYY Contracts` columns found; revenue not changed.');
     } else {
@@ -399,6 +409,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
         revenueClients.push({ id: dbRow.id, revenue });
       }
       const { upserts, deletes } = planRevenueWrites(revenueClients, revenueYears);
+      totalsByYear = revenueTotals(upserts, revenueYears);
 
       if (upserts.length > 0) {
         const params = [];
@@ -428,26 +439,34 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       }
     }
 
-    await (await client).query('COMMIT');
-    
+    // Check file: every write above succeeded; undo them all
+    await (await client).query(dryRun ? 'ROLLBACK' : 'COMMIT');
+
+    const summary = {
+      totalClients: clientsWithScores.length,
+      updatedClients: updatedCount,
+      newClients: insertedCount,
+      revenueYears,
+      revenueTotals: totalsByYear,
+      sheetColumns: SHEET_COLUMNS.filter(({ key }) => key in columns).map(({ header }) => header),
+      totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
+      statusBreakdown: {
+        'Active': clientsWithScores.filter(c => c.status === 'Active' || c.status === 'IF').length,
+        'Prospect': clientsWithScores.filter(c => c.status === 'Prospect' || c.status === 'P').length,
+        'Former': clientsWithScores.filter(c => c.status === 'Former' || c.status === 'D').length,
+        'Inactive': clientsWithScores.filter(c => c.status === 'Inactive' || c.status === 'H').length
+      }
+    };
+
+    if (dryRun) {
+      return res.json({ success: true, dryRun: true, validation, summary });
+    }
+
     res.json({
       success: true,
       clients: clientsWithScores,
       validation,
-      summary: {
-        totalClients: clientsWithScores.length,
-        updatedClients: updatedCount,
-        newClients: insertedCount,
-        revenueYears,
-        sheetColumns: SHEET_COLUMNS.filter(({ key }) => key in columns).map(({ header }) => header),
-        totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
-        statusBreakdown: {
-          'Active': clientsWithScores.filter(c => c.status === 'Active' || c.status === 'IF').length,
-          'Prospect': clientsWithScores.filter(c => c.status === 'Prospect' || c.status === 'P').length,
-          'Former': clientsWithScores.filter(c => c.status === 'Former' || c.status === 'D').length,
-          'Inactive': clientsWithScores.filter(c => c.status === 'Inactive' || c.status === 'H').length
-        }
-      }
+      summary
     });
 
   } catch (error) {

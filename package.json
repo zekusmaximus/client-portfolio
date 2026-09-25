@@ -16,7 +16,8 @@
     "create:admin": "node create-admin.cjs",
     "reset:password": "node scripts/reset-password.cjs",
     "check:schema": "node scripts/check-schema.cjs",
-    "delete:user": "node scripts/delete-user.cjs"
+    "delete:user": "node scripts/delete-user.cjs",
+    "reset:book": "node scripts/reset-book.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.56.0",

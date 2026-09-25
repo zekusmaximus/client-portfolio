@@ -119,6 +119,25 @@ function planRevenueWrites(clients, years) {
   return { upserts: [...upserts.values()], deletes: [...deletes.values()] };
 }
 
+/**
+ * Each year's total of the amounts an import writes: planRevenueWrites'
+ * upserts summed by year, to the cent. Every year in `years` appears, 0 when no
+ * client has an amount for it. Check file and the import report these so a
+ * partner can compare them with the sheet's column sums (the page totals only
+ * the reporting year).
+ *
+ * @param {Array<[string, number, number]>} upserts [clientId, year, amount]
+ * @param {number[]} years the file's years
+ * @returns {Record<number, number>}
+ */
+function revenueTotals(upserts, years) {
+  const totals = Object.fromEntries((years || []).map((year) => [year, 0]));
+  for (const [, year, amount] of upserts || []) {
+    totals[year] = Math.round(((totals[year] || 0) + amount) * 100) / 100;
+  }
+  return totals;
+}
+
 // --- The import sheet's people and judgment columns --------------------------
 //
 // docs/plans/people-and-second-chair.md, section 3 and P8. Like the revenue
@@ -452,6 +471,7 @@ module.exports = {
   headerKeys,
   parseAmount,
   planRevenueWrites,
+  revenueTotals,
   SHEET_COLUMNS,
   CADENCES,
   CONFLICT_RISKS,

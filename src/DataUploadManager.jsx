@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 // import { Alert } from '@/components/ui/alert'; // Alert component not available, using Card instead
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Upload, FileText, CheckCircle, AlertCircle, Download } from 'lucide-react';
+import { Upload, FileText, FileCheck, CheckCircle, AlertCircle, Download } from 'lucide-react';
 import { apiClient, apiErrorBody, apiErrorMessage } from './api';
 import usePortfolioStore from './portfolioStore';
 import Papa from 'papaparse';
@@ -52,9 +52,30 @@ const TEMPLATE_URL = `${import.meta.env.BASE_URL}client-book-template.csv`;
 // Browsers on Windows often report a CSV as application/vnd.ms-excel.
 const isCsvFile = (file) => Boolean(file) && (file.type === 'text/csv' || /\.csv$/i.test(file.name));
 
+const count = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+// "2025 ($235,000), 2026 ($290,000)": each year with the total the file writes
+// for it (summary.revenueTotals), to compare with the sheet's column sums
+const yearsWithTotals = ({ revenueYears = [], revenueTotals = {} }) =>
+  revenueYears.length === 0
+    ? 'none'
+    : revenueYears
+      .map((year) => (year in revenueTotals ? `${year} ($${Number(revenueTotals[year]).toLocaleString()})` : `${year}`))
+      .join(', ');
+
+// Check file's answer. No updated/new split: before the book is reset it is
+// measured against the old book and would mislead.
+const readyMessage = (summary) =>
+  `The file is ready to import: ${count(summary.totalClients, 'client')}; ` +
+  `years ${yearsWithTotals(summary)}; ` +
+  `${summary.sheetColumns?.length > 0 ? `columns ${summary.sheetColumns.join(', ')}` : 'no people or judgment columns'}. ` +
+  'Nothing was written.';
+
 const DataUploadManager = () => {
   const [file, setFile] = useState(null);
-  const [isUploading, setIsUploading] = useState(false);
+  // The request in flight: 'check' (Check file, nothing written) or 'upload'
+  const [busy, setBusy] = useState(null);
+  const isUploading = busy !== null;
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState(null);
   // The server refused the file: { message, errors: [{ row, client, message }] }
@@ -75,13 +96,15 @@ const DataUploadManager = () => {
     }
   };
 
-const handleUpload = async () => {
+// dryRun: Check file. The server runs every check and every write of the
+// import, then rolls them back.
+const handleUpload = async (dryRun = false) => {
   if (!file) {
     setError('Please select a file first');
     return;
   }
 
-  setIsUploading(true);
+  setBusy(dryRun ? 'check' : 'upload');
   setError(null);
   setRefusal(null);
   setUploadResult(null);
@@ -97,14 +120,21 @@ const handleUpload = async () => {
         }
 
         // Send the clean, parsed data to the backend
-        const response = await apiClient.post('/api/data/process-csv', { csvData: results.data });
+        const response = await apiClient.post('/api/data/process-csv', { csvData: results.data, dryRun });
 
-        if (response.success) {
+        if (response.success && dryRun) {
+          setUploadResult({
+            success: true,
+            dryRun: true,
+            message: readyMessage(response.summary),
+            validation: response.validation
+          });
+        } else if (response.success) {
           setUploadResult({
             success: true,
             clientCount: response.clients.length,
             totalRevenue: response.summary.totalRevenue,
-            revenueYears: response.summary.revenueYears || [],
+            years: yearsWithTotals(response.summary),
             sheetColumns: response.summary.sheetColumns || [],
             validation: response.validation
           });
@@ -116,7 +146,10 @@ const handleUpload = async () => {
         const body = apiErrorBody(err);
         if (body && Array.isArray(body.errors) && body.errors.length > 0) {
           // The file was refused whole; list every problem by row
-          setRefusal({ message: body.error || 'Nothing was imported.', errors: body.errors });
+          const message = dryRun
+            ? `The file is not ready to import: it has ${count(body.errors.length, 'problem')}. Fix the rows below and check it again. Nothing was written.`
+            : body.error || 'Nothing was imported.';
+          setRefusal({ message, errors: body.errors });
         } else if (body && Array.isArray(body.details) && body.details.length > 0) {
           // The request check's refusal (a row without CLIENT, or a malformed one)
           setError(`${body.error || 'The file was refused'}: ${body.details.map((d) => d.message).join(' ')}`);
@@ -125,12 +158,12 @@ const handleUpload = async () => {
           setError(apiErrorMessage(err, 'Failed to upload and process CSV file'));
         }
       } finally {
-        setIsUploading(false);
+        setBusy(null);
       }
     },
     error: (err) => {
       setError(err.message);
-      setIsUploading(false);
+      setBusy(null);
     }
   });
 };
@@ -163,23 +196,46 @@ const handleUpload = async () => {
             </div>
           )}
 
-          <Button 
-            onClick={handleUpload} 
-            disabled={!file || isUploading}
-            className="w-full"
-          >
-            {isUploading ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                Processing...
-              </>
-            ) : (
-              <>
-                <Upload className="h-4 w-4 mr-2" />
-                Upload and Process CSV
-              </>
-            )}
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              variant="outline"
+              onClick={() => handleUpload(true)}
+              disabled={!file || isUploading}
+              className="sm:flex-1"
+            >
+              {busy === 'check' ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></div>
+                  Checking...
+                </>
+              ) : (
+                <>
+                  <FileCheck className="h-4 w-4 mr-2" />
+                  Check file
+                </>
+              )}
+            </Button>
+            <Button
+              onClick={() => handleUpload(false)}
+              disabled={!file || isUploading}
+              className="sm:flex-1"
+            >
+              {busy === 'upload' ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload and Process CSV
+                </>
+              )}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Check file runs every check the import runs and writes nothing.
+          </p>
 
           {error && (
             <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
@@ -227,20 +283,29 @@ const handleUpload = async () => {
           )}
 
           {uploadResult && uploadResult.success && (
-            <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20">
+            <Card
+              className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20"
+              data-testid={uploadResult.dryRun ? 'check-result' : 'import-result'}
+            >
               <CardContent className="pt-4">
-                <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
-                  <CheckCircle className="h-4 w-4" />
+                <div className="flex items-start gap-2 text-green-600 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4 mt-0.5 shrink-0" />
                   <div>
-                    <strong>Success!</strong> Processed {uploadResult.clientCount} clients with total revenue of ${uploadResult.totalRevenue.toLocaleString()}
-                    <div className="text-sm mt-1">
-                      Imported years: {uploadResult.revenueYears.length > 0 ? uploadResult.revenueYears.join(', ') : 'none'}
-                    </div>
-                    <div className="text-sm mt-1">
-                      {uploadResult.sheetColumns.length > 0
-                        ? `Also imported: ${uploadResult.sheetColumns.join(', ')}`
-                        : 'No people or judgment columns: those were left as they are.'}
-                    </div>
+                    {uploadResult.dryRun ? (
+                      <strong>{uploadResult.message}</strong>
+                    ) : (
+                      <>
+                        <strong>Success!</strong> Processed {uploadResult.clientCount} clients with total revenue of ${uploadResult.totalRevenue.toLocaleString()}
+                        <div className="text-sm mt-1">
+                          Imported years: {uploadResult.years}
+                        </div>
+                        <div className="text-sm mt-1">
+                          {uploadResult.sheetColumns.length > 0
+                            ? `Also imported: ${uploadResult.sheetColumns.join(', ')}`
+                            : 'No people or judgment columns: those were left as they are.'}
+                        </div>
+                      </>
+                    )}
                     {uploadResult.validation.issues.length > 0 && (
                       <div className="mt-2">
                         <strong>Issues found:</strong>
