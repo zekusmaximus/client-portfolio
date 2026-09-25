@@ -14,7 +14,9 @@
     "security:audit-fix": "npm audit fix",
     "deploy:check": "npm run lint && npm test && npm run build:prod",
     "create:admin": "node create-admin.cjs",
-    "reset:password": "node scripts/reset-password.cjs"
+    "reset:password": "node scripts/reset-password.cjs",
+    "check:schema": "node scripts/check-schema.cjs",
+    "delete:user": "node scripts/delete-user.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.56.0",
