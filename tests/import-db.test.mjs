@@ -470,7 +470,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -727,5 +727,94 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.ok(list.clients.length >= 6);
     assert.deepEqual(noStatusKeys(list.clients), []);
   });
-});
 
+  // Phase 5 (docs/plans/people-and-second-chair.md, section 8): Stage 2's AI
+  // plans send the roster of people staying, checked against the People list
+  // before anything reaches the model; the accepted plan is applied with an
+  // import sheet of CLIENT, Lead and Second Chair, through Check file and Upload.
+  test('Phase 5: the transition plan takes this run\'s client ids and checks every roster name against the People list', async () => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.ok(health.features.includes('transition-plan-roster'));
+
+    const { body: list } = await call('GET', '/api/data/clients');
+    const client = list.clients.find((c) => c.name === HEALTH);
+    assert.equal(typeof client.id, shape.idType === 'integer' ? 'number' : 'string');
+    const { body: everyone } = await call('GET', '/api/people');
+    const zero = { count: 0, revenue: 0, effort: 0 };
+    const entry = (name) => ({ name, role: 'partner', lead: zero, second: zero });
+    const staying = everyone.people.filter((p) => p.active && p.name !== 'Kevin').map((p) => entry(p.name));
+    assert.ok(staying.some((p) => p.name === "Mary O'Brien"), 'an apostrophe goes through the request sanitizer');
+    const stage1Data = { departing: [{ name: 'Kevin', role: 'partner' }], impactData: { totalRevenueAtRisk: 1 } };
+    const plan = (roster) => call('POST', '/api/scenarios/transition-plan', { client, stage1Data, roster });
+
+    // Every check passes; without a key the model is never called
+    let res = await plan(staying);
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'AI is not configured on the server (missing API key).');
+
+    res = await plan([...staying, entry('Nobody')]);
+    assert.deepEqual([res.status, res.body.error], [400, 'Not on the People list: Nobody.']);
+    res = await plan([...staying, entry('Kevin')]);
+    assert.deepEqual([res.status, res.body.error], [400, 'Leaving, so not on the roster: Kevin.']);
+    res = await plan(undefined);
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /^roster must list/);
+  });
+
+  test('Phase 5: a transition sheet (CLIENT, Lead, Second Chair) changes the two seats and nothing else; the partner who left can then be deactivated', async () => {
+    const kevin = (await db.query("SELECT id FROM people WHERE name = 'Kevin'")).rows[0];
+    const { rows: touched } = await db.query(`
+      SELECT c.name, lp.name AS lead, sp.name AS second_chair
+        FROM clients c
+        LEFT JOIN people lp ON lp.id = c.lead_id
+        LEFT JOIN people sp ON sp.id = c.second_chair_id
+       WHERE c.lead_id = $1 OR c.second_chair_id = $1
+       ORDER BY c.name`, [kevin.id]);
+    assert.ok(touched.length > 0);
+    const blocked = await call('PUT', `/api/people/${kevin.id}`, { active: false });
+    assert.equal(blocked.status, 409, 'P5: Kevin still holds a seat');
+
+    // The sheet the Scenarios export writes: Joe leads Kevin's clients; a seat
+    // Kevin held, or one Joe would hold twice, goes to Mary O'Brien
+    const quote = (text) => (/[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text);
+    const planned = touched.map((c) => {
+      const lead = c.lead === 'Kevin' ? 'Joe' : c.lead;
+      const second = c.second_chair === 'Kevin' || c.second_chair === lead ? "Mary O'Brien" : (c.second_chair || '');
+      return { name: c.name, lead, second };
+    });
+    const sheet = ['CLIENT,Lead,Second Chair', ...planned.map((c) => [c.name, c.lead, c.second].map(quote).join(','))].join('\n');
+
+    // Everything but the two seats and the legacy text they write
+    const rest = async () => ({
+      clients: (await db.query(`
+        SELECT to_jsonb(c) - 'lead_id' - 'second_chair_id' - 'primary_lobbyist' - 'lobbyist_team' - 'updated_at' AS row
+          FROM clients c ORDER BY name`)).rows,
+      revenues: (await db.query('SELECT to_jsonb(r) AS row FROM client_revenues r ORDER BY client_id::text, year')).rows,
+      people: (await db.query('SELECT * FROM people ORDER BY id')).rows,
+    });
+    const before = await rest();
+    const everything = await snapshot();
+
+    const check = await importCsv(sheet, { dryRun: true });
+    assert.equal(check.status, 200, JSON.stringify(check.body));
+    assert.deepEqual(check.body.summary.sheetColumns, ['Lead', 'Second Chair']);
+    assert.deepEqual(await snapshot(), everything, 'Check file writes nothing');
+
+    const upload = await importCsv(sheet);
+    assert.equal(upload.status, 200, JSON.stringify(upload.body));
+    assert.deepEqual(await rest(), before, 'nothing but the seats changed');
+    for (const c of planned) {
+      const row = await clientRow(c.name);
+      assert.equal(row.lead, c.lead, c.name);
+      assert.equal(row.second_chair, c.second || null, c.name);
+      assert.deepEqual(row.lobbyist_team, [row.lead, row.second_chair].filter(Boolean), 'the legacy text follows');
+    }
+
+    // Kevin holds no seat now, so P5 lets him go
+    const counts = await peopleCounts();
+    assert.deepEqual(counts.Kevin.slice(0, 2), [0, 0]);
+    const done = await call('PUT', `/api/people/${kevin.id}`, { active: false });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.equal(done.body.person.active, false);
+  });
+});

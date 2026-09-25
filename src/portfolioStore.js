@@ -4,6 +4,7 @@ import { apiClient } from './api';
 import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
 import { computeReportingYear, revenueForYear } from './utils/revenue';
 import { toggleId, withChoice } from './utils/departure';
+import { approvalBlocker, pinnedChoice, syncTransitions } from './utils/transitionPlans';
 
 // AI Advisor answers start empty and go back to empty on logout.
 const EMPTY_AI_RESULTS = { portfolioAnalysis: null, strategicAdvice: null, clientRecommendations: null };
@@ -13,22 +14,10 @@ const EMPTY_AI_RESULTS = { portfolioAnalysis: null, strategicAdvice: null, clien
 // picks for each affected client's seats, { [clientId]: { leadId,
 // secondChairId } }, which src/utils/departure.js applies over its defaults.
 const emptySuccessionWorkflow = () => ({ currentStage: 'impact', departingIds: [], choices: {} });
-const emptyExecution = () => ({
-  activeTransitions: [],
-  transitionTasks: [],
-  communicationLog: [],
-  executionMetrics: {
-    totalTransitions: 0,
-    completedTransitions: 0,
-    inProgressTransitions: 0,
-    atRiskTransitions: 0,
-    delayedTransitions: 0,
-    successRate: 0,
-    retentionRate: 0,
-    avgTransitionDays: 0
-  },
-  executionAlerts: []
-});
+// Stage 3: the approved plans' transitions, their tasks and the
+// communications the partner logs. Counts are computed from these
+// (executionSummary in src/utils/transitionPlans.js); nothing is estimated.
+const emptyExecution = () => ({ activeTransitions: [], transitionTasks: [], communicationLog: [] });
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
@@ -74,10 +63,6 @@ const usePortfolioStore = create(
       selectedClient: null,
       isModalOpen: false,
       currentView: 'data-upload', // 'data-upload', 'dashboard', 'client-details', 'ai', 'scenarios'
-      
-      // Partners as the Scenarios workflow still reads them (fetchPartners).
-      // The Partnership tab and the client list use the People list instead.
-      partners: [],
       
       // Succession planning state (P11): in the store so a tab switch, which
       // unmounts the tab, keeps the scenario. Not persisted (partialize);
@@ -320,7 +305,6 @@ const usePortfolioStore = create(
             peopleError: null,
             aiResults: { ...EMPTY_AI_RESULTS },
             aiError: null,
-            partners: [],
             successionWorkflow: emptySuccessionWorkflow(),
             transitionPlans: {},
             ...emptyExecution()
@@ -351,81 +335,6 @@ const usePortfolioStore = create(
         }
       },
 
-      // Partners derived from the legacy text fields, for the Scenarios workflow
-      // until Phase 5 rebuilds it on the People list
-      // (docs/plans/people-and-second-chair.md, section 8). Nothing else reads it.
-      fetchPartners: () => {
-        const state = get();
-        const partnerMap = new Map();
-        
-        // First pass: collect primary clients
-        state.clients.forEach(client => {
-          const lobbyistName = client.primary_lobbyist || 'Unassigned';
-          const revenue = state.getClientRevenue(client);
-          const strategicValue = client.strategicValue || 0;
-          const practiceArea = Array.isArray(client.practice_area) ? client.practice_area : [client.practice_area].filter(Boolean);
-          
-          if (!partnerMap.has(lobbyistName)) {
-            partnerMap.set(lobbyistName, {
-              id: `partner_${lobbyistName.toLowerCase().replace(/\s+/g, '_')}`,
-              name: lobbyistName,
-              isDeparting: false,
-              clients: [],
-              teamMemberClients: [],
-              totalRevenue: 0,
-              clientCount: 0,
-              totalStrategicValue: 0,
-              practiceAreas: new Set()
-            });
-          }
-          
-          const partner = partnerMap.get(lobbyistName);
-          partner.clients.push(client.id);
-          partner.totalRevenue += revenue;
-          partner.clientCount += 1;
-          partner.totalStrategicValue += strategicValue;
-          practiceArea.forEach(area => partner.practiceAreas.add(area));
-        });
-        
-        // Second pass: collect team member clients (where they're not primary)
-        state.clients.forEach(client => {
-          const lobbyistTeam = Array.isArray(client.lobbyist_team) ? client.lobbyist_team : [];
-          const primaryLobbyist = client.primary_lobbyist || 'Unassigned';
-          
-          lobbyistTeam.forEach(teamMemberName => {
-            // Skip if this is the same as primary lobbyist
-            if (teamMemberName === primaryLobbyist) return;
-            
-            // Create partner entry if doesn't exist
-            if (!partnerMap.has(teamMemberName)) {
-              partnerMap.set(teamMemberName, {
-                id: `partner_${teamMemberName.toLowerCase().replace(/\s+/g, '_')}`,
-                name: teamMemberName,
-                isDeparting: false,
-                clients: [],
-                teamMemberClients: [],
-                totalRevenue: 0,
-                clientCount: 0,
-                totalStrategicValue: 0,
-                practiceAreas: new Set()
-              });
-            }
-            
-            const partner = partnerMap.get(teamMemberName);
-            partner.teamMemberClients.push(client.id);
-          });
-        });
-        
-        const partners = Array.from(partnerMap.values()).map(partner => ({
-          ...partner,
-          avgStrategicValue: partner.clientCount > 0 ? partner.totalStrategicValue / partner.clientCount : 0,
-          practiceAreas: Array.from(partner.practiceAreas),
-          teamMemberClients: partner.teamMemberClients
-        }));
-        
-        set({ partners });
-      },
-      
       // Computed getters
       getClientById: (id) => {
         const state = get();
@@ -484,7 +393,7 @@ const usePortfolioStore = create(
         return getSuccessionAnalytics(state.clients);
       },
 
-      // Succession planning workflow actions
+      // Succession planning workflow actions (docs/plans/people-and-second-chair.md, Phase 5)
       setSuccessionStage: (stage) => {
         set((state) => ({ successionWorkflow: { ...state.successionWorkflow, currentStage: stage } }));
       },
@@ -514,76 +423,50 @@ const usePortfolioStore = create(
         }));
       },
 
-      setTransitionPlan: (clientId, plan) => {
-        const currentPlans = get().transitionPlans;
-        set({
-          transitionPlans: {
-            ...currentPlans,
-            [clientId]: plan
-          }
+      // Stage 2: one client's plan (the AI's answer, the timeline, the
+      // status). `update` is the fields to merge, or a function of the plan.
+      // The plan's seats are the scenario's choices, not fields here.
+      updateTransitionPlan: (clientId, update) => {
+        set((state) => {
+          const id = String(clientId);
+          const current = state.transitionPlans[id] || { clientId: id, status: 'pending' };
+          const next = typeof update === 'function' ? update(current) : { ...current, ...update };
+          return {
+            transitionPlans: { ...state.transitionPlans, [id]: { ...next, updatedAt: new Date().toISOString() } }
+          };
         });
       },
 
-      setTransitionPlans: (plans) => {
-        set({ transitionPlans: plans });
-      },
-
-      updateTransitionPlan: (clientId, updates) => {
-        const currentPlans = get().transitionPlans;
-        if (currentPlans[clientId]) {
-          set({
-            transitionPlans: {
-              ...currentPlans,
-              [clientId]: {
-                ...currentPlans[clientId],
-                ...updates,
-                updatedAt: new Date().toISOString()
-              }
-            }
-          });
-        }
-      },
-
-      approveTransitionPlan: (clientId) => {
-        get().updateTransitionPlan(clientId, { status: 'approved' });
-      },
-
-      rejectTransitionPlan: (clientId) => {
-        get().updateTransitionPlan(clientId, { status: 'rejected' });
-      },
-
-      bulkUpdateTransitionPlans: (clientIds, updates) => {
-        const currentPlans = get().transitionPlans;
-        const updatedPlans = { ...currentPlans };
-        
-        clientIds.forEach(clientId => {
-          if (updatedPlans[clientId]) {
-            updatedPlans[clientId] = {
-              ...updatedPlans[clientId],
-              ...updates,
-              updatedAt: new Date().toISOString()
-            };
-          } else {
-            updatedPlans[clientId] = {
-              clientId,
-              ...updates,
-              createdAt: new Date().toISOString()
-            };
+      // Approve plans: each client's seats are pinned as they stand, so a
+      // later pick on another client cannot move them, and the plan is marked
+      // approved. A client that cannot be approved (no lead, or a refused
+      // pick) is left as it is.
+      approveTransitionPlans: (decisions) => {
+        set((state) => {
+          let choices = state.successionWorkflow.choices;
+          const plans = { ...state.transitionPlans };
+          const now = new Date().toISOString();
+          for (const decision of decisions) {
+            if (approvalBlocker(decision)) continue;
+            const id = String(decision.client.id);
+            choices = withChoice(choices, id, pinnedChoice(decision));
+            plans[id] = { ...(plans[id] || { clientId: id }), status: 'approved', updatedAt: now };
           }
+          return { transitionPlans: plans, successionWorkflow: { ...state.successionWorkflow, choices } };
         });
-
-        set({ transitionPlans: updatedPlans });
       },
 
-      getTransitionPlansByStatus: (status) => {
-        const plans = get().transitionPlans;
-        return Object.entries(plans)
-          .filter(([_, plan]) => plan.status === status)
-          .map(([clientId, plan]) => ({ clientId, ...plan }));
-      },
-
-      clearTransitionPlans: () => {
-        set({ transitionPlans: {} });
+      // 'pending' or 'rejected' (needs revision) for each client
+      setTransitionPlanStatus: (clientIds, status) => {
+        set((state) => {
+          const plans = { ...state.transitionPlans };
+          const now = new Date().toISOString();
+          for (const clientId of clientIds) {
+            const id = String(clientId);
+            plans[id] = { ...(plans[id] || { clientId: id }), status, updatedAt: now };
+          }
+          return { transitionPlans: plans };
+        });
       },
 
       // Start the scenario over: nobody leaving, no picks, no plans
@@ -595,162 +478,49 @@ const usePortfolioStore = create(
         });
       },
 
-      // Execution management actions
-      setActiveTransitions: (transitions) => {
-        set({ activeTransitions: transitions });
-        get().updateExecutionMetrics();
-      },
-
-      addActiveTransition: (transition) => {
-        const current = get().activeTransitions;
-        set({ activeTransitions: [...current, transition] });
-        get().updateExecutionMetrics();
-      },
-
-      updateTransition: (transitionId, updates) => {
-        const current = get().activeTransitions;
-        set({
-          activeTransitions: current.map(t => 
-            t.clientId === transitionId ? { ...t, ...updates } : t
-          )
+      // Stage 3: the transitions of the approved plans, keeping what was
+      // already recorded for them (syncTransitions), and the stage opened
+      startExecution: (decisions) => {
+        set((state) => {
+          const { transitions, tasks } = syncTransitions({
+            decisions,
+            plans: state.transitionPlans,
+            transitions: state.activeTransitions,
+            tasks: state.transitionTasks,
+            today: new Date().toISOString().split('T')[0]
+          });
+          return {
+            activeTransitions: transitions,
+            transitionTasks: tasks,
+            successionWorkflow: { ...state.successionWorkflow, currentStage: 'implementation' }
+          };
         });
-        get().updateExecutionMetrics();
       },
 
-      setTransitionTasks: (tasks) => {
-        set({ transitionTasks: tasks });
+      updateTransition: (clientId, updates) => {
+        set((state) => ({
+          activeTransitions: state.activeTransitions.map((t) =>
+            String(t.clientId) === String(clientId) ? { ...t, ...updates } : t
+          )
+        }));
       },
 
       addTransitionTask: (task) => {
-        const current = get().transitionTasks;
-        set({ transitionTasks: [...current, task] });
+        set((state) => ({ transitionTasks: [...state.transitionTasks, task] }));
       },
 
       updateTransitionTask: (taskId, updates) => {
-        const current = get().transitionTasks;
-        set({
-          transitionTasks: current.map(task => 
-            task.id === taskId ? { ...task, ...updates } : task
-          )
-        });
+        set((state) => ({
+          transitionTasks: state.transitionTasks.map((task) => (task.id === taskId ? { ...task, ...updates } : task))
+        }));
       },
 
       deleteTransitionTask: (taskId) => {
-        const current = get().transitionTasks;
-        set({ transitionTasks: current.filter(task => task.id !== taskId) });
+        set((state) => ({ transitionTasks: state.transitionTasks.filter((task) => task.id !== taskId) }));
       },
 
       addCommunication: (communication) => {
-        const current = get().communicationLog;
-        set({ communicationLog: [...current, communication] });
-      },
-
-      getCommunicationsForClient: (clientId) => {
-        const communications = get().communicationLog;
-        return communications.filter(comm => comm.clientId === clientId);
-      },
-
-      addExecutionAlert: (alert) => {
-        const current = get().executionAlerts;
-        set({ executionAlerts: [...current, { ...alert, id: Date.now().toString() }] });
-      },
-
-      dismissExecutionAlert: (alertId) => {
-        const current = get().executionAlerts;
-        set({ executionAlerts: current.filter(alert => alert.id !== alertId) });
-      },
-
-      updateExecutionMetrics: () => {
-        const { activeTransitions } = get();
-        const totalTransitions = activeTransitions.length;
-        const completedTransitions = activeTransitions.filter(t => t.status === 'completed').length;
-        const inProgressTransitions = activeTransitions.filter(t => t.status === 'in-progress').length;
-        const atRiskTransitions = activeTransitions.filter(t => t.status === 'at-risk').length;
-        const delayedTransitions = activeTransitions.filter(t => t.status === 'delayed').length;
-
-        const successRate = totalTransitions > 0 ? Math.round((completedTransitions / totalTransitions) * 100) : 0;
-        
-        // Calculate average transition days
-        const completedWithDays = activeTransitions.filter(t => t.status === 'completed' && t.actualDays);
-        const avgTransitionDays = completedWithDays.length > 0 
-          ? Math.round(completedWithDays.reduce((sum, t) => sum + t.actualDays, 0) / completedWithDays.length)
-          : 0;
-
-        set({
-          executionMetrics: {
-            totalTransitions,
-            completedTransitions,
-            inProgressTransitions,
-            atRiskTransitions,
-            delayedTransitions,
-            successRate,
-            retentionRate: 95, // This could be calculated based on actual client retention
-            avgTransitionDays
-          }
-        });
-      },
-
-      getTasksByStatus: (status) => {
-        const tasks = get().transitionTasks;
-        return tasks.filter(task => task.status === status);
-      },
-
-      getTasksForClient: (clientId) => {
-        const tasks = get().transitionTasks;
-        return tasks.filter(task => task.clientId === clientId);
-      },
-
-      getOverdueTasks: () => {
-        const tasks = get().transitionTasks;
-        const now = new Date();
-        return tasks.filter(task => 
-          task.status !== 'completed' && new Date(task.dueDate) < now
-        );
-      },
-
-      initializeTransitionsFromPlans: (stage2Data) => {
-        if (!stage2Data?.transitionPlans) return;
-
-        const approvedPlans = Object.entries(stage2Data.transitionPlans)
-          .filter(([_, plan]) => plan.status === 'approved');
-
-        const transitions = approvedPlans.map(([clientId, plan]) => {
-          // Object keys are text; production's client ids are integers
-          const client = stage2Data.affectedClients?.find(c => String(c.id) === clientId);
-          return {
-            clientId,
-            clientName: client?.name || 'Unknown Client',
-            successionRisk: client?.successionRisk || 5,
-            successorPartner: plan.successorPartner || 'TBD',
-            timelineDays: plan.timelineDays || 30,
-            startDate: new Date().toISOString().split('T')[0],
-            endDate: new Date(Date.now() + (plan.timelineDays || 30) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            status: 'in-progress',
-            progress: 0,
-            tasks: plan.tasks || []
-          };
-        });
-
-        const tasks = transitions.flatMap(transition => 
-          transition.tasks.map((taskTitle, index) => ({
-            id: `${transition.clientId}-${index}`,
-            title: taskTitle,
-            description: `Task for ${transition.clientName}`,
-            assignee: transition.successorPartner,
-            dueDate: new Date(Date.now() + (index + 1) * 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            priority: index === 0 ? 'high' : 'medium',
-            status: 'pending',
-            clientId: transition.clientId,
-            category: 'communication'
-          }))
-        );
-
-        set({ 
-          activeTransitions: transitions,
-          transitionTasks: tasks
-        });
-        
-        get().updateExecutionMetrics();
+        set((state) => ({ communicationLog: [...state.communicationLog, communication] }));
       }
     }),
     {

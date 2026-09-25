@@ -112,8 +112,10 @@ app.get('/api/health', async (req, res) => {
     uptimeSeconds: Math.round(process.uptime()),
     environment: process.env.NODE_ENV || 'development',
     // What this API can do that an older one cannot. The page asks before
-    // Check file: an API without it ignores dryRun and imports the file.
-    features: ['check-file'],
+    // Check file: an API without it ignores dryRun and imports the file. And
+    // before Stage 2's AI plans (transition-plan-roster): an API without it
+    // ignores the roster and answers with no recommendation from it.
+    features: ['check-file', 'transition-plan-roster'],
     services: {}
   };
 
