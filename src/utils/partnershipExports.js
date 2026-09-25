@@ -4,9 +4,16 @@
 // builders are pure (strings in, strings out) and tested; the two export
 // functions only open the print window or start the download.
 
-import { formatRatio, formatMoney as money, formatEffort as effort } from './load.js';
+import {
+  formatRatio,
+  formatMoney as money,
+  formatEffort as effort,
+  secondChairEffort,
+  SECOND_CHAIR_EFFORT_SHARE,
+} from './load.js';
 import { ROLE_LABELS } from './people.js';
 
+const SHARE_PERCENT = Math.round(SECOND_CHAIR_EFFORT_SHARE * 100);
 const strategic = (client) => {
   const v = parseFloat(client?.strategicValue);
   return Number.isFinite(v) ? v.toFixed(1) : '—';
@@ -44,6 +51,7 @@ const ratioCell = (r) => (r === null || r === undefined || !Number.isFinite(r) ?
  * Everyone's load as CSV: one row per person in the lead books or the
  * second-chair groups. Ratios are against the role's average (lead books
  * against the partners'), blank when there is nothing to compare with.
+ * Second-chair effort is SECOND_CHAIR_EFFORT_SHARE of each client's (P10).
  */
 export function buildLoadCsv(model, year) {
   const header = [
@@ -53,7 +61,7 @@ export function buildLoadCsv(model, year) {
     'Lead effort', 'Lead effort vs partner avg',
     'Second-chair clients', 'Second-chair clients vs role avg',
     `Second-chair revenue ${year}`, 'Second-chair revenue vs role avg',
-    'Second-chair effort', 'Second-chair effort vs role avg',
+    `Second-chair effort (${SHARE_PERCENT}% share)`, 'Second-chair effort vs role avg',
   ];
   const seen = new Set();
   const people = [...model.leadBooks, ...model.secondChairs.flatMap((g) => g.rows)]
@@ -85,14 +93,18 @@ const loadTable = (rows, which, label) => `
     </tbody>
   </table>`;
 
-const clientTable = (clients, revenueOf, otherLabel, otherOf) => `
+const clientEffort = (c) => parseFloat(c.effort) || 0;
+
+// `seat` is 'lead' or 'second': the effort column is what the person carries,
+// the client's full effort as lead and the second-chair share as second chair.
+const clientTable = (clients, revenueOf, otherLabel, otherOf, seat = 'lead') => `
   <table>
-    <thead><tr><th>Client</th><th>Revenue</th><th>Strategic value</th><th>Effort</th><th>${escapeHtml(otherLabel)}</th></tr></thead>
+    <thead><tr><th>Client</th><th>Revenue</th><th>Strategic value</th><th>${seat === 'second' ? `Effort (${SHARE_PERCENT}%)` : 'Effort'}</th><th>${escapeHtml(otherLabel)}</th></tr></thead>
     <tbody>
       ${clients.map((c) => `
         <tr>
           <td>${escapeHtml(c.name)}</td><td>${money(revenueOf(c))}</td><td>${strategic(c)}</td>
-          <td>${effort(parseFloat(c.effort) || 0)}</td><td>${escapeHtml(otherOf(c) || '—')}</td>
+          <td>${effort(seat === 'second' ? secondChairEffort(clientEffort(c)) : clientEffort(c))}</td><td>${escapeHtml(otherOf(c) || '—')}</td>
         </tr>`).join('')}
     </tbody>
   </table>`;
@@ -149,14 +161,14 @@ export function buildPartnershipReportHtml(model, year, revenueOf, now = new Dat
     <div class="person">
       <h3>${escapeHtml(r.person.name)} <span class="muted">(${escapeHtml(roleLabel(r.person))})</span></h3>
       ${r.lead.count > 0 ? `<h4>Leads ${r.lead.count}</h4>${clientTable(r.lead.clients, revenueOf, 'Second chair', (c) => c.secondChair?.name)}` : ''}
-      ${r.second.count > 0 ? `<h4>Second chair on ${r.second.count}</h4>${clientTable(r.second.clients, revenueOf, 'Lead', (c) => c.lead?.name)}` : ''}
+      ${r.second.count > 0 ? `<h4>Second chair on ${r.second.count}</h4>${clientTable(r.second.clients, revenueOf, 'Lead', (c) => c.lead?.name, 'second')}` : ''}
     </div>`).join('')}
 
   <h2>Notes</h2>
   <ul class="muted">
     <li>Each figure is compared with the average of the active people in the same role; lead books with the partners' average. "—" means there is no one to compare with.</li>
     <li>Effort is each client's contact cadence (Daily 5, Weekly 3, Monthly 2, Quarterly 1, As-Needed 0.5, unset 1), × 1.5 when the client is a handful.</li>
-    <li>A client's effort counts in full for both its lead and its second chair.</li>
+    <li>A client's lead carries its full effort and its second chair ${SHARE_PERCENT}% of it; clients and revenue count in full for both.</li>
   </ul>
 </body>
 </html>`;

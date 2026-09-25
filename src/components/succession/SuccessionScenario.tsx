@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { ArrowLeft, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,48 +7,85 @@ import ImpactAnalysisWorkbench from './ImpactAnalysisWorkbench';
 import ClientReviewInterface from './ClientReviewInterface';
 import TransitionPlanManager from './TransitionPlanManager';
 import usePortfolioStore from '../../portfolioStore';
+import { departureModel } from '../../utils/departure';
+import { revenueForYear } from '../../utils/revenue';
+import { personLabel } from '../../utils/people';
+
+type Stage = 'impact' | 'mitigation' | 'implementation';
 
 interface SuccessionScenarioProps {
   portfolioId?: string;
-  initialStage?: 'impact' | 'mitigation' | 'implementation';
 }
 
 // Three-stage succession workflow: impact analysis -> client review & triage ->
 // transition execution. The legacy Stage 2 form and the endpoint only it called
 // were unreachable and were removed in WP2 (docs/plans/tier-0.md, D8).
-const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ initialStage = 'impact' }) => {
-  // Workflow state
-  const [currentStage, setCurrentStage] = useState<'impact' | 'mitigation' | 'implementation'>(initialStage);
-  const [stage1Data, setStage1Data] = useState<any>(null);
-  const [stage2Data, setStage2Data] = useState<any>(null);
+//
+// The open stage, the people leaving and the partner's picks live in the store
+// (docs/plans/people-and-second-chair.md, Phase 5, P11), so switching tabs
+// keeps the scenario. The departure engine (src/utils/departure.js) turns them
+// into the clients that need a decision and everyone's load before and after.
+const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
+  const clients = usePortfolioStore((s: any) => s.clients);
+  const people = usePortfolioStore((s: any) => s.people);
+  const reportingYear = usePortfolioStore((s: any) => s.getReportingYear());
+  const workflow = usePortfolioStore((s: any) => s.successionWorkflow);
+  const transitionPlans = usePortfolioStore((s: any) => s.transitionPlans);
+  const setSuccessionStage = usePortfolioStore((s: any) => s.setSuccessionStage);
+  const toggleDeparting = usePortfolioStore((s: any) => s.toggleDeparting);
+  const clearDeparting = usePortfolioStore((s: any) => s.clearDeparting);
+  const fetchPartners = usePortfolioStore((s: any) => s.fetchPartners);
+  const currentStage: Stage = workflow.currentStage;
+
+  // Stage 2's successor pickers and Stage 3's assignees still read the
+  // legacy partners list until they are rebuilt on the People list (PR 5b)
+  useEffect(() => {
+    fetchPartners();
+  }, [clients, fetchPartners]);
+
+  const revenueOf = useMemo(() => (client: any) => revenueForYear(client, reportingYear), [reportingYear]);
+  const departure = useMemo(
+    () => departureModel({
+      people,
+      clients,
+      departingIds: workflow.departingIds,
+      revenueOf,
+      choices: workflow.choices,
+    }),
+    [people, clients, workflow.departingIds, workflow.choices, revenueOf]
+  );
+
+  // What Stage 2 and the transition-plan request read: the affected clients,
+  // the names of the people leaving and the revenue on those clients
+  const stage1Data = useMemo(() => {
+    if (departure.decisions.length === 0) return null;
+    return {
+      selectedPartners: departure.departing.map(personLabel),
+      affectedClients: departure.decisions.map((d: any) => d.client),
+      impactData: { totalRevenueAtRisk: departure.totals.revenue },
+      departure,
+    };
+  }, [departure]);
+  const stage2Data = useMemo(
+    () => (stage1Data ? { ...stage1Data, transitionPlans } : null),
+    [stage1Data, transitionPlans]
+  );
 
   // Stage transition handlers
-  const handleProceedToStage2 = (analysisData: any) => {
-    setStage1Data(analysisData);
-    setCurrentStage('mitigation');
-  };
+  const handleProceedToStage2 = () => setSuccessionStage('mitigation');
+  const handleBackToStage1 = () => setSuccessionStage('impact');
+  const handleBackToStage2 = () => setSuccessionStage('mitigation');
 
-  const handleBackToStage1 = () => {
-    setCurrentStage('impact');
-  };
-
-  const handleBackToStage2 = () => {
-    setCurrentStage('mitigation');
-  };
-
-  const handleProceedToStage3 = (transitionPlans: any) => {
-    const stage2Data = { ...stage1Data, transitionPlans };
-    setStage2Data(stage2Data);
-    setCurrentStage('implementation');
-    
+  const handleProceedToStage3 = (plans: any) => {
+    setSuccessionStage('implementation');
     // Initialize transitions in the store for Stage 3
-    usePortfolioStore.getState().initializeTransitionsFromPlans(stage2Data);
+    usePortfolioStore.getState().initializeTransitionsFromPlans({ ...stage1Data, transitionPlans: plans });
   };
 
   const renderProgressStepper = () => {
     const stages = [
-      { key: 'impact', label: 'Impact Analysis', completed: stage1Data !== null },
-      { key: 'mitigation', label: 'Client Review & Triage', completed: stage2Data !== null },
+      { key: 'impact', label: 'Impact Analysis', completed: stage1Data !== null && currentStage !== 'impact' },
+      { key: 'mitigation', label: 'Client Review & Triage', completed: stage2Data !== null && currentStage === 'implementation' },
       { key: 'implementation', label: 'Transition Execution', completed: false }
     ];
 
@@ -95,7 +132,15 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ initialStage = 
 
       {/* Stage 1: Impact Analysis */}
       {currentStage === 'impact' && (
-        <ImpactAnalysisWorkbench onProceedToStage2={handleProceedToStage2} />
+        <ImpactAnalysisWorkbench
+          departure={departure}
+          people={people}
+          departingIds={workflow.departingIds}
+          year={reportingYear}
+          onToggleDeparting={toggleDeparting}
+          onClearDeparting={clearDeparting}
+          onProceedToStage2={handleProceedToStage2}
+        />
       )}
 
       {/* Stage 2: Client Review & Triage */}
@@ -107,7 +152,7 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ initialStage = 
         />
       )}
 
-      {/* Stage 2: Fallback for no data (only reachable via initialStage) */}
+      {/* Stage 2: Fallback when nobody leaving holds a seat (the People list or the book changed) */}
       {currentStage === 'mitigation' && !stage1Data && (
         <Card>
           <CardHeader>
@@ -124,9 +169,9 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ initialStage = 
           </CardHeader>
           <CardContent>
             <div className="text-center py-12">
-              <h3 className="text-lg font-semibold mb-2">No Impact Analysis Yet</h3>
+              <h3 className="text-lg font-semibold mb-2">No Clients to Review</h3>
               <p className="text-gray-600 mb-4">
-                Complete Stage 1 (Impact Analysis) to review the affected clients.
+                Mark who is leaving in Stage 1 (Impact Analysis); the clients whose lead or second chair leaves are reviewed here.
               </p>
               <Button onClick={handleBackToStage1}>
                 Go to Stage 1
@@ -151,7 +196,7 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ initialStage = 
             <CardTitle className="flex items-center justify-between">
               <span>Stage 3: Transition Execution</span>
               <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => setCurrentStage('mitigation')}>
+                <Button variant="outline" onClick={handleBackToStage2}>
                   <ArrowLeft className="h-4 w-4 mr-2" />
                   Back to Review
                 </Button>
@@ -165,7 +210,7 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = ({ initialStage = 
               <p className="text-gray-600 mb-4">
                 Complete Stage 2 (Client Review & Triage) to access transition execution management.
               </p>
-              <Button onClick={() => setCurrentStage('mitigation')}>
+              <Button onClick={handleBackToStage2}>
                 Go to Stage 2
               </Button>
             </div>

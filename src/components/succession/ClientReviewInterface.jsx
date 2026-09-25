@@ -576,12 +576,17 @@ const ClientTriageGrid = ({ clients, selectedClients, onSelectClient, onSelectAl
 // Main Client Review Interface Component
 const ClientReviewInterface = ({ stage1Data, onProceedToStage3, onBackToStage1 }) => {
   const [selectedClients, setSelectedClients] = useState([]);
-  const [transitionPlans, setTransitionPlans] = useState({});
+  // The plans live in the store (P11), so a tab switch keeps them; the
+  // updater form reads the latest plans, as the concurrent requests need
+  const transitionPlans = usePortfolioStore((s) => s.transitionPlans);
+  const setTransitionPlans = (update) =>
+    usePortfolioStore.setState((state) => ({
+      transitionPlans: typeof update === 'function' ? update(state.transitionPlans) : update
+    }));
   const [isGeneratingPlans, setIsGeneratingPlans] = useState(false);
   // { done, total, failed: [{ clientId, clientName, error }] } for the current / last run
   const [planProgress, setPlanProgress] = useState(null);
   const [activeTab, setActiveTab] = useState('triage');
-  const partners = usePortfolioStore((s) => s.partners);
 
   // Extract clients from stage1Data
   const affectedClients = stage1Data?.affectedClients || [];
@@ -614,11 +619,9 @@ const ClientReviewInterface = ({ stage1Data, onProceedToStage3, onBackToStage1 }
       .filter(Boolean);
     if (queue.length === 0) return;
 
-    // The prompt wants partner names; Stage 1 keeps the selected partner ids.
+    // Stage 1 gives the names of the people leaving, with their roles
     const requestStage1Data = {
-      selectedPartners: (stage1Data?.selectedPartners || []).map(
-        (id) => partners.find((p) => p.id === id)?.name || id
-      ),
+      selectedPartners: stage1Data?.selectedPartners || [],
       impactData: stage1Data?.impactData || {},
     };
 

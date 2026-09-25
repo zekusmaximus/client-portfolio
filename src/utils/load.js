@@ -1,9 +1,11 @@
 // Who's carrying what (docs/plans/people-and-second-chair.md, Phase 4, P10).
 // Each person's lead book and second-chair load, from the People list and the
 // clients' lead_id and second_chair_id, compared with the average of the active
-// people in the same role. No capacity ceiling and no weights: clients, revenue
-// in the reporting year and effort (getEffort in utils/strategic.cjs, sent by
-// the API as client.effort), each shown against the peers' average.
+// people in the same role. No capacity ceiling: clients, revenue in the
+// reporting year and effort (getEffort in utils/strategic.cjs, sent by the API
+// as client.effort), each shown against the peers' average. The lead carries a
+// client's full effort and the second chair SECOND_CHAIR_EFFORT_SHARE of it
+// (P10 as amended 2026-09-25); client counts and revenue count whole for both.
 //
 // Pure: people, clients and a revenue function in, plain objects out, so the
 // Partnership tab, the Dashboard card and the exports agree, and tests can
@@ -11,6 +13,21 @@
 
 import { resolveEffort } from './clientMetrics.js';
 import { ROLE_ORDER, ROLE_LABELS } from './people.js';
+
+/**
+ * The part of a client's effort its second chair carries (P10, amended by Jeff
+ * on 2026-09-25: "Some are more, some are less, but it is subjective and
+ * individual, so that will be a good basic measure"). The lead carries the
+ * client's full effort. Every second-chair effort figure uses this one
+ * constant: the Partnership tab, its exports, the departure engine
+ * (./departure.js) and the associate split. The client's own effort and its
+ * strategic score do not change. If the server ever needs it, mirror it in a
+ * CommonJS module with a parity test.
+ */
+export const SECOND_CHAIR_EFFORT_SHARE = 0.2;
+
+/** A second chair's effort on one client: the share of the client's effort. */
+export const secondChairEffort = (clientEffort) => (Number(clientEffort) || 0) * SECOND_CHAIR_EFFORT_SHARE;
 
 const emptyLoad = () => ({ clients: [], count: 0, revenue: 0, effort: 0 });
 
@@ -113,7 +130,9 @@ export function revenueByYear(clients = [], years = [], revenueOfYear) {
  *   unled: Array, noSecondChair: Array,
  *   totals: { clients, revenue, effort }
  * }}
- *   `lead` and `second` are { clients, count, revenue, effort }; the ratios
+ *   `totals.effort` is the book's: each client's effort once.
+ *   `lead` and `second` are { clients, count, revenue, effort }, the second
+ *   chair's effort being SECOND_CHAIR_EFFORT_SHARE of each client's; the ratios
  *   are { count, revenue, effort } against the role's average (null when
  *   there is nothing to compare with). `leadBooks` are the active partners
  *   and anyone else who leads a client, heaviest revenue first; `secondChairs`
@@ -142,7 +161,7 @@ export function partnershipModel(people = [], clients = [], revenueOf = () => 0)
     if (client.lead?.id != null) addTo(rowFor(client.lead).lead, client, revenue, effort);
     else unled.push(client);
 
-    if (client.secondChair?.id != null) addTo(rowFor(client.secondChair).second, client, revenue, effort);
+    if (client.secondChair?.id != null) addTo(rowFor(client.secondChair).second, client, revenue, secondChairEffort(effort));
     else if (client.lead?.id != null) noSecondChair.push(client);
   }
 

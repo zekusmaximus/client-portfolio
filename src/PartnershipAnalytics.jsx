@@ -12,7 +12,7 @@ import { AlertTriangle, Download } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import LoadTable from './components/LoadTable';
 import PersonLoadSheet from './components/PersonLoadSheet';
-import { partnershipModel, bookYears, formatMoney } from './utils/load';
+import { partnershipModel, bookYears, formatMoney, SECOND_CHAIR_EFFORT_SHARE } from './utils/load';
 import { revenueForYear } from './utils/revenue';
 import { exportPartnershipReport, exportLoadCsv } from './utils/partnershipExports';
 
@@ -20,6 +20,8 @@ import { exportPartnershipReport, exportLoadCsv } from './utils/partnershipExpor
 // partners' lead books and everyone's second-chair load, from the People list
 // and each client's lead and second chair, each against the average of the
 // active people in the same role (P10). Departures are modelled on Scenarios.
+const SHARE_PERCENT = Math.round(SECOND_CHAIR_EFFORT_SHARE * 100);
+
 const PartnershipAnalytics = () => {
   const clients = usePortfolioStore((s) => s.clients);
   const people = usePortfolioStore((s) => s.people);
@@ -141,7 +143,8 @@ const PartnershipAnalytics = () => {
           <CardTitle>Second-chair load</CardTitle>
           <p className="text-sm text-muted-foreground">
             The clients each person second-chairs, against the average of the others in the same role. A
-            client&apos;s effort counts in full for its lead and for its second chair.
+            client&apos;s lead carries its full effort and its second chair {SHARE_PERCENT}% of it; clients and
+            revenue count in full for both.
           </p>
         </CardHeader>
         <CardContent className="space-y-6">

@@ -1,14 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Users,
   AlertTriangle,
-  DollarSign,
-  TrendingDown,
   Target,
   ArrowRight,
   Building,
@@ -35,6 +35,9 @@ import {
   getRelationshipTypeColor, 
   groupClientsBySuccessionRisk 
 } from '../../utils/successionUtils';
+import { groupPeople } from '../../utils/people';
+import { formatMoney, formatEffort, practiceAreasOf, SECOND_CHAIR_EFFORT_SHARE } from '../../utils/load';
+import { candidateReason } from '../../utils/departure';
 
 const PRACTICE_AREA_COLORS = {
   'Healthcare': '#8884d8',
@@ -45,63 +48,240 @@ const PRACTICE_AREA_COLORS = {
   'Other': '#8dd1e1'
 };
 
-// Partner Selection Panel Component
-const PartnerSelectionPanel = ({ partners, selectedPartners, onPartnerToggle, impactPreview }) => {
+const num = 'text-right tabular-nums';
+const LeavingBadge = () => (
+  <Badge variant="outline" className="ml-1 border-orange-300 bg-orange-50 text-orange-800 text-xs">leaving</Badge>
+);
+
+// Who is leaving: every active person, by role (docs/plans/people-and-second-chair.md,
+// Phase 5). Anyone can leave, not only partners.
+const WhoIsLeavingPanel = ({ people, departingIds, rowsById, onToggle, onClear }) => {
+  const groups = groupPeople(people).filter((g) => g.key !== 'inactive' && g.people.length > 0);
+  const isLeaving = (id) => departingIds.some((x) => String(x) === String(id));
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Users className="h-5 w-5" />
-          Select Departing Partners
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Who is leaving
+          </span>
+          {departingIds.length > 0 && (
+            <Button variant="ghost" size="sm" onClick={onClear}>Clear</Button>
+          )}
         </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Mark everyone who may leave. Each client they lead needs a new lead, and each client they
+          second-chair loses its second chair.
+        </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto">
-          {partners.map((partner) => (
-            <div key={partner.id} className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-gray-50">
-              <Checkbox
-                id={partner.id}
-                checked={selectedPartners.includes(partner.id)}
-                onCheckedChange={() => onPartnerToggle(partner.id)}
-              />
-              <label htmlFor={partner.id} className="flex-1 cursor-pointer">
-                <div className="font-medium">{partner.name}</div>
-                <div className="text-sm text-gray-600">
-                  {partner.clientCount || 0} clients • ${(partner.totalRevenue || 0).toLocaleString()}
-                </div>
-              </label>
-            </div>
-          ))}
-        </div>
-
-        {/* Real-time Impact Preview */}
-        {selectedPartners.length > 0 && (
-          <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-            <h4 className="font-medium text-orange-800 mb-2">Impact Preview</h4>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-orange-700">Affected Clients:</span>
-                <span className="font-semibold ml-1">{impactPreview.affectedClients}</span>
-              </div>
-              <div>
-                <span className="text-orange-700">Revenue at Risk:</span>
-                <span className="font-semibold ml-1">${impactPreview.revenueAtRisk.toLocaleString()}</span>
-              </div>
-              <div>
-                <span className="text-orange-700">High Risk Clients:</span>
-                <span className="font-semibold ml-1">{impactPreview.highRiskClients}</span>
-              </div>
-              <div>
-                <span className="text-orange-700">Affected Practice Areas:</span>
-                <span className="font-semibold ml-1">{impactPreview.practiceAreas}</span>
-              </div>
+        {groups.length === 0 && (
+          <p className="text-sm text-muted-foreground">The People list is empty. Add people with the People button in the header.</p>
+        )}
+        {groups.map((group) => (
+          <div key={group.key}>
+            <h4 className="text-sm font-semibold mb-2">{group.label}</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {group.people.map((person) => {
+                const row = rowsById.get(String(person.id));
+                const inputId = `leaving-${person.id}`;
+                return (
+                  <div key={person.id} className="flex items-center gap-2 rounded-lg border p-3 hover:bg-gray-50">
+                    <Checkbox
+                      id={inputId}
+                      checked={isLeaving(person.id)}
+                      onCheckedChange={() => onToggle(person.id)}
+                    />
+                    <label htmlFor={inputId} className="flex-1 cursor-pointer">
+                      <div className="font-medium">{person.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {person.role === 'partner' || (row?.lead.count || 0) > 0 ? `leads ${row?.lead.count || 0} · ` : ''}
+                        second chair on {row?.second.count || 0}
+                      </div>
+                    </label>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        )}
+        ))}
       </CardContent>
     </Card>
   );
 };
+
+// One seat's proposal: who takes it and why, or why nobody does
+const SeatProposal = ({ seat, side }) => {
+  const reasonFor = (person) => {
+    if (!person) return '';
+    if (side.choice !== undefined && !side.problem) return 'your pick';
+    const candidate = side.candidates.find((c) => String(c.person.id) === String(person.id));
+    return candidateReason(candidate, seat);
+  };
+  const others = side.candidates
+    .filter((c) => String(c.person.id) !== String(side.after?.id))
+    .slice(0, 3)
+    .map((c) => c.person.name);
+
+  const changes = seat === 'lead' ? side.needed : side.vacated;
+  if (!changes) {
+    return <span className="text-muted-foreground">{side.after ? `${side.after.name} stays` : 'none'}</span>;
+  }
+  if (!side.after) {
+    return (
+      <span className="font-medium text-red-700">
+        {seat === 'lead'
+          ? 'No active partner who is staying can lead this client'
+          : side.noCandidate ? 'Nobody who is staying can take this seat' : 'Left empty'}
+      </span>
+    );
+  }
+  return (
+    <div>
+      <span className="font-medium">{side.after.name}</span>
+      <span className="text-xs text-muted-foreground"> ({reasonFor(side.after)})</span>
+      {side.problem && <div className="text-xs text-red-700">{side.problem}</div>}
+      {others.length > 0 && <div className="text-xs text-muted-foreground">next: {others.join(', ')}</div>}
+    </div>
+  );
+};
+
+const seatNote = (side, seat) => {
+  if (seat === 'lead') return side.why === 'missing' ? ' (no active partner on record)' : '';
+  return side.why === 'promoted' ? ' (promoted to lead)' : side.why === 'inactive' ? ' (inactive)' : '';
+};
+
+// The clients that need a decision, each with its proposed lead and second chair
+const AffectedClientsTable = ({ decisions, year, onClientSelect }) => (
+  <Card>
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+        <Target className="h-5 w-5" />
+        Clients that need a decision ({decisions.length})
+      </CardTitle>
+      <p className="text-sm text-muted-foreground">
+        The proposed lead is the client&apos;s second chair when that is a partner who is staying, then the partner
+        whose lead book shares the most of the client&apos;s practice areas, then the lighter lead load. A second
+        chair is proposed the same way from everyone staying, by the lighter second-chair load. Each proposal counts
+        the clients this scenario has already given that person, heaviest clients first. You choose in Stage 2.
+      </p>
+    </CardHeader>
+    <CardContent>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Client</TableHead>
+            <TableHead className="text-right">Revenue {year}</TableHead>
+            <TableHead className="text-right">Effort</TableHead>
+            <TableHead>Lead now</TableHead>
+            <TableHead>Second chair now</TableHead>
+            <TableHead>Proposed lead</TableHead>
+            <TableHead>Proposed second chair</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {decisions.map((d) => (
+            <TableRow key={d.client.id}>
+              <TableCell>
+                <button
+                  type="button"
+                  className="font-medium text-left underline-offset-4 hover:underline"
+                  onClick={() => onClientSelect(d.client)}
+                >
+                  {formatClientName(d.client.name)}
+                </button>
+                <div className="text-xs text-muted-foreground">{practiceAreasOf(d.client).join(', ') || 'No practice area'}</div>
+              </TableCell>
+              <TableCell className={num}>{formatMoney(d.revenue)}</TableCell>
+              <TableCell className={num}>{formatEffort(d.effort)}</TableCell>
+              <TableCell>
+                {d.lead.before ? d.lead.before.name : '—'}
+                {d.lead.why === 'leaves' && <LeavingBadge />}
+                <span className="text-xs text-muted-foreground">{seatNote(d.lead, 'lead')}</span>
+              </TableCell>
+              <TableCell>
+                {d.secondChair.before ? d.secondChair.before.name : '—'}
+                {d.secondChair.why === 'leaves' && <LeavingBadge />}
+                <span className="text-xs text-muted-foreground">{seatNote(d.secondChair, 'second')}</span>
+              </TableCell>
+              <TableCell><SeatProposal seat="lead" side={d.lead} /></TableCell>
+              <TableCell><SeatProposal seat="second" side={d.secondChair} /></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </CardContent>
+  </Card>
+);
+
+// "3 → 5", or "3" when it does not change
+const BeforeAfter = ({ before, after, format = (v) => v }) => {
+  const same = Math.abs((before || 0) - (after || 0)) < 1e-9;
+  if (same) return <span>{format(before)}</span>;
+  return (
+    <span>
+      <span className="text-muted-foreground">{format(before)}</span>
+      {' → '}
+      <span className={`font-semibold ${after > before ? 'text-orange-700' : 'text-green-700'}`}>{format(after)}</span>
+    </span>
+  );
+};
+
+// Everyone's lead and second-chair load before and after, by role (P10)
+const LoadComparison = ({ groups, year }) => (
+  <Card>
+    <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+        <Users className="h-5 w-5" />
+        Load before and after
+      </CardTitle>
+      <p className="text-sm text-muted-foreground">
+        Each person&apos;s lead book and second-chair seats now and with the proposals applied. The lead carries a
+        client&apos;s full effort and the second chair {Math.round(SECOND_CHAIR_EFFORT_SHARE * 100)}% of it; the people
+        leaving end at zero.
+      </p>
+    </CardHeader>
+    <CardContent>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead className="text-right">Leads</TableHead>
+            <TableHead className="text-right">Lead revenue {year}</TableHead>
+            <TableHead className="text-right">Lead effort</TableHead>
+            <TableHead className="text-right">Second chair on</TableHead>
+            <TableHead className="text-right">Second-chair revenue {year}</TableHead>
+            <TableHead className="text-right">Second-chair effort</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {groups.map((group) => (
+            <React.Fragment key={group.role}>
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={7} className="pt-4 text-sm font-semibold">{group.label}</TableCell>
+              </TableRow>
+              {group.rows.map((r) => (
+                <TableRow key={r.person.id} className={r.departing ? 'bg-orange-50' : undefined}>
+                  <TableCell className="font-medium">
+                    {r.person.name}
+                    {r.departing && <LeavingBadge />}
+                  </TableCell>
+                  <TableCell className={num}><BeforeAfter before={r.before.lead.count} after={r.after.lead.count} /></TableCell>
+                  <TableCell className={num}><BeforeAfter before={r.before.lead.revenue} after={r.after.lead.revenue} format={formatMoney} /></TableCell>
+                  <TableCell className={num}><BeforeAfter before={r.before.lead.effort} after={r.after.lead.effort} format={formatEffort} /></TableCell>
+                  <TableCell className={num}><BeforeAfter before={r.before.second.count} after={r.after.second.count} /></TableCell>
+                  <TableCell className={num}><BeforeAfter before={r.before.second.revenue} after={r.after.second.revenue} format={formatMoney} /></TableCell>
+                  <TableCell className={num}><BeforeAfter before={r.before.second.effort} after={r.after.second.effort} format={formatEffort} /></TableCell>
+                </TableRow>
+              ))}
+            </React.Fragment>
+          ))}
+        </TableBody>
+      </Table>
+    </CardContent>
+  </Card>
+);
 
 // Impact Heat Map Component
 const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
@@ -204,8 +384,8 @@ const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
   );
 };
 
-// Financial Impact Summary Component
-const FinancialImpactSummary = ({ impactData, affectedClients }) => {
+// Risk by practice area and succession risk, for the affected clients
+const RiskSummary = ({ affectedClients }) => {
   const riskGroups = groupClientsBySuccessionRisk(affectedClients);
   
   const practiceAreaBreakdown = affectedClients.reduce((acc, client) => {
@@ -234,59 +414,10 @@ const FinancialImpactSummary = ({ impactData, affectedClients }) => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Calculator className="h-5 w-5" />
-          Financial Impact Analysis
+          Risk on the Affected Clients
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Key Metrics Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-blue-700">Total Revenue at Risk</p>
-                <p className="text-2xl font-bold text-blue-900">
-                  ${impactData.totalRevenueAtRisk.toLocaleString()}
-                </p>
-              </div>
-              <DollarSign className="h-8 w-8 text-blue-500" />
-            </div>
-          </div>
-
-          <div className="bg-red-50 rounded-lg p-4 border border-red-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-red-700">High Risk Clients</p>
-                <p className="text-2xl font-bold text-red-900">{riskGroups.high.length}</p>
-              </div>
-              <AlertTriangle className="h-8 w-8 text-red-500" />
-            </div>
-          </div>
-
-          <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-orange-700">Retention Probability</p>
-                <p className="text-2xl font-bold text-orange-900">
-                  {(impactData.estimatedRetentionRate * 100).toFixed(1)}%
-                </p>
-              </div>
-              <TrendingDown className="h-8 w-8 text-orange-500" />
-            </div>
-          </div>
-
-          <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-purple-700">Projected Loss</p>
-                <p className="text-2xl font-bold text-purple-900">
-                  ${impactData.projectedRevenueLoss.toLocaleString()}
-                </p>
-              </div>
-              <TrendingDown className="h-8 w-8 text-purple-500" />
-            </div>
-          </div>
-        </div>
-
         {/* Practice Area Vulnerability */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
@@ -441,96 +572,23 @@ const ClientCategorization = ({ affectedClients, onClientSelect }) => {
   );
 };
 
-// Main Impact Analysis Workbench Component
-const ImpactAnalysisWorkbench = ({ onProceedToStage2 }) => {
-  const { clients, partners, fetchPartners } = usePortfolioStore();
-  const [selectedPartners, setSelectedPartners] = useState([]);
+// Main Impact Analysis Workbench Component. The scenario (who is leaving, the
+// partner's picks) is in the store; SuccessionScenario runs the departure
+// engine and passes its model in.
+const ImpactAnalysisWorkbench = ({
+  departure,
+  people,
+  departingIds,
+  year,
+  onToggleDeparting,
+  onClearDeparting,
+  onProceedToStage2
+}) => {
   const [selectedClient, setSelectedClient] = useState(null);
-  
-  // Fetch partners on mount
-  React.useEffect(() => {
-    fetchPartners();
-  }, [fetchPartners]);
-
-  // Calculate partners with client data
-  const partnersWithData = useMemo(() => {
-    return partners.map(partner => {
-      const partnerClients = clients.filter(client => client.primary_lobbyist === partner.name);
-      return {
-        ...partner,
-        clientCount: partnerClients.length,
-        totalRevenue: partnerClients.reduce((sum, client) => 
-          sum + usePortfolioStore.getState().getClientRevenue(client), 0
-        )
-      };
-    });
-  }, [partners, clients]);
-
-  // Calculate affected clients based on selected partners
-  const affectedClients = useMemo(() => {
-    const selectedPartnerNames = selectedPartners.map(id => 
-      partnersWithData.find(p => p.id === id)?.name
-    ).filter(Boolean);
-
-    return clients.filter(client => 
-      selectedPartnerNames.includes(client.primary_lobbyist)
-    );
-  }, [selectedPartners, partnersWithData, clients]);
-
-  // Calculate impact preview data
-  const impactPreview = useMemo(() => {
-    const totalRevenue = affectedClients.reduce((sum, client) => 
-      sum + usePortfolioStore.getState().getClientRevenue(client), 0
-    );
-    const highRiskCount = affectedClients.filter(client => client.successionRisk > 6).length;
-    const practiceAreas = [...new Set(
-      affectedClients.flatMap(client => client.practiceArea || ['Other'])
-    )].length;
-
-    return {
-      affectedClients: affectedClients.length,
-      revenueAtRisk: totalRevenue,
-      highRiskClients: highRiskCount,
-      practiceAreas
-    };
-  }, [affectedClients]);
-
-  // Calculate detailed impact data
-  const impactData = useMemo(() => {
-    const totalRevenueAtRisk = affectedClients.reduce((sum, client) => 
-      sum + usePortfolioStore.getState().getClientRevenue(client), 0
-    );
-    
-    // Calculate estimated retention rate based on relationship strength and succession risk
-    const avgRelationshipStrength = affectedClients.reduce((sum, client) => 
-      sum + (client.relationshipStrength || 5), 0) / Math.max(affectedClients.length, 1);
-    
-    const avgSuccessionRisk = affectedClients.reduce((sum, client) => 
-      sum + (client.successionRisk || 5), 0) / Math.max(affectedClients.length, 1);
-    
-    // Retention rate calculation: higher relationship strength = better retention, higher risk = worse retention
-    const estimatedRetentionRate = Math.min(0.95, Math.max(0.4, 
-      (avgRelationshipStrength / 10) * (1 - (avgSuccessionRisk - 1) / 9 * 0.4)
-    ));
-    
-    const projectedRevenueLoss = totalRevenueAtRisk * (1 - estimatedRetentionRate);
-
-    return {
-      totalRevenueAtRisk,
-      estimatedRetentionRate,
-      projectedRevenueLoss,
-      avgSuccessionRisk,
-      avgRelationshipStrength
-    };
-  }, [affectedClients]);
-
-  const handlePartnerToggle = (partnerId) => {
-    setSelectedPartners(prev => 
-      prev.includes(partnerId) 
-        ? prev.filter(id => id !== partnerId)
-        : [...prev, partnerId]
-    );
-  };
+  const rowsById = new Map(departure.before.rows.map((r) => [String(r.person.id), r]));
+  const affectedClients = departure.decisions.map((d) => d.client);
+  const highRisk = affectedClients.filter((client) => client.successionRisk > 6).length;
+  const { totals } = departure;
 
   const handleClientClick = (data) => {
     if (data && data.client) {
@@ -538,15 +596,13 @@ const ImpactAnalysisWorkbench = ({ onProceedToStage2 }) => {
     }
   };
 
-  const handleProceedToStage2 = () => {
-    const analysisData = {
-      selectedPartners,
-      affectedClients,
-      impactData,
-      impactPreview
-    };
-    onProceedToStage2(analysisData);
-  };
+  const tiles = [
+    ['Clients affected', totals.clients],
+    [`Revenue ${year} on them`, formatMoney(totals.revenue)],
+    ['New leads needed', totals.newLeads],
+    ['Second-chair seats to fill', totals.seatsToFill],
+    ['High succession risk', highRisk],
+  ];
 
   return (
     <div className="space-y-6">
@@ -563,36 +619,65 @@ const ImpactAnalysisWorkbench = ({ onProceedToStage2 }) => {
             </Badge>
           </CardTitle>
           <p className="text-gray-600">
-            Analyze the potential impact of partner departures across your client portfolio. 
-            Select departing partners to see real-time impact calculations and risk analysis.
+            Mark who may leave to see the clients that need a new lead or second chair, the proposed replacements,
+            and everyone&apos;s load before and after.
           </p>
         </CardHeader>
       </Card>
 
-      {/* Partner Selection */}
-      <PartnerSelectionPanel
-        partners={partnersWithData}
-        selectedPartners={selectedPartners}
-        onPartnerToggle={handlePartnerToggle}
-        impactPreview={impactPreview}
+      <WhoIsLeavingPanel
+        people={people}
+        departingIds={departingIds}
+        rowsById={rowsById}
+        onToggle={onToggleDeparting}
+        onClear={onClearDeparting}
       />
 
-      {/* Analysis Results - Only show when partners are selected */}
-      {selectedPartners.length > 0 && affectedClients.length > 0 && (
-        <>
-          {/* Financial Impact Summary */}
-          <FinancialImpactSummary
-            impactData={impactData}
-            affectedClients={affectedClients}
-          />
+      {departingIds.length > 0 && departure.decisions.length === 0 && (
+        <Alert>
+          <AlertDescription>
+            {departure.departing.map((p) => p.name).join(', ') || 'Nobody marked'} {departure.departing.length === 1 ? 'holds' : 'hold'} no
+            seat on any client: nobody&apos;s clients change.
+          </AlertDescription>
+        </Alert>
+      )}
 
-          {/* Impact Heat Map */}
+      {departure.decisions.length > 0 && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {tiles.map(([label, value]) => (
+              <Card key={label}>
+                <CardContent className="pt-4 pb-4">
+                  <div className="text-xs text-muted-foreground">{label}</div>
+                  <div className="text-xl font-semibold tabular-nums">{value}</div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {departure.unresolved.length > 0 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                No active partner who is staying can lead{' '}
+                {departure.unresolved.map((d) => formatClientName(d.client.name)).join(', ')}. The scenario leaves{' '}
+                {departure.unresolved.length === 1 ? 'it' : 'them'} without a lead; add a partner on the People list or
+                keep someone from leaving.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <AffectedClientsTable decisions={departure.decisions} year={year} onClientSelect={setSelectedClient} />
+
+          <LoadComparison groups={departure.groups} year={year} />
+
+          <RiskSummary affectedClients={affectedClients} />
+
           <ImpactHeatMap
             affectedClients={affectedClients}
             onClientClick={handleClientClick}
           />
 
-          {/* Client Categorization */}
           <ClientCategorization
             affectedClients={affectedClients}
             onClientSelect={setSelectedClient}
@@ -603,12 +688,12 @@ const ImpactAnalysisWorkbench = ({ onProceedToStage2 }) => {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="font-medium text-green-800">Ready for Stage 2: Mitigation Planning</h4>
+                  <h4 className="font-medium text-green-800">Ready for Stage 2: Client Review</h4>
                   <p className="text-sm text-green-600 mt-1">
-                    Impact analysis complete. Proceed to develop mitigation strategies for the identified risks.
+                    Review each affected client&apos;s transition and generate plans.
                   </p>
                 </div>
-                <Button onClick={handleProceedToStage2} className="bg-green-600 hover:bg-green-700">
+                <Button onClick={onProceedToStage2} className="bg-green-600 hover:bg-green-700">
                   Proceed to Stage 2
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>
@@ -619,15 +704,15 @@ const ImpactAnalysisWorkbench = ({ onProceedToStage2 }) => {
       )}
 
       {/* Empty State */}
-      {selectedPartners.length === 0 && (
+      {departingIds.length === 0 && (
         <Card>
           <CardContent className="pt-12 pb-12">
             <div className="text-center space-y-4">
               <Users className="h-16 w-16 text-gray-400 mx-auto" />
               <div>
-                <h3 className="text-lg font-semibold text-gray-700">Select Partners to Begin Analysis</h3>
+                <h3 className="text-lg font-semibold text-gray-700">Mark Who Is Leaving to Begin</h3>
                 <p className="text-gray-500">
-                  Choose the partners who may be departing to see the potential impact on your client portfolio.
+                  Choose the people who may leave to see the clients that need a decision and the load it moves.
                 </p>
               </div>
             </div>
