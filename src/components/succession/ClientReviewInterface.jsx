@@ -98,7 +98,7 @@ const SeatPicker = ({ seat, side, onPick, clientId }) => {
           {seat === 'second' && <option value="">None</option>}
           {side.candidates.map((c) => (
             <option key={c.person.id} value={idOf(c.person)}>
-              {c.person.name}: {seat === 'second' && !side.vacated && idOf(c.person) === idOf(side.before) ? 'stays in the seat' : candidateReason(c, seat)}
+              {c.person.name}: {seat === 'second' && !side.vacated && idOf(c.person) === idOf(side.before) ? 'stays in the seat' : candidateReason(c)}
             </option>
           ))}
         </NativeSelect>
