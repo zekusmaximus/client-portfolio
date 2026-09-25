@@ -470,7 +470,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -816,5 +816,71 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     const done = await call('PUT', `/api/people/${kevin.id}`, { active: false });
     assert.equal(done.status, 200, JSON.stringify(done.body));
     assert.equal(done.body.person.active, false);
+  });
+
+  // Phase 6 (docs/plans/people-and-second-chair.md, section 9, P9): the
+  // associate split writes one client's second chair and nothing else
+  test('Phase 6: PUT /api/data/clients/:id/second-chair sets one seat, checks P3 and the seat the page saw, and nothing else changes', async () => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.ok(health.features.includes('second-chair-assign'));
+
+    const { rows: [target] } = await db.query(`
+      SELECT c.id::text AS id, c.name, lp.name AS lead, c.lead_id
+        FROM clients c JOIN people lp ON lp.id = c.lead_id
+       WHERE c.second_chair_id IS NULL AND lp.active
+       ORDER BY c.name LIMIT 1`);
+    assert.ok(target, 'a client with a lead and no second chair');
+    const mary = (await db.query("SELECT id FROM people WHERE name = 'Mary O''Brien'")).rows[0].id;
+    const kevin = (await db.query("SELECT id FROM people WHERE name = 'Kevin'")).rows[0].id;
+    const assign = (id, body) => call('PUT', `/api/data/clients/${id}/second-chair`, body);
+
+    // Everything but the seat, its legacy text and the timestamp
+    const rest = async () => ({
+      clients: (await db.query(`
+        SELECT to_jsonb(c) - 'second_chair_id' - 'lobbyist_team' - 'updated_at' AS row FROM clients c ORDER BY name`)).rows,
+      others: (await db.query('SELECT to_jsonb(c) AS row FROM clients c WHERE c.id::text <> $1 ORDER BY name', [target.id])).rows,
+      revenues: (await db.query('SELECT to_jsonb(r) AS row FROM client_revenues r ORDER BY client_id::text, year')).rows,
+      people: (await db.query('SELECT * FROM people ORDER BY id')).rows,
+    });
+    const before = await rest();
+
+    let res = await assign(target.id, { second_chair_id: mary, expected_second_chair_id: null });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.client.secondChair.name, "Mary O'Brien");
+    assert.equal(String(res.body.client.id), target.id);
+    let row = await clientRow(target.name);
+    assert.equal(row.second_chair, "Mary O'Brien");
+    assert.deepEqual(row.lobbyist_team, [target.lead, "Mary O'Brien"], 'the legacy text follows the seat');
+    assert.deepEqual(await rest(), before, 'nothing but the seat changed');
+
+    // The seat changed since the page loaded: refused, nothing written
+    res = await assign(target.id, { second_chair_id: mary, expected_second_chair_id: null });
+    assert.deepEqual([res.status, res.body.error], [409, "This client's second chair changed since the page loaded. Reload the page and try again."]);
+
+    // P3: never the lead, never someone inactive or unknown
+    res = await assign(target.id, { second_chair_id: target.lead_id, expected_second_chair_id: mary });
+    assert.equal(res.status, 400);
+    assert.deepEqual(res.body.details, [{ field: 'second_chair_id', message: 'The second chair cannot be the lead.' }]);
+    res = await assign(target.id, { second_chair_id: kevin, expected_second_chair_id: mary });
+    assert.deepEqual([res.status, res.body.details[0].message], [400, 'The second chair must be an active person on the People list.']);
+    res = await assign(target.id, { second_chair_id: 999999, expected_second_chair_id: mary });
+    assert.equal(res.status, 400);
+    assert.equal((await clientRow(target.name)).second_chair, "Mary O'Brien", 'refusals write nothing');
+
+    // A malformed request, and clients that do not exist (either id type)
+    res = await assign(target.id, { second_chair_id: mary });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /expected_second_chair_id/);
+    for (const missing of ['999999', '3f2b8c1e-0000-4000-8000-000000000000', 'not-an-id']) {
+      res = await assign(missing, { second_chair_id: mary, expected_second_chair_id: null });
+      assert.equal(res.status, 404, missing);
+    }
+
+    // Clearing the seat
+    res = await assign(target.id, { second_chair_id: null, expected_second_chair_id: mary });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    row = await clientRow(target.name);
+    assert.deepEqual([row.second_chair_id, row.lobbyist_team], [null, [target.lead]]);
+    assert.deepEqual(await rest(), before);
   });
 });

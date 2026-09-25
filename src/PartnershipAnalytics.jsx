@@ -12,6 +12,7 @@ import { AlertTriangle, Download } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import LoadTable from './components/LoadTable';
 import PersonLoadSheet from './components/PersonLoadSheet';
+import AssociateSplit from './components/AssociateSplit';
 import { partnershipModel, bookYears, formatMoney, SECOND_CHAIR_EFFORT_SHARE } from './utils/load';
 import { revenueForYear } from './utils/revenue';
 import { exportPartnershipReport, exportLoadCsv } from './utils/partnershipExports';
@@ -20,6 +21,8 @@ import { exportPartnershipReport, exportLoadCsv } from './utils/partnershipExpor
 // partners' lead books and everyone's second-chair load, from the People list
 // and each client's lead and second chair, each against the average of the
 // active people in the same role (P10). Departures are modelled on Scenarios.
+// The associate split (Phase 6) proposes second chairs for the clients that
+// have none and writes each one a partner accepts.
 const SHARE_PERCENT = Math.round(SECOND_CHAIR_EFFORT_SHARE * 100);
 
 const PartnershipAnalytics = () => {
@@ -156,6 +159,8 @@ const PartnershipAnalytics = () => {
           ))}
         </CardContent>
       </Card>
+
+      <AssociateSplit people={people} clients={clients} revenueOf={revenueOf} year={reportingYear} />
 
       <PersonLoadSheet
         row={selectedRow}
