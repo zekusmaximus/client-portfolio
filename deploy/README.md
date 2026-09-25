@@ -369,6 +369,12 @@ digits, `_` and `-`; passwords at least 8 characters with an upper-case letter,
 a lower-case letter, a digit and a special character. Avoid `"` in passwords
 typed on a command line.
 
+An account is a sign-in, not a place in the book. Who can lead or
+second-chair a client (the six partners, the emeritus, the associates) is the
+app's People list, changed from the header's **People** button; adding an
+account adds nobody to it, and associates get no account
+(`docs/plans/people-and-second-chair.md`, P1 and P2).
+
 A partner changes their own password from the header's **Change password**
 button. The scripts below are for adding a partner, for a forgotten password
 and for removing an account (7.3). Neither a reset nor a deletion ends sessions

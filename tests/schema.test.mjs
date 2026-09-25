@@ -105,11 +105,13 @@ async function counts(db) {
   return row;
 }
 
-// Foreign keys on clients (there is one: user_id).
+// Foreign keys from clients to users (there is one: user_id). The keys to
+// people are covered by the people suite below.
 async function clientKeys(db) {
   const { rows } = await db.query(`
     SELECT oid::bigint::text AS oid, conname, pg_get_constraintdef(oid) AS definition
-      FROM pg_constraint WHERE contype = 'f' AND conrelid = 'clients'::regclass`);
+      FROM pg_constraint
+     WHERE contype = 'f' AND conrelid = 'clients'::regclass AND confrelid = 'users'::regclass`);
   return rows;
 }
 
@@ -237,6 +239,141 @@ describe('init-db.sql on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_S
       assert.equal(result.code, 1);
       assert.match(result.stderr, /Refused: this is the last account/);
       assert.deepEqual(await counts(db), { users: 1, clients: 5, revenues: 10 });
+    });
+  });
+});
+
+// --- people (docs/plans/people-and-second-chair.md, P1-P5) -----------------
+
+// init-db.sql as it was before the people section: everything above its first
+// line. Applying it to a new database gives a pre-plan schema; applying it to a
+// migrated one is what a Render rollback to pre-plan code does at start.
+const PEOPLE_MARKER = '-- People in the book';
+const prePeopleSql = initSql.slice(0, initSql.indexOf(PEOPLE_MARKER));
+
+const SEEDED = [
+  ['Brendan', 'partner'], ['Jay', 'emeritus'], ['Jeff', 'partner'], ['Joe', 'partner'],
+  ['Kevin', 'partner'], ['Mike', 'partner'], ['Paula', 'partner'],
+];
+
+async function roster(db) {
+  const { rows } = await db.query('SELECT id, name, role, active FROM people ORDER BY name');
+  return rows;
+}
+
+const personId = async (db, name) =>
+  (await db.query('SELECT id FROM people WHERE name = $1', [name])).rows[0].id;
+
+// Resolves to the SQLSTATE the statement fails with, or null if it succeeds.
+async function sqlState(db, sql, params) {
+  await db.query('SAVEPOINT s');
+  try {
+    await db.query(sql, params);
+    await db.query('RELEASE SAVEPOINT s');
+    return null;
+  } catch (error) {
+    await db.query('ROLLBACK TO SAVEPOINT s');
+    return error.code;
+  }
+}
+
+test('init-db.sql still contains the people section marker the rollback tests cut at', () => {
+  assert.ok(initSql.indexOf(PEOPLE_MARKER) > 0);
+  assert.doesNotMatch(prePeopleSql, /people/i);
+});
+
+describe('people on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  test('a new database has the seven people, and a second start adds nobody', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      const first = await roster(db);
+      assert.deepEqual(first.map((p) => [p.name, p.role]), SEEDED);
+      assert.ok(first.every((p) => p.active));
+
+      await applyInit(db);
+      assert.deepEqual(await roster(db), first);
+    });
+  });
+
+  test('a rename and a new associate survive a restart; the seed does not return', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await db.query("UPDATE people SET name = 'Joseph' WHERE name = 'Joe'");
+      await db.query("INSERT INTO people (name, role) VALUES ('Anna', 'associate')");
+      await applyInit(db);
+      const names = (await roster(db)).map((p) => p.name);
+      assert.ok(names.includes('Joseph') && names.includes('Anna'));
+      assert.ok(!names.includes('Joe'));
+      assert.equal(names.length, 8);
+    });
+  });
+
+  test('names are unique regardless of case; roles are limited to the three', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await db.query('BEGIN');
+      assert.equal(await sqlState(db, "INSERT INTO people (name, role) VALUES ('kevin', 'associate')"), '23505');
+      assert.equal(await sqlState(db, "INSERT INTO people (name, role) VALUES ('Anna', 'admin')"), '23514');
+      assert.equal(await sqlState(db, "INSERT INTO people (name, role) VALUES ('Anna', 'associate')"), null);
+      await db.query('ROLLBACK');
+    });
+  });
+
+  test('a client refuses an unknown person and a second chair equal to the lead', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      const kevin = await personId(db, 'Kevin');
+      const jay = await personId(db, 'Jay');
+      await db.query('BEGIN');
+      assert.equal(await sqlState(db, 'INSERT INTO clients (name, lead_id) VALUES ($1, 999999)', ['X']), '23503');
+      assert.equal(await sqlState(db, 'INSERT INTO clients (name, second_chair_id) VALUES ($1, 999999)', ['X']), '23503');
+      assert.equal(await sqlState(db, 'INSERT INTO clients (name, originator_id) VALUES ($1, 999999)', ['X']), '23503');
+      assert.equal(await sqlState(db,
+        'INSERT INTO clients (name, lead_id, second_chair_id) VALUES ($1, $2, $2)', ['X', kevin]), '23514');
+      assert.equal(await sqlState(db,
+        'INSERT INTO clients (name, lead_id, second_chair_id, originator_id, originator_is_firm) VALUES ($1, $2, $3, $3, true)',
+        ['Y', kevin, jay]), null);
+      assert.equal(await sqlState(db, 'DELETE FROM people WHERE id = $1', [jay]), '23503',
+        'a person someone points at cannot be deleted');
+      await db.query('ROLLBACK');
+    });
+  });
+
+  test('a pre-plan database migrates with every client and revenue row intact', async () => {
+    await withDatabase(async (db) => {
+      await db.query(prePeopleSql);
+      await seed(db);
+      await db.query("UPDATE clients SET primary_lobbyist = 'Steve', lobbyist_team = ARRAY['Fritz', 'Zeke'], client_originator = 'Steve'");
+      const before = await counts(db);
+
+      await applyInit(db);
+      assert.deepEqual(await counts(db), before);
+      assert.equal((await roster(db)).length, 7);
+      const { rows } = await db.query(`
+        SELECT DISTINCT primary_lobbyist, lobbyist_team, client_originator,
+               lead_id, second_chair_id, originator_id, originator_is_firm FROM clients`);
+      assert.deepEqual(rows, [{
+        primary_lobbyist: 'Steve', lobbyist_team: ['Fritz', 'Zeke'], client_originator: 'Steve',
+        lead_id: null, second_chair_id: null, originator_id: null, originator_is_firm: false,
+      }]);
+    });
+  });
+
+  test('a rollback start (the pre-plan file on a migrated database) succeeds and keeps the people data', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seed(db);
+      const kevin = await personId(db, 'Kevin');
+      const jay = await personId(db, 'Jay');
+      await db.query('UPDATE clients SET lead_id = $1, second_chair_id = $2', [kevin, jay]);
+
+      await db.query(prePeopleSql);
+      const { rows } = await db.query('SELECT DISTINCT lead_id, second_chair_id FROM clients');
+      assert.deepEqual(rows, [{ lead_id: kevin, second_chair_id: jay }]);
+      assert.equal((await roster(db)).length, 7);
+
+      await applyInit(db);
+      assert.equal((await roster(db)).length, 7);
     });
   });
 });

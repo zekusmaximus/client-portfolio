@@ -102,6 +102,7 @@ app.use('/api/scenarios', scenariosRouter);
 // API Routes (the page itself is served by Netlify, not by Express)
 app.use('/api/claude', require('./claude.cjs').router);
 app.use('/api/data', require('./data.cjs'));
+app.use('/api/people', require('./routes/people.cjs'));
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {

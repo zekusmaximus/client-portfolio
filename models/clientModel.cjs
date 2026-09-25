@@ -1,7 +1,14 @@
 const db = require('../db.cjs');
 const { calculateStrategicScores, revenueObjectFromRows } = require('../utils/strategic.cjs');
+const {
+  CLIENT_PEOPLE_COLUMNS,
+  CLIENT_PEOPLE_JOINS,
+  CLIENT_PEOPLE_GROUP_BY,
+  withPeopleFields,
+} = require('../utils/people.cjs');
 
-/* List all clients, each with nested revenues array */
+/* List all clients, each with nested revenues array and its people (lead,
+   second chair, originator; the legacy people fields filled from them) */
 exports.listWithRevenues = async () => {
   const { rows } = await db.query(
     `SELECT c.*, jsonb_agg(
@@ -11,13 +18,15 @@ exports.listWithRevenues = async () => {
            'revenue_amount', r.revenue_amount,
            'contract_end_date', r.contract_end_date
          ) ORDER BY r.year
-       ) AS revenues
+       ) AS revenues,
+       ${CLIENT_PEOPLE_COLUMNS}
      FROM clients c
      LEFT JOIN client_revenues r ON r.client_id = c.id
-     GROUP BY c.id
+     ${CLIENT_PEOPLE_JOINS}
+     GROUP BY c.id, ${CLIENT_PEOPLE_GROUP_BY}
      ORDER BY c.created_at DESC`
   );
-  return rows;
+  return rows.map(withPeopleFields);
 };
 
 /* Get single client with revenues */
@@ -30,14 +39,16 @@ exports.get = async (clientId) => {
            'revenue_amount', r.revenue_amount,
            'contract_end_date', r.contract_end_date
          ) ORDER BY r.year
-       ) AS revenues
+       ) AS revenues,
+       ${CLIENT_PEOPLE_COLUMNS}
      FROM clients c
      LEFT JOIN client_revenues r ON r.client_id = c.id
+     ${CLIENT_PEOPLE_JOINS}
      WHERE c.id = $1
-     GROUP BY c.id`,
+     GROUP BY c.id, ${CLIENT_PEOPLE_GROUP_BY}`,
     [clientId]
   );
-  return rows[0];
+  return rows[0] ? withPeopleFields(rows[0]) : rows[0];
 };
 
 /* ---------- Stage 4: Metrics helpers ---------- */

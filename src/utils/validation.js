@@ -27,12 +27,15 @@ export const VALIDATION_RULES = {
     }
   },
   
+  // Two vocabularies until Tier 2 merges them: the CSV import derives IF, P, D
+  // and H from the contract period, and the form also offers the four manual
+  // statuses. Both must validate, or no imported client could be edited.
   status: {
     required: true,
-    allowedValues: ['Active', 'Prospect', 'Inactive', 'Former'],
+    allowedValues: ['IF', 'P', 'D', 'H', 'Active', 'Prospect', 'Inactive', 'Former'],
     errorMessages: {
       required: 'Status is required',
-      allowedValues: 'Status must be one of: Active, Prospect, Inactive, Former'
+      allowedValues: 'Choose a status from the list'
     }
   },
   

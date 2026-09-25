@@ -12,6 +12,15 @@ const {
 } = require('./clientAnalyzer.cjs');
 const { extractRevenueYears, headerKeys, planRevenueWrites } = require('./utils/csvImport.cjs');
 const { revenueObjectFromRows } = require('./utils/strategic.cjs');
+const {
+  parseId,
+  validateAssignment,
+  legacyText,
+  CLIENT_PEOPLE_COLUMNS,
+  CLIENT_PEOPLE_JOINS,
+  CLIENT_PEOPLE_GROUP_BY,
+  withPeopleFields
+} = require('./utils/people.cjs');
 
 // Apply authentication middleware to all routes
 router.use(auth);
@@ -585,47 +594,78 @@ router.post('/analytics', (req, res) => {
   }
 });
 
+// Every client response comes from this one query: the client, its revenue
+// rows and its three people (lead, second chair, originator). `where` is '' or
+// a WHERE clause on c.
+const clientsQuery = (where = '') => `
+  SELECT
+    c.*,
+    COALESCE(
+      jsonb_agg(
+        jsonb_build_object(
+          'year', r.year,
+          'revenue_amount', r.revenue_amount
+        ) ORDER BY r.year
+      ) FILTER (WHERE r.id IS NOT NULL),
+      '[]'
+    ) AS revenues,
+    ${CLIENT_PEOPLE_COLUMNS}
+  FROM clients c
+  LEFT JOIN client_revenues r ON r.client_id = c.id
+  ${CLIENT_PEOPLE_JOINS}
+  ${where}
+  GROUP BY c.id, ${CLIENT_PEOPLE_GROUP_BY}
+  ORDER BY c.created_at DESC
+`;
+
+// A joined client row in the shape the frontend expects: people nested and the
+// legacy people fields filled from them (withPeopleFields), revenue by year for
+// every row on file (year-agnostic), and the camelCase names the views read.
+function toApiClient(row) {
+  const client = withPeopleFields(row);
+  return {
+    ...client,
+    revenue: revenueObjectFromRows(client.revenues),
+    practiceArea: Array.isArray(client.practice_area) ? client.practice_area : [],
+    relationshipStrength: client.relationship_strength || 5,
+    conflictRisk: client.conflict_risk || 'Medium',
+    renewalProbability: client.renewal_probability || 0.7,
+    strategicFitScore: client.strategic_fit_score || 5,
+    timeCommitment: client.time_commitment || 40,
+  };
+}
+
+// Check a create or update's lead, second chair and originator against the
+// People list, inside the write's transaction. The people it names are read
+// FOR SHARE, so routes/people.cjs cannot deactivate one or move a lead out of
+// the partner role until this write commits.
+async function resolveAssignment(conn, body) {
+  const ids = [body.lead_id, body.second_chair_id, body.originator_id]
+    .map(parseId)
+    .filter(Number.isInteger);
+  const { rows: people } = ids.length > 0
+    ? await conn.query('SELECT id, name, role, active FROM people WHERE id = ANY($1::int[]) FOR SHARE', [ids])
+    : { rows: [] };
+  const result = validateAssignment(body, people);
+  return {
+    ...result,
+    legacy: legacyText({ ...result, originatorIsFirm: result.value.originator_is_firm })
+  };
+}
+
+const assignmentRejected = (errors) => ({
+  success: false,
+  error: 'Validation failed',
+  details: errors
+});
+
 // GET /api/data/clients - Get all clients with aggregated revenue data
 router.get('/clients', async (req, res) => {
   try {
-    const { rows } = await db.query(`
-      SELECT 
-        c.*,
-        COALESCE(
-          jsonb_agg(
-            jsonb_build_object(
-              'year', r.year,
-              'revenue_amount', r.revenue_amount
-            ) ORDER BY r.year
-          ) FILTER (WHERE r.id IS NOT NULL),
-          '[]'
-        ) AS revenues
-      FROM clients c
-      LEFT JOIN client_revenues r ON r.client_id = c.id
-      GROUP BY c.id
-      ORDER BY c.created_at DESC
-    `);
-    
-    // Transform database fields to frontend-expected field names
-    const transformedClients = rows.map(client => {
-      // Revenue by year for every row on file (year-agnostic)
-      const revenue = revenueObjectFromRows(client.revenues);
+    const { rows } = await db.query(clientsQuery());
 
-      return {
-        ...client,
-        revenue,
-        // Transform database field names to frontend-expected names
-        practiceArea: Array.isArray(client.practice_area) ? client.practice_area : [],
-        relationshipStrength: client.relationship_strength || 5,
-        conflictRisk: client.conflict_risk || 'Medium',
-        renewalProbability: client.renewal_probability || 0.7,
-        strategicFitScore: client.strategic_fit_score || 5,
-        timeCommitment: client.time_commitment || 40,
-      };
-    });
-    
     // Calculate strategic scores for all clients before returning
-    const clientsWithScores = calculateStrategicScores(transformedClients);
+    const clientsWithScores = calculateStrategicScores(rows.map(toApiClient));
     
     res.json({
       success: true,
@@ -651,33 +691,43 @@ router.post('/clients', async (req, res) => {
     // renewal_probability) and the phantom strategic_fit_score are retired: no
     // longer written here. They remain in the table (nullable / defaulted) until
     // a later V4 migration drops them, so existing rows are untouched.
+    // People come as ids (lead_id, second_chair_id, originator_id,
+    // originator_is_firm); the legacy primary_lobbyist, client_originator and
+    // lobbyist_team are written from them and ignored in the body.
     const {
       name,
       status,
       practice_area,
       conflict_risk,
       notes,
-      primary_lobbyist,
-      client_originator,
-      lobbyist_team,
       interaction_frequency,
       stickiness = null,
       high_maintenance = false,
       revenues = []
     } = req.body;
 
+    const assignment = await resolveAssignment(await client, req.body);
+    if (assignment.errors.length > 0) {
+      await (await client).query('ROLLBACK');
+      return res.status(400).json(assignmentRejected(assignment.errors));
+    }
+    const people = assignment.value;
+    const legacy = assignment.legacy;
+
     // Insert client record
     const { rows: [newClient] } = await (await client).query(`
       INSERT INTO clients (
         name, status, practice_area, conflict_risk, notes, primary_lobbyist,
         client_originator, lobbyist_team, interaction_frequency,
-        stickiness, high_maintenance
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        stickiness, high_maintenance,
+        lead_id, second_chair_id, originator_id, originator_is_firm
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
-      name, status, practice_area, conflict_risk, notes, primary_lobbyist,
-      client_originator, lobbyist_team, interaction_frequency,
-      stickiness, high_maintenance
+      name, status, practice_area, conflict_risk, notes, legacy.primary_lobbyist,
+      legacy.client_originator, legacy.lobbyist_team, interaction_frequency,
+      stickiness, high_maintenance,
+      people.lead_id, people.second_chair_id, people.originator_id, people.originator_is_firm
     ]);
 
     // Insert revenue records in bulk
@@ -699,45 +749,11 @@ router.post('/clients', async (req, res) => {
 
     await (await client).query('COMMIT');
     
-    // Fetch the complete client with revenues
-    const { rows } = await db.query(`
-      SELECT 
-        c.*,
-        COALESCE(
-          jsonb_agg(
-            jsonb_build_object(
-              'year', r.year,
-              'revenue_amount', r.revenue_amount
-            ) ORDER BY r.year
-          ) FILTER (WHERE r.id IS NOT NULL),
-          '[]'
-        ) AS revenues
-      FROM clients c
-      LEFT JOIN client_revenues r ON r.client_id = c.id
-      WHERE c.id = $1
-      GROUP BY c.id
-    `, [newClient.id]);
-
-    // Transform database fields to frontend-expected field names
-    const transformedClients = rows.map(client => {
-      // Revenue by year for every row on file (year-agnostic)
-      const revenue = revenueObjectFromRows(client.revenues);
-
-      return {
-        ...client,
-        revenue,
-        // Transform database field names to frontend-expected names
-        practiceArea: client.practice_area || [],
-        relationshipStrength: client.relationship_strength || 5,
-        conflictRisk: client.conflict_risk || 'Medium',
-        renewalProbability: client.renewal_probability || 0.7,
-        strategicFitScore: client.strategic_fit_score || 5,
-        timeCommitment: client.time_commitment || 40,
-      };
-    });
+    // Fetch the complete client with revenues and people
+    const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [newClient.id]);
 
     // Calculate strategic scores for the new client
-    const clientsWithScores = calculateStrategicScores(transformedClients);
+    const clientsWithScores = calculateStrategicScores(rows.map(toApiClient));
 
     res.status(201).json({
       success: true,
@@ -768,20 +784,26 @@ router.put('/clients/:id', async (req, res) => {
     // renewal_probability) and the phantom strategic_fit_score are retired and
     // intentionally left out of the SET clause — an edit no longer touches them,
     // preserving any existing values until a later V4 migration drops them.
+    // People come as ids, as in POST; the legacy text is written from them.
     const {
       name,
       status,
       practice_area,
       conflict_risk,
       notes,
-      primary_lobbyist,
-      client_originator,
-      lobbyist_team,
       interaction_frequency,
       stickiness = null,
       high_maintenance = false,
       revenues = []
     } = req.body;
+
+    const assignment = await resolveAssignment(await client, req.body);
+    if (assignment.errors.length > 0) {
+      await (await client).query('ROLLBACK');
+      return res.status(400).json(assignmentRejected(assignment.errors));
+    }
+    const people = assignment.value;
+    const legacy = assignment.legacy;
 
     // Update client record
     const { rows: [updatedClient] } = await (await client).query(`
@@ -790,14 +812,18 @@ router.put('/clients/:id', async (req, res) => {
         notes = $5, primary_lobbyist = $6, client_originator = $7,
         lobbyist_team = $8, interaction_frequency = $9,
         stickiness = $10, high_maintenance = $11,
+        lead_id = $12, second_chair_id = $13, originator_id = $14,
+        originator_is_firm = $15,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $12
+      WHERE id = $16
       RETURNING *
     `, [
       name, status, practice_area, conflict_risk,
-      notes, primary_lobbyist, client_originator,
-      lobbyist_team, interaction_frequency,
+      notes, legacy.primary_lobbyist, legacy.client_originator,
+      legacy.lobbyist_team, interaction_frequency,
       stickiness, high_maintenance,
+      people.lead_id, people.second_chair_id, people.originator_id,
+      people.originator_is_firm,
       clientId
     ]);
 
@@ -828,45 +854,11 @@ router.put('/clients/:id', async (req, res) => {
 
     await (await client).query('COMMIT');
     
-    // Fetch the complete updated client with revenues
-    const { rows } = await db.query(`
-      SELECT 
-        c.*,
-        COALESCE(
-          jsonb_agg(
-            jsonb_build_object(
-              'year', r.year,
-              'revenue_amount', r.revenue_amount
-            ) ORDER BY r.year
-          ) FILTER (WHERE r.id IS NOT NULL),
-          '[]'
-        ) AS revenues
-      FROM clients c
-      LEFT JOIN client_revenues r ON r.client_id = c.id
-      WHERE c.id = $1
-      GROUP BY c.id
-    `, [clientId]);
-
-    // Transform database fields to frontend-expected field names
-    const transformedClients = rows.map(client => {
-      // Revenue by year for every row on file (year-agnostic)
-      const revenue = revenueObjectFromRows(client.revenues);
-
-      return {
-        ...client,
-        revenue,
-        // Transform database field names to frontend-expected names
-        practiceArea: client.practice_area || [],
-        relationshipStrength: client.relationship_strength || 5,
-        conflictRisk: client.conflict_risk || 'Medium',
-        renewalProbability: client.renewal_probability || 0.7,
-        strategicFitScore: client.strategic_fit_score || 5,
-        timeCommitment: client.time_commitment || 40,
-      };
-    });
+    // Fetch the complete updated client with revenues and people
+    const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [clientId]);
 
     // Calculate strategic scores for the updated client
-    const clientsWithScores = calculateStrategicScores(transformedClients);
+    const clientsWithScores = calculateStrategicScores(rows.map(toApiClient));
 
     res.json({
       success: true,

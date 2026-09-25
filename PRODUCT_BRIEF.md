@@ -21,6 +21,12 @@ shared definitions, everyone sees everything. The tool's job is to make the
 shared picture legible and answerable, so six peers can make staffing,
 retention, and (eventually) compensation conversations from the same facts.
 
+The book also names people who are not partners: an emeritus and associates,
+who can be a client's second chair but never its lead (every client has one
+partner as lead). Those positions describe who works on what; they are not
+app roles. Only partners sign in, and they are equal in the app. The firm has
+a managing partner, which the app does not model.
+
 ## Principles
 
 1. **Look-and-ask over enter-and-maintain.** The default state is reading.
