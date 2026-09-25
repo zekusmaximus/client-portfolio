@@ -71,6 +71,11 @@ const readyMessage = (summary) =>
   `${summary.sheetColumns?.length > 0 ? `columns ${summary.sheetColumns.join(', ')}` : 'no people or judgment columns'}. ` +
   'Nothing was written.';
 
+const CHECK_UNAVAILABLE =
+  'Check file is not available: the API has not been deployed with it yet. Nothing was sent and nothing was written.';
+const CHECK_IMPORTED =
+  'The server imported this file instead of checking it: its API does not have Check file. The book now includes this file.';
+
 const DataUploadManager = () => {
   const [file, setFile] = useState(null);
   // The request in flight: 'check' (Check file, nothing written) or 'upload'
@@ -109,6 +114,17 @@ const handleUpload = async (dryRun = false) => {
   setRefusal(null);
   setUploadResult(null);
 
+  // An API older than Check file ignores dryRun and imports the file, so ask
+  // /api/health first and send nothing unless it lists check-file.
+  if (dryRun) {
+    const health = await apiClient.get('/api/health').catch(() => null);
+    if (!Array.isArray(health?.features) || !health.features.includes('check-file')) {
+      setError(CHECK_UNAVAILABLE);
+      setBusy(null);
+      return;
+    }
+  }
+
   Papa.parse(file, {
     header: true, // Automatically uses the first row as headers
     skipEmptyLines: true,
@@ -122,7 +138,11 @@ const handleUpload = async (dryRun = false) => {
         // Send the clean, parsed data to the backend
         const response = await apiClient.post('/api/data/process-csv', { csvData: results.data, dryRun });
 
-        if (response.success && dryRun) {
+        if (response.success && dryRun && response.dryRun !== true) {
+          // The API ignored dryRun and imported the file: never claim otherwise
+          await fetchClients();
+          setError(CHECK_IMPORTED);
+        } else if (response.success && dryRun) {
           setUploadResult({
             success: true,
             dryRun: true,
@@ -238,7 +258,7 @@ const handleUpload = async (dryRun = false) => {
           </p>
 
           {error && (
-            <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
+            <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20" data-testid="upload-error">
               <CardContent className="pt-4">
                 <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
                   <AlertCircle className="h-4 w-4" />
