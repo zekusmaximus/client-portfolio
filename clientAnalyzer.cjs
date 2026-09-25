@@ -16,6 +16,9 @@ const {
   headerKeys,
   parseAmount,
   revenueYearOfHeader,
+  rowNumberOf,
+  findSheetColumns,
+  readSheetRow,
 } = require('./utils/csvImport.cjs');
 
 // Helper function to decode HTML entities
@@ -139,6 +142,12 @@ function optimizePortfolio(clients, _maxCapacity = 2000) {
  * Revenue years are read from the file's `YYYY Contracts` headers (D5): the
  * `revenue` object carries exactly those years, and the sorted list is
  * attached to every client as `revenueYears`.
+ *
+ * The import sheet's optional columns (docs/plans/people-and-second-chair.md,
+ * section 3) are read by readSheetRow into `sheet` ({ values, people,
+ * errors }); the judgment values present in the file also replace the
+ * defaults below, so the scores in the response use them. `rowNumber` is the
+ * row as a spreadsheet shows it, the header being row 1.
  * @param {Array} csvData - Raw CSV data from Papaparse
  * @returns {Array} Processed client objects
  */
@@ -155,10 +164,12 @@ function processCSVData(csvData) {
     const year = revenueYearOfHeader(header);
     if (year !== null && !(year in columnByYear)) columnByYear[year] = header;
   }
+  const { columns } = findSheetColumns(headers);
 
   return csvData
-    .filter(row => row.CLIENT && row.CLIENT.trim()) // Filter out empty rows
-    .map(row => {
+    .map((row, index) => ({ row, rowNumber: rowNumberOf(index) }))
+    .filter(({ row }) => row.CLIENT && row.CLIENT.trim()) // Filter out empty rows
+    .map(({ row, rowNumber }) => {
       const clientName = decodeHTMLEntities(row.CLIENT.trim());
       const contractPeriod = row['Contract Period'] || '';
       
@@ -170,6 +181,10 @@ function processCSVData(csvData) {
       
       // Generate UUID (simple version for demo)
       const id = 'client_' + Math.random().toString(36).substr(2, 9);
+
+      // The sheet's people and judgment columns, where the file has them
+      const sheet = readSheetRow(row, columns);
+      const judged = sheet.values;
       
       return {
         id,
@@ -178,13 +193,18 @@ function processCSVData(csvData) {
         status: deriveContractStatus(contractPeriod),
         revenue,
         revenueYears: [...revenueYears],
+        rowNumber,
         // Default enhancement fields
-        practiceArea: [],
+        practiceArea: judged.practice_area || [],
         relationshipStrength: 5,
-        conflictRisk: 'Medium',
+        conflictRisk: judged.conflict_risk || 'Medium',
         renewalProbability: 0.7,
         strategicFitScore: 5,
-        notes: '',
+        notes: judged.notes || '',
+        ...('stickiness' in judged ? { stickiness: judged.stickiness } : {}),
+        ...('interaction_frequency' in judged ? { interaction_frequency: judged.interaction_frequency } : {}),
+        ...('high_maintenance' in judged ? { high_maintenance: judged.high_maintenance } : {}),
+        sheet,
         // Calculated fields (will be computed)
         strategicValue: 0,
         averageRevenue: 0

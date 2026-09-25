@@ -10,7 +10,17 @@ const {
   calculateStrategicScores,
   optimizePortfolio
 } = require('./clientAnalyzer.cjs');
-const { extractRevenueYears, headerKeys, planRevenueWrites } = require('./utils/csvImport.cjs');
+const {
+  extractRevenueYears,
+  headerKeys,
+  planRevenueWrites,
+  rowNumberOf,
+  SHEET_COLUMNS,
+  findSheetColumns,
+  checkSheet,
+  importWriteColumns,
+  valuesList
+} = require('./utils/csvImport.cjs');
 const { revenueObjectFromRows } = require('./utils/strategic.cjs');
 const {
   parseId,
@@ -82,24 +92,24 @@ const csvValidationRules = [
       for (let i = 0; i < csvData.length; i++) {
         const row = csvData[i];
         if (!row || typeof row !== 'object') {
-          throw new Error(`Row ${i + 1}: Must be an object`);
+          throw new Error(`Row ${rowNumberOf(i)}: Must be an object`);
         }
         
         // Check for required fields (CLIENT is minimum requirement)
         if (!row.CLIENT || typeof row.CLIENT !== 'string' || !row.CLIENT.trim()) {
-          throw new Error(`Row ${i + 1}: CLIENT is required and must be a non-empty string`);
+          throw new Error(`Row ${rowNumberOf(i)}: CLIENT is required and must be a non-empty string`);
         }
         
         // Validate CLIENT length and pattern
         if (row.CLIENT.trim().length > 255) {
-          throw new Error(`Row ${i + 1}: CLIENT must not exceed 255 characters`);
+          throw new Error(`Row ${rowNumberOf(i)}: CLIENT must not exceed 255 characters`);
         }
         
         // Decode HTML entities for validation
         const decodedClient = decodeHTMLEntities(row.CLIENT.trim());
         
         if (!/^[a-zA-Z0-9\s\-.,&'()/]+$/.test(decodedClient)) {
-          throw new Error(`Row ${i + 1}: CLIENT contains invalid characters`);
+          throw new Error(`Row ${rowNumberOf(i)}: CLIENT contains invalid characters`);
         }
       }
       
@@ -127,7 +137,14 @@ const handleCSVValidationErrors = (req, res, next) => {
   next();
 };
 
+const problems = (n) => `${n} problem${n === 1 ? '' : 's'}`;
+
 // POST /api/data/process-csv
+// Revenue follows the year rule (D5). The import sheet's people and judgment
+// columns (docs/plans/people-and-second-chair.md, section 3, P8) are written
+// for exactly the columns the file has. Any problem in the file refuses it
+// whole: 400 { success: false, error, errors: [{ row, client, message }] },
+// nothing written.
 router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async (req, res) => {
   const client = db.pool.connect();
   
@@ -141,7 +158,8 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     }
 
     // Process the CSV data
-    // First, decode HTML entities in the raw CSV data
+    // First, decode HTML entities in the raw CSV data (sanitizeRequestBody
+    // escaped every string; names only match the People list decoded)
     const decodedCsvData = csvData.map(row => {
       const decodedRow = {};
       for (const [key, value] of Object.entries(row)) {
@@ -150,10 +168,16 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       return decodedRow;
     });
     
+    const headers = headerKeys(decodedCsvData);
     const clients = processCSVData(decodedCsvData);
 
     // The years the file covers, from its `YYYY Contracts` headers (D5)
-    const revenueYears = extractRevenueYears(headerKeys(decodedCsvData));
+    const revenueYears = extractRevenueYears(headers);
+
+    // The sheet's optional columns the file has, and any problem with its header
+    const sheetColumns = findSheetColumns(headers);
+    const { columns } = sheetColumns;
+    const writeColumns = importWriteColumns(columns);
     
     // Validate the processed data
     const validation = validateClientData(clients);
@@ -163,6 +187,13 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     
     // Save to database using upsert logic
     await (await client).query('BEGIN');
+
+    // The People list, when the file assigns people. FOR SHARE, as the client
+    // writes below: routes/people.cjs cannot deactivate anyone or move a lead
+    // out of the partner role until this import commits.
+    const { rows: roster } = 'lead' in columns
+      ? await (await client).query('SELECT id, name, role, active FROM people ORDER BY id FOR SHARE')
+      : { rows: [] };
 
     // Pre-fetch all existing clients to avoid N+1 queries
     const clientNames = clientsWithScores
@@ -174,13 +205,17 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     
     if (clientNames.length > 0) {
       // Fetch all potential matches in one query
-      // Using ANY($1) allows us to match against an array of lowercased names
+      // Using ANY($1) allows us to match against an array of lowercased names.
+      // FOR UPDATE: the values kept for columns the file lacks are written back
+      // below, so a form save cannot land in between and be overwritten.
       const { rows: allExistingClients } = await (await client).query(`
         SELECT id, name, practice_area, relationship_strength, conflict_risk,
                renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-               client_originator, lobbyist_team, interaction_frequency, relationship_intensity
+               client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+               second_chair_id, originator_id, originator_is_firm
         FROM clients 
         WHERE LOWER(name) = ANY($1)
+        FOR UPDATE
       `, [clientNames.map(n => n.toLowerCase())]);
 
       allExistingClients.forEach(c => {
@@ -190,18 +225,44 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       });
     }
 
+    // Refuse the whole file on any problem (P8): header, a client named twice,
+    // a value outside its column's vocabulary, a person who does not resolve.
+    const check = checkSheet(clientsWithScores, {
+      headerErrors: sheetColumns.errors,
+      roster,
+      existingByName: existingClientsMap
+    });
+    if (check.errors.length > 0) {
+      await (await client).query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        error: `Nothing was imported: the file has ${problems(check.errors.length)}. Fix the rows below and upload it again.`,
+        errors: check.errors
+      });
+    }
+
     let updatedCount = 0;
     let insertedCount = 0;
 
-    // --- Pass 1: compute all field values and deduplicate by name ---
-    // Later CSV rows for the same client name override earlier ones (matches original behaviour).
+    // --- Pass 1: compute all field values ---
+    // Names are unique in the file (checkSheet), so each client is written once.
     const toUpdateMap = new Map(); // lowerName -> row data for bulk UPDATE
     const toInsertMap = new Map(); // lowerName -> row data for bulk INSERT
-    const revenueDataMap = new Map(); // lowerName -> revenue object (last occurrence wins)
+    const revenueDataMap = new Map(); // lowerName -> revenue object
 
     for (const clientData of clientsWithScores) {
       const lowerName = (clientData.name || '').toLowerCase();
       const existingClient = existingClientsMap.get(lowerName);
+
+      // The file's values for the sheet columns it has; the rest as before
+      const judged = clientData.sheet ? clientData.sheet.values : {};
+      const fromFile = (column, otherwise) => (column in judged ? judged[column] : otherwise);
+      const assigned = check.people.get(clientData.rowNumber);
+      const sheetOnly = {
+        ...('stickiness' in columns ? { stickiness: judged.stickiness } : {}),
+        ...('handful' in columns ? { high_maintenance: judged.high_maintenance } : {}),
+        ...(assigned ? assigned.values : {})
+      };
 
       if (existingClient) {
         // Preserve manual enhancements (only if they were manually set and differ from defaults)
@@ -253,33 +314,35 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           id: existingClient.id,
           name: clientData.name || '',
           status: clientData.status || 'H',
-          practiceArea: preservedPracticeArea,
-          relationshipStrength: preservedRelationshipStrength,
-          conflictRisk: preservedConflictRisk,
-          renewalProbability: preservedRenewalProbability,
-          strategicFitScore: preservedStrategicFitScore,
-          notes: preservedNotes,
-          primaryLobbyist: preservedPrimaryLobbyist,
-          clientOriginator: preservedClientOriginator,
-          lobbyistTeam: preservedLobbyistTeam,
-          interactionFrequency: preservedInteractionFrequency,
-          relationshipIntensity: preservedRelationshipIntensity
+          practice_area: fromFile('practice_area', preservedPracticeArea),
+          relationship_strength: preservedRelationshipStrength,
+          conflict_risk: fromFile('conflict_risk', preservedConflictRisk),
+          renewal_probability: preservedRenewalProbability,
+          strategic_fit_score: preservedStrategicFitScore,
+          notes: fromFile('notes', preservedNotes),
+          primary_lobbyist: assigned ? assigned.legacy.primary_lobbyist : preservedPrimaryLobbyist,
+          client_originator: assigned ? assigned.legacy.client_originator : preservedClientOriginator,
+          lobbyist_team: assigned ? assigned.legacy.lobbyist_team : preservedLobbyistTeam,
+          interaction_frequency: fromFile('interaction_frequency', preservedInteractionFrequency),
+          relationship_intensity: preservedRelationshipIntensity,
+          ...sheetOnly
         });
       } else {
         toInsertMap.set(lowerName, {
           name: clientData.name || '',
           status: clientData.status || 'H',
-          practiceArea: clientData.practiceArea || [],
-          relationshipStrength: clientData.relationshipStrength || 5,
-          conflictRisk: clientData.conflictRisk || 'Medium',
-          renewalProbability: clientData.renewalProbability || 0.7,
-          strategicFitScore: clientData.strategicFitScore || 5,
-          notes: clientData.notes || '',
-          primaryLobbyist: clientData.primaryLobbyist || '',
-          clientOriginator: clientData.clientOriginator || '',
-          lobbyistTeam: clientData.lobbyistTeam || [],
-          interactionFrequency: clientData.interactionFrequency || '',
-          relationshipIntensity: clientData.relationshipIntensity || 5
+          practice_area: fromFile('practice_area', clientData.practiceArea || []),
+          relationship_strength: clientData.relationshipStrength || 5,
+          conflict_risk: fromFile('conflict_risk', clientData.conflictRisk || 'Medium'),
+          renewal_probability: clientData.renewalProbability || 0.7,
+          strategic_fit_score: clientData.strategicFitScore || 5,
+          notes: fromFile('notes', clientData.notes || ''),
+          primary_lobbyist: assigned ? assigned.legacy.primary_lobbyist : clientData.primaryLobbyist || '',
+          client_originator: assigned ? assigned.legacy.client_originator : clientData.clientOriginator || '',
+          lobbyist_team: assigned ? assigned.legacy.lobbyist_team : clientData.lobbyistTeam || [],
+          interaction_frequency: fromFile('interaction_frequency', clientData.interactionFrequency || ''),
+          relationship_intensity: clientData.relationshipIntensity || 5,
+          ...sheetOnly
         });
       }
 
@@ -294,42 +357,13 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     // --- Pass 2a: bulk UPDATE existing clients ---
     const updateRows = Array.from(toUpdateMap.values());
     if (updateRows.length > 0) {
-      const params = [];
-      const valuePlaceholders = [];
-      let paramIndex = 1;
-      for (const u of updateRows) {
-        params.push(
-          u.id, u.name, u.status, u.practiceArea, u.relationshipStrength,
-          u.conflictRisk, u.renewalProbability, u.strategicFitScore,
-          u.notes, u.primaryLobbyist, u.clientOriginator,
-          u.lobbyistTeam, u.interactionFrequency, u.relationshipIntensity
-        );
-        valuePlaceholders.push(
-          `($${paramIndex}::uuid, $${paramIndex+1}, $${paramIndex+2}, $${paramIndex+3}::text[], $${paramIndex+4}::numeric, $${paramIndex+5}, $${paramIndex+6}::numeric, $${paramIndex+7}::numeric, $${paramIndex+8}, $${paramIndex+9}, $${paramIndex+10}, $${paramIndex+11}::text[], $${paramIndex+12}, $${paramIndex+13}::numeric)`
-        );
-        paramIndex += 14;
-      }
+      const updateColumns = [['id', 'uuid'], ...writeColumns];
+      const { sql, params } = valuesList(updateRows, updateColumns);
       const { rows: updatedRows } = await (await client).query(`
         UPDATE clients c SET
-          name = v.name,
-          status = v.status,
-          practice_area = v.practice_area,
-          relationship_strength = v.relationship_strength,
-          conflict_risk = v.conflict_risk,
-          renewal_probability = v.renewal_probability,
-          strategic_fit_score = v.strategic_fit_score,
-          notes = v.notes,
-          primary_lobbyist = v.primary_lobbyist,
-          client_originator = v.client_originator,
-          lobbyist_team = v.lobbyist_team,
-          interaction_frequency = v.interaction_frequency,
-          relationship_intensity = v.relationship_intensity,
+          ${writeColumns.map(([column]) => `${column} = v.${column}`).join(',\n          ')},
           updated_at = CURRENT_TIMESTAMP
-        FROM (VALUES ${valuePlaceholders.join(',')}) AS v(
-          id, name, status, practice_area, relationship_strength, conflict_risk,
-          renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-          client_originator, lobbyist_team, interaction_frequency, relationship_intensity
-        )
+        FROM (VALUES ${sql}) AS v(${updateColumns.map(([column]) => column).join(', ')})
         WHERE c.id = v.id
         RETURNING c.*
       `, params);
@@ -340,28 +374,10 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     // --- Pass 2b: bulk INSERT new clients ---
     const insertRows = Array.from(toInsertMap.values());
     if (insertRows.length > 0) {
-      const params = [];
-      const valuePlaceholders = [];
-      let paramIndex = 1;
-      for (const ins of insertRows) {
-        params.push(
-          ins.name, ins.status, ins.practiceArea, ins.relationshipStrength,
-          ins.conflictRisk, ins.renewalProbability, ins.strategicFitScore,
-          ins.notes, ins.primaryLobbyist, ins.clientOriginator,
-          ins.lobbyistTeam, ins.interactionFrequency, ins.relationshipIntensity
-        );
-        valuePlaceholders.push(
-          `($${paramIndex}, $${paramIndex+1}, $${paramIndex+2}::text[], $${paramIndex+3}::numeric, $${paramIndex+4}, $${paramIndex+5}::numeric, $${paramIndex+6}::numeric, $${paramIndex+7}, $${paramIndex+8}, $${paramIndex+9}, $${paramIndex+10}::text[], $${paramIndex+11}, $${paramIndex+12}::numeric)`
-        );
-        paramIndex += 13;
-      }
+      const { sql, params } = valuesList(insertRows, writeColumns);
       const { rows: insertedRows } = await (await client).query(`
-        INSERT INTO clients (
-          name, status, practice_area, relationship_strength, conflict_risk,
-          renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-          client_originator, lobbyist_team, interaction_frequency, relationship_intensity
-        )
-        VALUES ${valuePlaceholders.join(',')}
+        INSERT INTO clients (${writeColumns.map(([column]) => column).join(', ')})
+        VALUES ${sql}
         RETURNING *
       `, params);
       insertedRows.forEach(r => clientResultMap.set(r.name.toLowerCase(), r));
@@ -423,6 +439,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
         updatedClients: updatedCount,
         newClients: insertedCount,
         revenueYears,
+        sheetColumns: SHEET_COLUMNS.filter(({ key }) => key in columns).map(({ header }) => header),
         totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
         statusBreakdown: {
           'Active': clientsWithScores.filter(c => c.status === 'Active' || c.status === 'IF').length,
