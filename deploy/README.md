@@ -475,6 +475,13 @@ Accounts and the People list are untouched, and partners stay signed in. It
 needs the deploy that contains `scripts/reset-book.cjs` and the upload page's
 **Check file** button, on Render and on Netlify (section 4).
 
+Before step 2, open
+<https://client-portfolio-backend.onrender.com/api/health> and confirm the
+answer contains `"features":["check-file"]`. Without it Render is still
+running an older API; deploy it first (section 4.1, Manual Deploy when
+auto-deploy is off, then 4.3). The page will not send a check to such an API,
+but **Upload and Process CSV** still imports.
+
 Tell the partners not to change clients from step 3 until step 6 is done: a
 change made after the backup is lost with the old book and is not in the
 backup, and a client added between the reset and the import stays in the new
@@ -672,6 +679,7 @@ example `"event":"ai_error"`.
 
 ```json
 { "status": "OK", "timestamp": "<ISO time>", "uptimeSeconds": 8509, "environment": "production",
+  "features": ["check-file"],
   "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5" } }
 ```
 
@@ -681,6 +689,7 @@ example `"event":"ai_error"`.
 | `timestamp` | the server's clock when it answered |
 | `uptimeSeconds` | seconds since the process started. It resets on every deploy, restart and, on a Free instance, every spin-up |
 | `environment` | `NODE_ENV`; must be `production` on Render |
+| `features` | what this API can do that older deploys cannot: `check-file` (the upload page's Check file). The page asks before a check and sends nothing to an API without it, which would import the file instead. Missing means Render is still running a deploy from before 2026-09-25's Phase 3 |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
 | `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`) |

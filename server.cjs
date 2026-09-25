@@ -111,6 +111,9 @@ app.get('/api/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.round(process.uptime()),
     environment: process.env.NODE_ENV || 'development',
+    // What this API can do that an older one cannot. The page asks before
+    // Check file: an API without it ignores dryRun and imports the file.
+    features: ['check-file'],
     services: {}
   };
 

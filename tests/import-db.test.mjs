@@ -395,6 +395,10 @@ describe('the import on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
   };
 
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
+    // The page asks /api/health before a check (no sign-in)
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.deepEqual(health.features, ['check-file']);
+
     const before = await snapshot();
     const countsBefore = await peopleCounts();
 
