@@ -222,6 +222,16 @@ Deploying is merging to `main`.
   (confirm the label in the dashboard).
 - Pull requests get a Netlify Deploy Preview. Render does not preview; the API
   changes only on `main`.
+- **A Deploy Preview cannot sign in.** It is served from its own origin
+  (`https://deploy-preview-<n>--client-portfolio2.netlify.app`), and the
+  production API allows exactly one browser origin, `FRONTEND_URL`
+  (gbacpod.com): the preflight gets no CORS header and the sign-in POST gets
+  403 with an `origin_refused` log line. On a preview, check the build, the
+  headers and the sign-in page. Check signing in and the tabs on gbacpod.com
+  after the merge, with section 5.1 ready. To test a preview signed in, you
+  would have to set `FRONTEND_URL` to the preview's origin (Save and deploy),
+  which locks gbacpod.com out until you set it back. Do that only in a quiet
+  window.
 
 The page and the API deploy independently and are not atomic: for a few
 minutes one can be new and the other old. If a change alters an API response
@@ -266,7 +276,9 @@ Partnership, AI Advisor, Scenarios. There must be no line beginning "Refused
 to" that names the Content Security Policy. A 401 for `/api/auth/me` before
 signing in is normal.
 
-On a Deploy Preview, Netlify injects its feedback Drawer, which loads a script
+On a Deploy Preview, only the sign-in page can be checked (4.1). Its console
+shows a CORS error when you try to sign in, which is expected and is not a CSP
+error. Netlify also injects its feedback Drawer there, which loads a script
 from app.netlify.com. The page's CSP blocks it, so the preview can show a CSP
 error naming app.netlify.com and no Drawer
 (<https://docs.netlify.com/deploy/review-deploys/netlify-drawer-for-feedback/troubleshoot-the-netlify-drawer/>).
