@@ -18,11 +18,6 @@ const PRACTICE_AREAS =
 const SHEET_COLUMNS = [
   { name: 'CLIENT', required: 'yes', values: "the client's name; once per file" },
   {
-    name: 'Contract Period',
-    required: 'yes',
-    values: '1/1/26-12/31/26, Expired 6/30/25 or expires 6/30/27; the status (In Force, Done, Proposal, Hold) is derived from it',
-  },
-  {
     name: 'YYYY Contracts',
     required: 'at least one',
     values: 'one column per year (2024 Contracts, 2025 Contracts, ...): 72000, $72,000 or $72,000.00; blank or 0 for none',
@@ -398,10 +393,11 @@ const handleUpload = async (dryRun = false) => {
             <div className="mt-4 p-3 bg-muted rounded-lg space-y-3 text-sm text-muted-foreground">
               <p>
                 The file is authoritative for exactly the columns it has. A column it lacks leaves that field as it is
-                on clients already in the book, so a sheet with only CLIENT, Contract Period and the years updates
-                revenue and keeps everyone's people and judgments. A blank cell in a column the file has clears the
-                field: no second chair, no originator, no stickiness, Handful off, Conflict Risk back to Medium, no
-                practice areas, no notes. Second Chair, Originator and Credit To Firm need a Lead column in the same file.
+                on clients already in the book, so a sheet with only CLIENT and the years updates revenue and keeps
+                everyone's people and judgments. A blank cell in a column the file has clears the field: no second
+                chair, no originator, no stickiness, Handful off, Conflict Risk back to Medium, no practice areas, no
+                notes. Second Chair, Originator and Credit To Firm need a Lead column in the same file.
+                A Contract Period column, if the sheet still has one, is ignored.
               </p>
               <p>
                 Revenue: a positive amount sets that year for the client, a blank or $0 cell clears it, and years the

@@ -141,7 +141,6 @@ Portfolio Metrics:
 - Average Client Value: $${averageClientValue.toLocaleString()}
 - Strategic Alignment: ${(strategicAlignment * 100).toFixed(0)}% of top clients are strategic (8+ score)
 - Revenue Concentration: Top 5 clients represent ${(revenueConcentration * 100).toFixed(0)}% of revenue
-- Contract Health: ${((portfolioSummary.statusBreakdown.Active || 0) / portfolioSummary.totalClients * 100).toFixed(0)}% active contracts
 
 Practice Area Distribution:
 ${Object.entries(portfolioSummary.practiceAreas)
@@ -159,7 +158,7 @@ ${portfolioSummary.topClients.slice(0, 8).map((c, i) =>
   `${i + 1}. ${c.name}
    Financial Profile: $${c.revenue.toLocaleString()} | ${c.timeCommitment || 'Unknown'} hours/month
    Strategic Profile: ${c.strategicValue}/10 value | ${c.relationshipStrength || 'Unknown'}/10 relationship
-   Risk Profile: ${c.status} contract | ${c.renewalProbability ? `${(c.renewalProbability * 100).toFixed(0)}%` : 'Unknown'} renewal | ${c.conflictRisk || 'Unknown'} conflict risk
+   Risk Profile: ${c.renewalProbability ? `${(c.renewalProbability * 100).toFixed(0)}%` : 'Unknown'} renewal | ${c.conflictRisk || 'Unknown'} conflict risk
    Practice Areas: ${c.practiceArea ? c.practiceArea.join(', ') : 'Not specified'}`
 ).join('\n\n')}
 </firm_profile>
@@ -325,7 +324,6 @@ function createAnalysisPrompt(portfolioSummary) {
 You are analyzing a government relations law firm's client portfolio with the following characteristics:
 - Portfolio Scale: ${portfolioSummary.totalClients} clients, $${portfolioSummary.totalRevenue.toLocaleString()} total revenue
 - Strategic Position: Average strategic value score of ${portfolioSummary.avgStrategicValue}/10
-- Contract Mix: ${Object.entries(portfolioSummary.statusBreakdown).map(([status, count]) => `${status}: ${count}`).join(', ')}
 - Practice Concentration: ${Object.entries(portfolioSummary.practiceAreas).sort(([,a], [,b]) => b - a).slice(0, 3).map(([area, count]) => `${area} (${count} clients)`).join(', ')}
 - Risk Profile: ${Object.entries(portfolioSummary.riskProfile).map(([level, count]) => `${level}-risk: ${count}`).join(', ')}
 
@@ -333,7 +331,7 @@ Key Client Relationships:
 ${portfolioSummary.topClients.slice(0, 10).map((c, i) => 
   `${i + 1}. ${c.name}
    - Financial: $${c.revenue.toLocaleString()} revenue (${((c.revenue / portfolioSummary.totalRevenue) * 100).toFixed(1)}% of portfolio)
-   - Strategic: ${c.strategicValue}/10 value score, ${c.status} contract
+   - Strategic: ${c.strategicValue}/10 value score
    - Risk: ${c.conflictRisk || 'Unknown'} conflict risk, ${c.renewalProbability ? `${(c.renewalProbability * 100).toFixed(0)}%` : 'Unknown'} renewal probability`
 ).join('\n\n')}
 </context>
@@ -448,7 +446,6 @@ STRATEGIC PROFILE
 - Brand Value: ${client.brandValue || 'Not assessed'}
 
 ENGAGEMENT PROFILE
-- Contract Status: ${client.status}
 - Practice Areas: ${client.practiceArea ? client.practiceArea.join(', ') : 'Not specified'}
 - Service Utilization: ${client.serviceUtilization || 'Not tracked'}
 - Satisfaction Score: ${client.satisfactionScore || 'Not measured'}
@@ -617,7 +614,6 @@ function calculateRiskScore(client) {
   let score = 5; // baseline
   if (client.renewalProbability && client.renewalProbability < 0.5) score += 2;
   if (client.conflictRisk === 'High') score += 2;
-  if (client.status === 'At Risk') score += 1;
   if (!client.relationshipStrength || client.relationshipStrength < 5) score += 1;
   return Math.min(score, 10);
 }

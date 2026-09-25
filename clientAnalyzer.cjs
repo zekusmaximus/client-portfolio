@@ -1,6 +1,6 @@
 /**
  * Client Portfolio Analysis Engine
- * CSV processing, contract-status derivation, and portfolio optimization.
+ * CSV processing and portfolio optimization.
  *
  * Strategic-value scoring lives in ./utils/strategic.cjs (single source of
  * truth) and is re-exported here for the data.cjs/CSV path. Do NOT reimplement
@@ -37,69 +37,6 @@ function decodeHTMLEntities(text) {
 }
 
 /**
- * Derive contract status based on contract period and current date
- * @param {string} contractPeriod - Format: "M/D/YY-M/D/YY", "Expired M/D/YY", or "expires M/D/YY"
- * @param {Date} [now] - Date to evaluate against; defaults to today, pass one for deterministic tests
- * @returns {string} Status: 'IF' (In Force), 'D' (Done), 'P' (Proposal), 'H' (Hold)
- */
-function deriveContractStatus(contractPeriod, now = new Date()) {
-  if (!contractPeriod || typeof contractPeriod !== 'string') {
-    return 'H'; // Hold for invalid data
-  }
-
-  try {
-    const currentDate = now instanceof Date ? now : new Date(now);
-    
-    // Handle "Expired" format
-    if (contractPeriod.toLowerCase().startsWith('expired')) {
-      return 'D'; // Done - already expired
-    }
-    
-    // Handle "expires DATE" format
-    if (contractPeriod.toLowerCase().startsWith('expires')) {
-      const dateMatch = contractPeriod.match(/expires\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
-      if (dateMatch) {
-        const expiryDate = new Date(dateMatch[1]);
-        if (!isNaN(expiryDate.getTime())) {
-          return expiryDate < currentDate ? 'D' : 'IF'; // Done if expired, In Force if still valid
-        }
-      }
-      return 'H'; // Hold if we can't parse the date
-    }
-    
-    // Handle standard "START-END" format
-    const [startStr, endStr] = contractPeriod.split('-');
-    
-    if (!startStr || !endStr) {
-      return 'H';
-    }
-
-    // Parse dates - handle both MM/DD/YY and M/D/YY formats
-    const startDate = new Date(startStr.trim());
-    const endDate = new Date(endStr.trim());
-    
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      return 'H';
-    }
-    
-    if (currentDate >= startDate && currentDate <= endDate) {
-      return 'IF'; // In Force
-    }
-    if (endDate < currentDate) {
-      return 'D'; // Done
-    }
-    if (startDate > currentDate) {
-      return 'P'; // Proposal
-    }
-    
-    return 'H'; // Hold (fallback)
-  } catch (error) {
-    console.warn('Error parsing contract period:', contractPeriod, error);
-    return 'H';
-  }
-}
-
-/**
  * Optimize portfolio based on capacity constraints
  * @param {Array} clients - Array of client objects with strategic scores
  * @param {number} _maxCapacity - Maximum available hours (deprecated but kept for compatibility)
@@ -115,9 +52,8 @@ function optimizePortfolio(clients, _maxCapacity = 2000) {
     };
   }
 
-  // Filter eligible clients (In Force or Proposal) and sort by strategic value
-  const eligibleClients = clients
-    .filter(client => client.status === 'IF' || client.status === 'P')
+  // Every client is eligible; sort by strategic value
+  const eligibleClients = [...clients]
     .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0));
   
   // Since timeCommitment is removed, we'll return top clients by strategic value
@@ -171,7 +107,6 @@ function processCSVData(csvData) {
     .filter(({ row }) => row.CLIENT && row.CLIENT.trim()) // Filter out empty rows
     .map(({ row, rowNumber }) => {
       const clientName = decodeHTMLEntities(row.CLIENT.trim());
-      const contractPeriod = row['Contract Period'] || '';
       
       // Revenue for exactly the years the file covers
       const revenue = {};
@@ -189,8 +124,6 @@ function processCSVData(csvData) {
       return {
         id,
         name: clientName,
-        contractPeriod,
-        status: deriveContractStatus(contractPeriod),
         revenue,
         revenueYears: [...revenueYears],
         rowNumber,
@@ -231,18 +164,6 @@ function validateClientData(clients) {
       warnings.push(`Client "${client.name}" has zero revenue across all imported years`);
     }
     
-    // Check for malformed contract periods
-    // Valid formats: "M/D/YY-M/D/YY", "Expired M/D/YY", "expires M/D/YY"
-    const hasValidFormat = client.contractPeriod && (
-      client.contractPeriod.includes('-') || 
-      client.contractPeriod.toLowerCase().startsWith('expired') ||
-      client.contractPeriod.toLowerCase().startsWith('expires')
-    );
-    
-    if (!hasValidFormat) {
-      issues.push(`Client "${client.name}" has invalid contract period: "${client.contractPeriod}"`);
-    }
-    
     // Check for missing client name
     if (!client.name || client.name.trim() === '') {
       issues.push(`Row ${index + 1} has missing client name`);
@@ -259,7 +180,6 @@ function validateClientData(clients) {
 }
 
 module.exports = {
-  deriveContractStatus,
   calculateStrategicValue,
   calculateStrategicScores,
   optimizePortfolio,

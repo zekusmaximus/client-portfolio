@@ -205,11 +205,6 @@ function generatePortfolioSummary(clients) {
     ? clients.reduce((sum, c) => sum + (c.strategicValue || 0), 0) / clients.length
     : 0;
 
-  const statusBreakdown = clients.reduce((acc, c) => {
-    acc[c.status] = (acc[c.status] || 0) + 1;
-    return acc;
-  }, {});
-
   const practiceAreas = clients.reduce((acc, c) => {
     if (c.practiceArea && Array.isArray(c.practiceArea)) {
       c.practiceArea.forEach((area) => {
@@ -231,7 +226,6 @@ function generatePortfolioSummary(clients) {
       name: c.name,
       revenue: c.averageRevenue || 0,
       strategicValue: c.strategicValue || 0,
-      status: c.status,
       practiceArea: c.practiceArea || [],
     }));
 
@@ -239,7 +233,6 @@ function generatePortfolioSummary(clients) {
     totalClients: clients.length,
     totalRevenue,
     avgStrategicValue: avgStrategicValue.toFixed(2),
-    statusBreakdown,
     practiceAreas,
     riskProfile,
     topClients,

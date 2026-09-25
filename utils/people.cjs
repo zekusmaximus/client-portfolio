@@ -188,11 +188,14 @@ function joinedPerson(row, prefix) {
  * Turn a joined client row into the API shape: `lead`, `secondChair` and
  * `originator` as `{ id, name, role, active }` or null, and the legacy fields
  * filled from them for a client saved under P3 (one with a lead). A client
- * without a lead keeps its stored legacy values (P6).
+ * without a lead keeps its stored legacy values (P6). Every client the API
+ * returns from the database passes through here, so this is also where the
+ * retired `status` column (P13; kept in the table for a rollback) is dropped.
  */
 function withPeopleFields(row) {
   const out = { ...row };
   for (const key of JOINED_KEYS) delete out[key];
+  delete out.status;
 
   const lead = joinedPerson(row, 'lead');
   const secondChair = joinedPerson(row, 'second_chair');

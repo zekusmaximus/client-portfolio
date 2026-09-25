@@ -430,7 +430,7 @@ function checkSheet(clients = [], { headerErrors = [], roster = [], existingByNa
 // conflict risk, practice area, notes) are in the base list and carry the
 // preserved value when absent, as before this change.
 const IMPORT_WRITE_COLUMNS = [
-  ['name', 'text'], ['status', 'text'], ['practice_area', 'text[]'],
+  ['name', 'text'], ['practice_area', 'text[]'],
   ['relationship_strength', 'numeric'], ['conflict_risk', 'text'],
   ['renewal_probability', 'numeric'], ['strategic_fit_score', 'numeric'],
   ['notes', 'text'], ['primary_lobbyist', 'text'], ['client_originator', 'text'],

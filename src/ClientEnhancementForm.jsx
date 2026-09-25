@@ -58,7 +58,6 @@ const ClientEnhancementForm = ({ onClose }) => {
   
   const [formData, setFormData] = useState({
     name: '',
-    status: 'Prospect',
     practiceArea: [],
     conflict_risk: 'Medium',
     // People as select values: a person id as a string, '' for none
@@ -103,7 +102,6 @@ const ClientEnhancementForm = ({ onClose }) => {
 
       setFormData({
         name: client.name || '',
-        status: client.status || 'Prospect',
         practiceArea: client.practiceArea || [],
         conflict_risk: client.conflict_risk || 'Medium',
         lead_id: client.lead_id ? String(client.lead_id) : '',
@@ -120,7 +118,6 @@ const ClientEnhancementForm = ({ onClose }) => {
       // Reset form for new client with an empty revenue row for current year
       setFormData({
         name: '',
-        status: 'Prospect',
         practiceArea: [],
         conflict_risk: 'Medium',
         lead_id: '',
@@ -330,35 +327,6 @@ const ClientEnhancementForm = ({ onClose }) => {
                 <p className="text-sm text-red-500 flex items-center gap-1">
                   <AlertCircle className="h-3 w-3" />
                   {errors.name}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="status">Status *</Label>
-              <NativeSelect
-                id="status"
-                value={formData.status}
-                onChange={(e) => handleFieldChange('status', e.target.value)}
-                className={errors.status ? 'border-red-500 focus:border-red-500' : ''}
-              >
-                <optgroup label="From the contract period (the CSV import sets these)">
-                  <option value="IF">In Force</option>
-                  <option value="P">Proposal</option>
-                  <option value="D">Done</option>
-                  <option value="H">Hold</option>
-                </optgroup>
-                <optgroup label="Set by hand">
-                  <option value="Active">Active</option>
-                  <option value="Prospect">Prospect</option>
-                  <option value="Inactive">Inactive</option>
-                  <option value="Former">Former</option>
-                </optgroup>
-              </NativeSelect>
-              {errors.status && (
-                <p className="text-sm text-red-500 flex items-center gap-1">
-                  <AlertCircle className="h-3 w-3" />
-                  {errors.status}
                 </p>
               )}
             </div>

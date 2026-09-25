@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import {
   ResponsiveContainer,
   PieChart,
@@ -202,7 +201,6 @@ const PartnerDeepDive = ({ partner, onClose }) => {
                       <TableHead>Client Name</TableHead>
                       <TableHead>Revenue</TableHead>
                       <TableHead>Strategic Value</TableHead>
-                      <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -212,9 +210,6 @@ const PartnerDeepDive = ({ partner, onClose }) => {
                         <TableCell>{formatRevenue(getClientRevenue(client))}</TableCell>
                         <TableCell className={getStrategicValueColor(client.strategicValue || 0)}>
                           {client.strategicValue?.toFixed(1) || '0.0'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">{client.status || 'Unknown'}</Badge>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -241,7 +236,6 @@ const PartnerDeepDive = ({ partner, onClose }) => {
                       <TableHead>Primary Lobbyist</TableHead>
                       <TableHead>Revenue</TableHead>
                       <TableHead>Strategic Value</TableHead>
-                      <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -252,9 +246,6 @@ const PartnerDeepDive = ({ partner, onClose }) => {
                         <TableCell>{formatRevenue(getClientRevenue(client))}</TableCell>
                         <TableCell className={getStrategicValueColor(client.strategicValue || 0)}>
                           {client.strategicValue?.toFixed(1) || '0.0'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{client.status || 'Unknown'}</Badge>
                         </TableCell>
                       </TableRow>
                     ))}
