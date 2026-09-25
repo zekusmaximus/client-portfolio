@@ -37,16 +37,18 @@ const model = partnershipModel(PEOPLE, CLIENTS, revenueOf);
 test('the load CSV: one row per person, the year in the headers, ratios against the role average', () => {
   const lines = buildLoadCsv(model, 2026).split('\r\n');
   assert.equal(lines[0],
-    'Person,Role,Active,Lead clients,Lead clients vs partner avg,Lead revenue 2026,Lead revenue vs partner avg,Lead effort,Lead effort vs partner avg,Second-chair clients,Second-chair clients vs role avg,Second-chair revenue 2026,Second-chair revenue vs role avg,Second-chair effort,Second-chair effort vs role avg');
+    'Person,Role,Active,Lead clients,Lead clients vs partner avg,Lead revenue 2026,Lead revenue vs partner avg,Lead effort,Lead effort vs partner avg,Second-chair clients,Second-chair clients vs role avg,Second-chair revenue 2026,Second-chair revenue vs role avg,Second-chair effort (20% share),Second-chair effort vs role avg');
   const rows = Object.fromEntries(lines.slice(1).map((line) => [line.split(',')[0], line]));
   assert.deepEqual(Object.keys(rows), ['Paula', 'Kevin', 'Jay', "Anna O'Hara"], 'lead books first, heaviest revenue first');
   // The partners average 1.5 clients, $83,500 and 5.25 effort; no partner is a
   // second chair, so their second-chair average is 0 and those ratios are blank
   assert.equal(rows.Kevin, 'Kevin,Partner,Y,2,1.33,82000,0.98,6,1.14,0,,0,,0,');
   assert.equal(rows.Paula, 'Paula,Partner,Y,1,0.67,85000,1.02,4.5,0.86,0,,0,,0,');
-  // Neither the only emeritus nor the only associate can lead or has a peer: blank ratios
-  assert.equal(rows.Jay, 'Jay,Emeritus,Y,0,,0,,0,,1,,72000,,3,');
-  assert.equal(rows["Anna O'Hara"], "Anna O'Hara,Associate,Y,0,,0,,0,,1,,85000,,4.5,");
+  // Neither the only emeritus nor the only associate can lead or has a peer:
+  // blank ratios. A second chair carries 20% of the client's effort (P10 as
+  // amended): Jay 20% of 3, Anna 20% of 4.5
+  assert.equal(rows.Jay, 'Jay,Emeritus,Y,0,,0,,0,,1,,72000,,0.6,');
+  assert.equal(rows["Anna O'Hara"], "Anna O'Hara,Associate,Y,0,,0,,0,,1,,85000,,0.9,");
 });
 
 test('csvCell: quotes, formulas and empty values', () => {
@@ -79,6 +81,15 @@ test('the report: summary, lead books, second chairs by role, each person\'s cli
   assert.doesNotMatch(html, /<Network>/);
   // No invented numbers
   assert.doesNotMatch(html, /[Cc]apacity/);
+  // The second-chair share (P10 as amended): the note, and each seat's effort column
+  assert.match(html, /A client's lead carries its full effort and its second chair 20% of it/);
+  assert.doesNotMatch(html, /counts in full for both its lead and its second chair/);
+  const jay = html.slice(html.indexOf('<h3>Jay '), html.indexOf('<h3>Anna'));
+  assert.match(jay, /<h4>Second chair on 1<\/h4>/);
+  assert.match(jay, /<th>Effort \(20%\)<\/th>/);
+  assert.match(jay, /<td>0\.6<\/td>/, "Jay's share of the client's effort of 3");
+  const kevin = html.slice(html.indexOf('<h3>Kevin '), html.indexOf('<h3>Jay '));
+  assert.match(kevin, /<td>3<\/td>/, 'the lead carries the full effort');
 });
 
 test('escapeHtml needs no DOM', () => {

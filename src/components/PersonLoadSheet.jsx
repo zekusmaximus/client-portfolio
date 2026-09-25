@@ -9,6 +9,8 @@ import {
   practiceAreasOf,
   practiceAreaBreakdown,
   revenueByYear,
+  secondChairEffort,
+  SECOND_CHAIR_EFFORT_SHARE,
 } from '../utils/load';
 
 const num = 'text-right tabular-nums';
@@ -33,14 +35,19 @@ const Figures = ({ load, ratios, year, against }) => (
   </div>
 );
 
-const ClientTable = ({ clients, year, revenueOf, otherLabel, otherOf }) => (
+const clientEffort = (client) => parseFloat(client.effort) || 0;
+
+// `effortOf` is the effort this person carries on the client: all of it as
+// lead, SECOND_CHAIR_EFFORT_SHARE of it as second chair (P10), so the column
+// adds up to the figure above it.
+const ClientTable = ({ clients, year, revenueOf, otherLabel, otherOf, effortOf = clientEffort, effortLabel = 'Effort' }) => (
   <Table>
     <TableHeader>
       <TableRow>
         <TableHead>Client</TableHead>
         <TableHead className="text-right">Revenue {year}</TableHead>
         <TableHead className="text-right">Strategic value</TableHead>
-        <TableHead className="text-right">Effort</TableHead>
+        <TableHead className="text-right">{effortLabel}</TableHead>
         <TableHead>{otherLabel}</TableHead>
         <TableHead>Practice areas</TableHead>
       </TableRow>
@@ -51,7 +58,7 @@ const ClientTable = ({ clients, year, revenueOf, otherLabel, otherOf }) => (
           <TableCell className="font-medium">{client.name}</TableCell>
           <TableCell className={num}>{formatMoney(revenueOf(client))}</TableCell>
           <TableCell className={num}>{strategic(client)}</TableCell>
-          <TableCell className={num}>{formatEffort(parseFloat(client.effort) || 0)}</TableCell>
+          <TableCell className={num}>{formatEffort(effortOf(client))}</TableCell>
           <TableCell>{otherOf(client) || '—'}</TableCell>
           <TableCell className="text-muted-foreground">{practiceAreasOf(client).join(', ') || '—'}</TableCell>
         </TableRow>
@@ -114,6 +121,8 @@ const PersonLoadSheet = ({ row, year, years, revenueOf, revenueOfYear, onClose }
                   revenueOf={revenueOf}
                   otherLabel="Lead"
                   otherOf={(c) => c.lead?.name}
+                  effortOf={(c) => secondChairEffort(clientEffort(c))}
+                  effortLabel={`Effort (${Math.round(SECOND_CHAIR_EFFORT_SHARE * 100)}%)`}
                 />
               ) : (
                 <p className="text-sm text-muted-foreground">Second chair on no clients.</p>

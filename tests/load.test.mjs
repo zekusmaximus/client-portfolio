@@ -10,6 +10,8 @@ import {
   formatRatio,
   bookYears,
   revenueByYear,
+  SECOND_CHAIR_EFFORT_SHARE,
+  secondChairEffort,
 } from '../src/utils/load.js';
 import { revenueForYear } from '../src/utils/revenue.js';
 import { resolveEffort } from '../src/utils/clientMetrics.js';
@@ -50,9 +52,10 @@ test('each person\'s lead book and second-chair load: clients, reporting-year re
   const row = (name) => model.rows.find((r) => r.person.name === name);
 
   assert.deepEqual([row('Kevin').lead.count, row('Kevin').lead.revenue, row('Kevin').lead.effort], [2, 100000, 7.5]);
-  assert.deepEqual([row('Kevin').second.count, row('Kevin').second.revenue], [1, 20000]);
+  // A second chair carries 20% of each client's effort (P10 as amended); counts and revenue are whole
+  assert.deepEqual([row('Kevin').second.count, row('Kevin').second.revenue, row('Kevin').second.effort], [1, 20000, 0.4]);
   assert.deepEqual([row('Paula').lead.count, row('Paula').lead.revenue, row('Paula').lead.effort], [2, 40000, 3]);
-  assert.deepEqual([row('Anna').second.count, row('Anna').second.revenue, row('Anna').second.effort], [2, 70000, 6.5]);
+  assert.deepEqual([row('Anna').second.count, row('Anna').second.revenue, row('Anna').second.effort], [2, 70000, 1.3]);
   assert.deepEqual([row('Jay').second.count, row('Jay').lead.count], [1, 0]);
   assert.equal(row('Joe').lead.count, 0);
   assert.deepEqual(row('Kevin').lead.clients.map((c) => c.id), [CLIENTS[0].id, CLIENTS[1].id]);
@@ -60,6 +63,26 @@ test('each person\'s lead book and second-chair load: clients, reporting-year re
   assert.deepEqual(model.unled.map((c) => c.id), [CLIENTS[5].id]);
   assert.deepEqual(model.noSecondChair.map((c) => c.id), [CLIENTS[3].id]);
   assert.deepEqual(model.totals, { clients: 6, revenue: 165000, effort: 13.5 });
+});
+
+test('P10 as amended: the lead carries a client\'s full effort, the second chair 20% of it', () => {
+  assert.equal(SECOND_CHAIR_EFFORT_SHARE, 0.2);
+  assert.equal(secondChairEffort(3), 3 * 0.2);
+  assert.equal(secondChairEffort(undefined), 0);
+  const model = partnershipModel(PEOPLE, CLIENTS, revenueOf);
+  const row = (name) => model.rows.find((r) => r.person.name === name);
+  // Jay seconds one client of effort 3: 0.6 of effort, the whole client and all its revenue
+  assert.equal(row('Jay').second.effort, 3 * SECOND_CHAIR_EFFORT_SHARE);
+  assert.deepEqual([row('Jay').second.count, row('Jay').second.revenue], [1, 60000]);
+  // Kevin leads the same client and carries its full effort
+  assert.equal(row('Kevin').lead.clients[0].effort, 3, 'the client\'s own effort does not change');
+  // The second-chair average and ratios use the share: Anna 1.3, Ben 0
+  assert.equal(model.averages.associate.second.effort, 1.3 / 2);
+  assert.equal(row('Anna').secondRatio.effort, 2);
+  // The partners' second-chair average: Kevin's one seat on a client of effort 2
+  assert.equal(model.averages.partner.second.effort, (2 * SECOND_CHAIR_EFFORT_SHARE) / 6);
+  // The book's total effort counts each client once, in full
+  assert.equal(model.totals.effort, 13.5);
 });
 
 test('averages are over the active people in the role, those with no clients included', () => {
