@@ -13,10 +13,11 @@ data scoping by design).
 ## Development Commands
 
 ### Frontend Development
-- `npm run dev` - Start Vite development server for React frontend
-- `npm run build` - Build production React app
-- `npm run preview` - Preview production build locally
-- `npm run lint` - Run ESLint on JS/JSX/CJS files (errors fail the gate, warnings are informational)
+- `VITE_API_BASE_URL=http://localhost:5000 npm run dev` - Vite dev server on http://localhost:5173 (PowerShell: `$env:VITE_API_BASE_URL = 'http://localhost:5000'; npm run dev`). Without the variable the page calls relative `/api`, which Vite does not proxy
+- `VITE_API_BASE_URL=https://gbacpod.com npm run build:prod` - the production build CI and Netlify run (`NODE_ENV=production vite build`, POSIX syntax; on Windows use `npx vite build`, production is Vite's default mode). A production build refuses a missing or non-`https://` `VITE_API_BASE_URL`
+- `npm run build` - `vite build` without the `NODE_ENV` prefix; `npm run preview` serves `dist/`
+- `npm run lint` - Run ESLint on JS/JSX/CJS files (errors fail the gate, warnings are informational; 7 `exhaustive-deps` warnings are expected, D3)
+- `npm run security:audit` / `npm run security:audit-fix` - `npm audit` / non-breaking `npm audit fix`; never `--force` (the remaining advisories need majors, `deploy/README.md` section 12)
 
 ### Backend Development
 - `npm start` or `node server.cjs` - Start Express.js backend server on port 5000
@@ -37,33 +38,37 @@ This is a **Client Portfolio Optimization Dashboard** for government relations a
 
 ### Frontend (React + Vite)
 - **Framework**: React 18 with Vite bundler
-- **State Management**: Zustand with localStorage persistence (`src/portfolioStore.js`)
+- **State Management**: Zustand (`src/portfolioStore.js`); clients come from the API, and only UI state is persisted to localStorage
 - **UI Library**: Shadcn/UI components with Tailwind CSS
 - **Charts**: Recharts for data visualizations
 - **Main Entry**: `src/main.jsx` renders `src/App.jsx`
 
 ### Backend (Node.js + Express)
-- **Server**: Express.js server in `server.cjs` (port 5000)
+- **Server**: Express.js server in `server.cjs` (`PORT`, default 5000; Render sets its own). API only: the page is served by Netlify, and Express serves no static files
 - **API Routes**:
-  - `/api/auth/*` - login, logout, me, change-password (`routes/auth.cjs`)
-  - `/api/data/*` - Data processing endpoints (`data.cjs`)
-  - `/api/claude/analyze-portfolio`, `/api/claude/strategic-advice`, `/api/claude/client-recommendations` - the AI Advisor tab (`claude.cjs`)
+  - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/change-password` (`routes/auth.cjs`)
+  - `GET /api/data/clients`, `POST /api/data/clients`, `PUT /api/data/clients/:id`, `DELETE /api/data/clients/:id`, `POST /api/data/process-csv` (`data.cjs`). `data.cjs` also still defines `POST /update-client`, `/optimize-portfolio` and `/analytics`, which nothing calls and which use a second, retired scoring formula (review 4.5; deleting them is Tier 2)
+  - `POST /api/claude/analyze-portfolio`, `/api/claude/strategic-advice`, `/api/claude/client-recommendations` - the AI Advisor tab (`claude.cjs`)
   - `POST /api/scenarios/transition-plan` - one succession transition plan for one client (`routes/scenarios.cjs`)
+  - `GET /api/health` - no sign-in; fields under "Auth, sessions and rate limits" below and in `deploy/README.md` section 10
 - **AI service**: every Anthropic call goes through `services/anthropic.cjs` (see "AI Integration" below)
 - **Data Processing**: Client analysis engine in `clientAnalyzer.cjs`
 
 ### Key Application Components
 
 #### Core Views (Tab-based Navigation)
-1. **Data Upload** (`DataUploadManager.jsx`) - CSV import with drag-and-drop
-2. **Dashboard** (`DashboardView.jsx`) - Analytics and visualizations
-3. **Client Details** (`ClientListView.jsx` + `ClientEnhancementForm.jsx`) - Client management
-4. **AI Advisor** (`AIAdvisor.jsx`) - Claude API integration for strategic advice
-5. **Scenarios** (`ScenarioModeler.jsx`) - the three-stage succession workflow (`src/components/succession/SuccessionScenario.tsx`); the Growth and capacity scenarios were deleted in WP2 (D8)
+Six tabs in `src/App.jsx`, switched by the store's `currentView` (a hand-rolled
+tabs component, `src/components/ui/tabs.jsx`; no router, the URL never changes):
+1. **Data Upload** (`DataUploadManager.jsx`, `data-upload`) - CSV import through a file picker, parsed in the browser by PapaParse and posted to `/api/data/process-csv`
+2. **Dashboard** (`DashboardView.jsx`, `dashboard`) - Analytics and visualizations
+3. **Client Details** (`ClientListView.jsx` + `ClientEnhancementForm.jsx`, `client-details`) - Client management
+4. **Partnership** (`PartnershipAnalytics.jsx`, `partnership`) - per-partner metrics, marking partners as departing, redistribution modelling, and the Export Analysis menu (partnership report in a print window, transition plan and capacity CSVs)
+5. **AI Advisor** (`AIAdvisor.jsx`, `ai`) - Claude API integration for strategic advice
+6. **Scenarios** (`ScenarioModeler.jsx`, `scenarios`) - the three-stage succession workflow (`src/components/succession/SuccessionScenario.tsx`); the Growth and capacity scenarios were deleted in WP2 (D8)
 
 #### Data Flow
 1. CSV upload → `data.cjs` processes via `clientAnalyzer.cjs`; the pure helpers in `utils/csvImport.cjs` read the years from the header and plan the revenue writes
-2. Client data stored in Zustand store with localStorage persistence
+2. Clients live in Postgres; the store loads them with `fetchClients()` after sign-in and after every write. localStorage keeps only UI state (`optimizationParams`, `currentView`, `isModalOpen`, `selectedClient`)
 3. Strategic value calculations use the single scorer in `utils/strategic.cjs` (re-exported by `clientAnalyzer.cjs`)
 4. AI endpoints need `ANTHROPIC_API_KEY`; without it they answer 503 `AI is not configured on the server (missing API key).` and `/api/health` reports `anthropic: not configured`
 
@@ -138,24 +143,37 @@ Tier 0 work.
 - `middleware/rateLimit.cjs` - the four limiters (D11)
 - `utils/passwordPolicy.cjs` - `validatePassword`, `validateUsername` (pure, importable from tests)
 - `db.cjs` - the one `pg` pool (`DATABASE_URL`, `DATABASE_SSL`); pool errors are logged, never fatal
+- `init-db.sql` - the schema, applied idempotently by `server.cjs` at every start. `clients.user_id` is `ON DELETE CASCADE`: deleting a user deletes the clients that user imported
+- `create-admin.cjs`, `scripts/reset-password.cjs` - add a partner, reset a password
 
 ### Frontend Structure
 - `src/App.jsx` - Main application with tab navigation
 - `src/portfolioStore.js` - Zustand state management
+- `src/api.js` - every API call; prefixes `VITE_API_BASE_URL`, sends the cookie (`credentials: 'include'`)
 - `src/components/ui/` - Reusable UI components (button, card, etc.)
 - Core feature components at `src/` root level
 
+### Deployment, operations and docs
+- `netlify.toml` - the page's Netlify build (command, publish directory, Node version) and its security headers (D13)
+- `deploy/README.md` - the runbook: hosting, rebuild, deploy, rollback, partners, secrets, logs, health, uptime, remaining advisories
+- `deploy/backup/` - the nightly backup (WP4) and its install and restore guides
+- `.env.example` - the one environment template
+- `.github/workflows/ci.yml` (lint, test, build on every PR and push to `main`), `.github/workflows/backup-selftest.yml`
+- `docs/plans/tier-0.md` - the plan and its status table; `docs/archive/` - superseded status documents, history only
+
 ## Environment Configuration
 
-### Hosting (confirmed 2026-09-24; the runbook is WP5)
-- **Frontend:** built and served by Netlify (project `client-portfolio2`, auto-deployed from `main`) at https://gbacpod.com. `VITE_API_BASE_URL` is a Netlify build variable.
-- **Backend:** a Render web service running `node server.cjs` behind Render's proxy, with a Render PostgreSQL database; the browser reaches it at https://client-portfolio-backend.onrender.com. The page and the API are therefore different sites (this shapes the cookie, below).
-- Server environment variables live in the Render dashboard, not in a `.env` file; changing one, or restarting, means a redeploy. Render has `FRONTEND_URL=https://gbacpod.com`, `TRUST_PROXY_HOPS=1`, `SESSION_TTL=7d` and `DATABASE_SSL=no-verify` set.
-- The plan's nginx/VPS assumptions (D13, section 9, WP5) predate these facts.
+### Hosting and deploying (runbook: `deploy/README.md`)
+- **Frontend:** built and served by Netlify (project `client-portfolio2`, auto-deployed from `main`) at https://gbacpod.com. `netlify.toml` pins the build (`npm run build:prod`, publish `dist`, `NODE_VERSION` 22, repository root as base) and sets the page's headers: HSTS without preload, nosniff, `strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, and a CSP of `'self'` plus `connect-src https://client-portfolio-backend.onrender.com`. `VITE_API_BASE_URL` is a Netlify UI build variable, deliberately not in `netlify.toml`. No SPA redirect: there are no client-side routes.
+- **CSP rules for new code:** the page may load only its own scripts, styles, images (`data:` allowed) and fonts, and may call only itself and the API. Never add `'unsafe-inline'` or `'unsafe-eval'` to `script-src`; an external font, script or API needs a deliberate `netlify.toml` change. If the API's address changes, change `VITE_API_BASE_URL`, `connect-src` and the uptime monitor together.
+- **Backend:** a Render web service (`client-portfolio-backend`) running `node server.cjs` behind Render's proxy, with a Render PostgreSQL database; the browser reaches it at https://client-portfolio-backend.onrender.com. The page and the API are therefore different sites (this shapes the cookie, below). No `render.yaml` or Blueprint in Tier 0: linking one can change the live services.
+- **Deploying is merging to `main`:** Netlify builds the page, and Render deploys the API if its auto-deploy is on. Then check `/api/health` and the work package's acceptance list. Pull requests get a Netlify Deploy Preview; the API has none. Rollback is per provider (runbook section 5).
+- Server environment variables live in the Render dashboard, not in a `.env` file; changing one means a redeploy. Render has `FRONTEND_URL=https://gbacpod.com`, `TRUST_PROXY_HOPS=1`, `SESSION_TTL=7d` and `DATABASE_SSL=no-verify` set (confirmed 2026-09-24).
+- An external uptime monitor (UptimeRobot, keyword `"status":"OK"`, every 5 minutes) watches `/api/health` once Jeff sets it up (runbook section 11).
 
 ### Server Environment Variables (`.env.example` locally, the Render dashboard in production)
 - `NODE_ENV` - `production` on Render: Secure SameSite=None cookie, HTTPS redirect, `FRONTEND_URL` as the CORS allowlist
-- `PORT` - Server port (defaults to 5000)
+- `PORT` - Server port (defaults to 5000; Render sets its own, and the server binds `0.0.0.0`)
 - `DATABASE_URL` - Postgres connection string. Do not put `?sslmode=` in it: `pg` reads it after the `ssl` option, so it overrides `DATABASE_SSL`
 - `DATABASE_SSL` - `false` (default, local Postgres), `no-verify` (TLS without certificate checks; Render), or `verify` (with `DATABASE_SSL_CA=<path>` for a private CA). Any other value stops the server at startup
 - `JWT_SECRET` - signs the session JWT; rotating it signs every partner out
@@ -176,7 +194,8 @@ Tier 0 work.
 - **Rate limits (D11, `middleware/rateLimit.cjs`, express-rate-limit 8):** login 20 per 15 min per IP (`/login` and `/change-password` share it) and 5 failed per 15 min per username (case-folded; successful logins do not count); AI 30 per hour per partner and 300 per day for the firm, one budget across `/api/claude/*` and `/api/scenarios/*`, mounted after `authenticateToken`. Over the limit: 429 `{ success: false, error: 'Too many requests. Try again later.' }`, which the login page shows verbatim, and a `rate_limited` log line with the limiter and key. Counters are in memory: a redeploy resets them. A custom `keyGenerator` that falls back to the IP must wrap it in `ipKeyGenerator` (the library logs `ERR_ERL_KEY_GEN_IPV6` otherwise). Five wrong passwords lock that username for 15 minutes, including for its owner.
 - **Passwords:** `POST /api/auth/change-password` `{ currentPassword, newPassword }` (the header's "Change password" dialog): 200, 400 with the policy's errors, 401 for a wrong current password. `npm run reset:password` for a forgotten one. Neither ends sessions already issued (the JWT is stateless); rotate `JWT_SECRET` to sign everyone out.
 - **Database:** a dropped connection logs `{"event":"pg_pool_error",...}`; the pool reconnects on the next query and the process keeps running.
-- **Health:** `GET /api/health` returns `status`, `timestamp`, `uptimeSeconds`, `environment` and `services` (`database`, `anthropic`, `model`).
+- **Health:** `GET /api/health` needs no sign-in, always answers HTTP 200, and returns `status` (`OK`, or `DEGRADED` when the database query fails or no Anthropic key is set), `timestamp`, `uptimeSeconds`, `environment` and `services` (`database`, `anthropic`, `model`). A monitor must check the body for `"status":"OK"`, not the status code.
+- **Security headers:** `server.cjs` sets its own on API responses (HSTS in production, `X-Frame-Options`, nosniff, a CSP); the page's come from `netlify.toml`.
 
 ### Backups (WP4, D12)
 - **Layer 1** is whatever Render provides for the database's instance type (backups, point-in-time recovery); `deploy/backup/INSTALL.md` step 1 confirms it in the dashboard. As installed on 2026-09-24 the database is Basic-256mb on PostgreSQL 18 (`PG_MAJOR=18`) and the dashboard shows no point-in-time recovery, so Layer 2 is the only backup.
@@ -189,8 +208,8 @@ Tier 0 work.
 ## Development Notes
 
 ### State Management
-- All client data persists in browser localStorage via Zustand
-- Store includes clients array, UI state, and analytics cache
+- Clients come from the API (`fetchClients()` after sign-in, a CSV import, and every add, update or delete); the store holds them in memory and persists only UI state to localStorage (`partialize` in `portfolioStore.js`)
+- Succession plans, partner "departing" flags and reassignments are in-memory only (review section 7; server-side persistence is Tier 2)
 - AI Advisor answers live in the store (`aiResults`, `aiError`, not persisted, cleared on logout) so switching tabs, which unmounts the tab content, does not discard a paid answer
 - Use `usePortfolioStore()` hook to access state in components
 
