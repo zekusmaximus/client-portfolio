@@ -6,8 +6,9 @@ import { computeReportingYear, revenueForYear } from './utils/revenue';
 import { toggleId, withChoice } from './utils/departure';
 import { approvalBlocker, pinnedChoice, syncTransitions } from './utils/transitionPlans';
 
-// AI Advisor answers start empty and go back to empty on logout.
-const EMPTY_AI_RESULTS = { portfolioAnalysis: null, strategicAdvice: null, clientRecommendations: null };
+// The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
+// brief. They start empty and go back to empty on logout.
+const EMPTY_AI_RESULTS = { ask: null, brief: null };
 
 // The Scenarios workflow (docs/plans/people-and-second-chair.md, Phase 5,
 // P11): the open stage, the ids of the people leaving, and the partner's
@@ -278,7 +279,7 @@ const usePortfolioStore = create(
       
       setCurrentView: (view) => set({ currentView: view }),
 
-      // AI Advisor answers: one slot per action (portfolioAnalysis, strategicAdvice, clientRecommendations)
+      // The AI tab's answers: one slot per kind (ask, brief), each the route's whole answer
       setAiResult: (key, data) => set((state) => ({ aiResults: { ...state.aiResults, [key]: data } })),
       setAiError: (aiError) => set({ aiError }),
 
