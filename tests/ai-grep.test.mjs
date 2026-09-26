@@ -1,12 +1,13 @@
 // The grep assertions from docs/plans/tier-0.md 5.3 / 5.4, widened in Tier 1's
 // WP1 (docs/plans/tier-1.md, section 3 item 1), run in CI: no retired model
 // ids, no sampling parameters, no OpenAI key fallback and no deleted endpoints
-// anywhere in the app code; exactly one module that constructs an Anthropic
+// anywhere in the app code (and, from WP3, no /claude/ route in the page or the
+// server's mounts); exactly one module that constructs an Anthropic
 // client or calls the Messages API (create, stream or countTokens); and the
 // one request carries only what T1 allows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,6 +37,20 @@ const files = sourceFiles();
 test('no retired model, sampling parameter, OpenAI fallback or deleted endpoint survives in app code', () => {
   const legacy = /temperature|claude-3-5|claude-sonnet-4|OPENAI_API_KEY|\/api\/claude\/analyze|bulk-transition-plans|scenarios\/growth|scenarios\/capacity|scenarios\/succession/;
   assert.deepEqual(filesMatching(legacy, files), []);
+});
+
+// Tier 1 WP3 (docs/plans/tier-1.md, section 8): the AI Advisor's three
+// consulting-deck routes (/api/claude/*) and claude.cjs are deleted; Ask the
+// book and the brief replaced them (routes/ai.cjs). Nothing in the page or the
+// server's mounts may call or serve them again.
+test('the /api/claude routes are gone: claude.cjs, its mount, and every call from the page', () => {
+  assert.equal(existsSync(join(root, 'claude.cjs')), false);
+  const pageAndServer = files.filter((file) => {
+    const path = relative(root, file).split('\\').join('/');
+    return path.startsWith('src/') || path === 'server.cjs';
+  });
+  assert.ok(pageAndServer.some((file) => file.endsWith('AIAdvisor.jsx')), 'the page is scanned');
+  assert.deepEqual(filesMatching(/\/claude\//, pageAndServer), []);
 });
 
 test('services/anthropic.cjs is the only module that builds an Anthropic client or calls the Messages API', () => {

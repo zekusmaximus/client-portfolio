@@ -31,27 +31,6 @@ exports.listWithRevenues = async () => {
   return rows.map(withPeopleFields);
 };
 
-/* Get single client with revenues */
-exports.get = async (clientId) => {
-  const { rows } = await db.query(
-    `SELECT c.*, jsonb_agg(
-         jsonb_build_object(
-           'id', r.id,
-           'year', r.year,
-           'revenue_amount', r.revenue_amount
-         ) ORDER BY r.year
-       ) AS revenues,
-       ${CLIENT_PEOPLE_COLUMNS}
-     FROM clients c
-     LEFT JOIN client_revenues r ON r.client_id = c.id
-     ${CLIENT_PEOPLE_JOINS}
-     WHERE c.id = $1
-     GROUP BY c.id, ${CLIENT_PEOPLE_GROUP_BY}`,
-    [clientId]
-  );
-  return rows[0] ? withPeopleFields(rows[0]) : rows[0];
-};
-
 /* ---------- Stage 4: Metrics helpers ---------- */
 
 /**
@@ -79,29 +58,4 @@ exports.listWithMetrics = async () => {
  });
 
  return calculateStrategicScores(enriched);
-};
-
-/**
- * Get single client with calculated metrics
- * @param {number|string} clientId
- * @returns {Promise<Object|null>}
- */
-exports.getWithMetrics = async (clientId) => {
- const client = await exports.get(clientId);
- if (!client) return null;
-
- const scored = calculateStrategicScores([
-   {
-     ...client,
-     revenue: revenueObjectFromRows(client.revenues),
-     timeCommitment: client.time_commitment || 40,
-     relationshipStrength: client.relationship_strength || 5,
-     conflictRisk: client.conflict_risk || 'Medium',
-     renewalProbability: client.renewal_probability || 0.7,
-     strategicFitScore: client.strategic_fit_score || 5,
-     practiceArea: client.practice_area || [],
-   },
- ]);
-
- return scored[0];
 };
