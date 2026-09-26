@@ -243,6 +243,66 @@ describe('init-db.sql on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_S
   });
 });
 
+// --- stickiness: "not rated" survives a restart (Tier 1 WP2) ---------------
+
+// init-db.sql runs at every start. Its stickiness backfill (from the legacy
+// relationship_intensity, which defaults to 5 on every new row) once ran at
+// every start too, and turned each unrated client into a 3 at the next one;
+// the book (utils/book.cjs, T4 and T5) then counted it as rated and safe.
+const stickiness = async (db) =>
+  (await db.query('SELECT name, stickiness, relationship_intensity FROM clients ORDER BY name')).rows
+    .map((r) => [r.name, r.stickiness, r.relationship_intensity]);
+
+// Production's clients table before the stickiness column: the columns this
+// test needs, with relationship_intensity defaulting to 5 as it does there
+const PRE_STICKINESS_SQL = `
+  CREATE TABLE users (id SERIAL PRIMARY KEY, username VARCHAR(255) UNIQUE NOT NULL, password_hash VARCHAR(255) NOT NULL);
+  CREATE TABLE clients (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    relationship_intensity INTEGER DEFAULT 5,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE client_revenues (
+    id SERIAL PRIMARY KEY,
+    client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    year INTEGER NOT NULL,
+    revenue_amount NUMERIC(12, 2) NOT NULL
+  );`;
+
+describe('stickiness on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  test('an unrated client stays unrated across restarts, and a rating stays as picked', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      // As the import and the client form write them: no relationship_intensity,
+      // so the column's default of 5 applies
+      await db.query(`INSERT INTO clients (name, stickiness) VALUES ('Unrated', NULL), ('Cold', 1), ('Bond', 5)`);
+      const before = await stickiness(db);
+      assert.deepEqual(before, [['Bond', 5, 5], ['Cold', 1, 5], ['Unrated', null, 5]]);
+
+      await applyInit(db);
+      await applyInit(db);
+      assert.deepEqual(await stickiness(db), before);
+    });
+  });
+
+  test('a database from before the stickiness column is seeded once from relationship_intensity, then left alone', async () => {
+    await withDatabase(async (db) => {
+      await db.query(PRE_STICKINESS_SQL);
+      await db.query(`INSERT INTO clients (name, relationship_intensity) VALUES ('High', 8), ('Low', 1), ('Unknown', NULL)`);
+
+      await applyInit(db);
+      assert.deepEqual(await stickiness(db), [['High', 4, 8], ['Low', 1, 1], ['Unknown', null, null]]);
+
+      // A partner clears one rating (a blank Stickiness cell): the next start keeps it cleared
+      await db.query(`UPDATE clients SET stickiness = NULL WHERE name = 'High'`);
+      await applyInit(db);
+      assert.deepEqual(await stickiness(db), [['High', null, 8], ['Low', 1, 1], ['Unknown', null, null]]);
+    });
+  });
+});
+
 // --- people (docs/plans/people-and-second-chair.md, P1-P5) -----------------
 
 // init-db.sql as it was before the people section: everything above its first

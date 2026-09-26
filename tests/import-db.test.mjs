@@ -472,7 +472,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -599,6 +599,54 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.deepEqual(after.Paula, [1, 0, 1]);
     assert.deepEqual(after.Jay, [0, 1, 1]);
     assert.deepEqual(after.Brendan, [0, 0, 0]);
+  });
+
+  // Tier 1 WP2 (docs/plans/tier-1.md, section 7): the book as the AI sees it,
+  // built by utils/book.cjs from listWithMetrics on this table shape, right
+  // after the section 3 template was imported into the empty book above
+  test('WP2: GET /api/ai/book lists every imported client once and each person\'s lead count as the People list counts it; 401 without sign-in', async () => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.ok(health.features.includes('ai-book'));
+    const anonymous = await fetch(`${base}/api/ai/book`);
+    assert.equal(anonymous.status, 401);
+
+    const { status, body } = await call('GET', '/api/ai/book');
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.deepEqual(Object.keys(body).sort(), ['chars', 'clientCount', 'estimatedTokens', 'peopleCount', 'reportingYear', 'success', 'text']);
+    assert.equal(body.success, true);
+    assert.equal(body.reportingYear, 2026);
+    assert.equal(body.chars, body.text.length);
+    assert.equal(body.estimatedTokens, Math.round(body.text.length / 4));
+
+    // Every client once, in the book's client table
+    const { body: list } = await call('GET', '/api/data/clients');
+    assert.equal(body.clientCount, list.clients.length);
+    const tableRows = (from, to) => {
+      const part = body.text.slice(body.text.indexOf(from), to ? body.text.indexOf(to) : undefined);
+      return part.split('\n')
+        .filter((line) => line.startsWith('| ') && !line.startsWith('| ---') && !/^\| (Name|Client|Year) \|/.test(line))
+        .map((line) => line.slice(2, -2).split(' | '));
+    };
+    const clients = tableRows('## Clients');
+    assert.deepEqual(clients.map((c) => c[0]).sort(), list.clients.map((c) => c.name).sort());
+    assert.deepEqual(clients.map((c) => c.slice(0, 3)).sort(), [[ENERGY, 'Paula', 'none'], [HEALTH, 'Kevin', 'Jay']]);
+
+    // Each person the book lists: lead and second-chair counts as the People list's
+    const counts = await peopleCounts();
+    const people = tableRows('## People', '## Totals');
+    const listed = Object.entries(counts).filter(([, [leads, seconds]]) => leads > 0 || seconds > 0).map(([name]) => name);
+    for (const name of listed) assert.ok(people.some((p) => p[0].replace(/ \(inactive\)$/, '') === name), `${name} is listed`);
+    for (const [name, leads, , , , seconds] of people) {
+      const [leadCount, secondCount] = counts[name.replace(/ \(inactive\)$/, '')];
+      assert.equal(leads === 'n/a' ? 0 : Number(leads.split(' ')[0]), leadCount, `${name}'s lead count`);
+      assert.equal(Number(seconds.split(' ')[0]), secondCount, `${name}'s second-chair count`);
+    }
+    assert.equal(body.peopleCount, people.length);
+
+    // The Energy Coalition's note stays out; no uuid is in the text (an
+    // integer id is a number like any other, so only the uuids are checked)
+    assert.ok(!body.text.includes('Renewal talks in spring'));
+    if (shape.idType === 'uuid') for (const c of list.clients) assert.ok(!body.text.includes(String(c.id)), `no id: ${c.id}`);
   });
 
   // Contract status is retired (docs/plans/people-and-second-chair.md, P13):
