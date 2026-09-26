@@ -18,6 +18,7 @@ import { formatClientName } from './utils/textUtils';
 import Markdown from 'react-markdown';
 import { apiClient, apiErrorMessage } from './api';
 import { getEnhancedClientCount } from './utils/clientUtils';
+import AIBookPanel from './components/AIBookPanel';
 
 // One AI answer: the markdown body plus the "cut off" / "declined" notices.
 // react-markdown at its defaults renders no raw HTML, so the model's output is
@@ -231,6 +232,9 @@ const AIAdvisor = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* The book as the AI sees it (Tier 1 WP2) */}
+      <AIBookPanel />
 
       {/* Error Display */}
       {error && (

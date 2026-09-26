@@ -53,15 +53,27 @@ CREATE INDEX IF NOT EXISTS idx_client_revenues_client_id ON client_revenues(clie
 CREATE INDEX IF NOT EXISTS idx_client_revenues_year ON client_revenues(year);
 
 -- Stickiness + effort inputs (idempotent; also migrates pre-existing databases).
--- ADD COLUMN IF NOT EXISTS is a no-op when the columns already exist above.
-ALTER TABLE clients ADD COLUMN IF NOT EXISTS stickiness SMALLINT;
+-- A database from before them gets the stickiness column and, in the same
+-- start and only then, a one-time backfill: stickiness (1-5) seeded from the
+-- legacy relationship_intensity (1-10). The backfill once ran at every start,
+-- and relationship_intensity defaults to 5 on every new row, so it turned each
+-- client left unrated (a blank Stickiness cell, or no pick in the form) into a
+-- 3 at the next start; "not rated" never survived a deploy (found in
+-- docs/plans/tier-1.md WP2; tests/schema.test.mjs). A Render rollback to a file
+-- from before this guard runs that backfill again at its start.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+     WHERE attrelid = 'clients'::regclass AND attname = 'stickiness' AND NOT attisdropped
+  ) THEN
+    ALTER TABLE clients ADD COLUMN stickiness SMALLINT;
+    UPDATE clients
+       SET stickiness = GREATEST(1, LEAST(5, ROUND(relationship_intensity / 2.0)))::smallint
+     WHERE relationship_intensity IS NOT NULL;
+  END IF;
+END $$;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS high_maintenance BOOLEAN DEFAULT false;
-
--- One-time backfill: seed stickiness (1-5) from legacy relationship_intensity (1-10).
--- Only fills rows not yet set, so re-running never clobbers a partner's chosen value.
-UPDATE clients
-SET stickiness = GREATEST(1, LEAST(5, ROUND(relationship_intensity / 2.0)))::smallint
-WHERE stickiness IS NULL AND relationship_intensity IS NOT NULL;
 
 -- clients.user_id: ON DELETE CASCADE becomes ON DELETE SET NULL, so deleting a
 -- user can never delete clients or, through them, revenue rows. Databases
