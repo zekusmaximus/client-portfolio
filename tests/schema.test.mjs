@@ -676,9 +676,11 @@ async function answersCatalog(db) {
         FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
        WHERE a.attrelid = 'ai_answers'::regclass AND a.attnum > 0 AND NOT a.attisdropped
        ORDER BY a.attnum`),
+    // Not the NOT NULLs, which the columns above carry: PostgreSQL 18 also
+    // lists each as a constraint of its own (contype 'n'), 16 does not
     constraints: await rows(`
       SELECT oid::bigint::text AS oid, conname, pg_get_constraintdef(oid) AS definition
-        FROM pg_constraint WHERE conrelid = 'ai_answers'::regclass ORDER BY conname`),
+        FROM pg_constraint WHERE conrelid = 'ai_answers'::regclass AND contype <> 'n' ORDER BY conname`),
     indexes: await rows(`SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'ai_answers' ORDER BY indexname`),
   };
 }
