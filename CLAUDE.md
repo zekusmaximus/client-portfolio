@@ -449,8 +449,9 @@ Tier 0 work.
 - Live endpoints: `POST /api/ai/ask` and `POST /api/ai/brief` (Tier 1 WP3;
   prompts in `utils/askPrompts.cjs`), and `POST /api/scenarios/transition-plan`
   (`utils/transitionPlan.cjs`; one client per request, the succession
-  workflow calls it with concurrency 2 and shows progress, D9). Its request carries the roster of people staying, with
-  the lead and second-chair loads the page's `partnershipModel` computes;
+  workflow calls it with concurrency 2 and shows progress, D9). Its request
+  carries the roster of people staying, with the lead and second-chair loads
+  the page's `partnershipModel` computes;
   `checkRoster` keeps it to at most 50 active people on the People list who
   are not leaving (the list's names and roles, whatever the page sent, after
   undoing the request sanitizer's escaping), and the prompt asks for a
