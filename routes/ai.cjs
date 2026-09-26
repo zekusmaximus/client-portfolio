@@ -8,6 +8,7 @@ const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs
 const { buildBook } = require('../utils/book.cjs');
 const { systemBlocks, askTurn, briefTurn, checkQuestion, FIRM_TIME_ZONE } = require('../utils/askPrompts.cjs');
 const { answerRow, readAnswerId, readListQuery } = require('../utils/aiAnswers.cjs');
+const { sseEvent, ssePing, wantsStream, pingInterval, SSE_HEADERS } = require('../utils/sse.cjs');
 const { saveAnswer, listAnswers, getAnswer, monthSummary } = require('../models/aiAnswerModel.cjs');
 
 // The AI routes that work on the whole book (docs/plans/tier-1.md): the book
@@ -50,6 +51,12 @@ router.get('/book', async (req, res) => {
 
 const MAX_TOKENS = 32000; // T11: thinking and the answer together
 
+// A comment line on a streamed answer this often until done (WP5, T9): the
+// model thinks before its first words, for minutes on a long answer, and the
+// proxies in between may close a connection that stays silent.
+// AI_STREAM_PING_MS is for tests; the default is 15 seconds.
+const PING_MS = pingInterval(process.env.AI_STREAM_PING_MS);
+
 // One answer on the whole book: Ask (a question) or the brief (question
 // null). The system blocks are the same for both and for every question, so
 // the book is read from the prompt cache within five minutes (T8).
@@ -57,7 +64,43 @@ const MAX_TOKENS = 32000; // T11: thinking and the answer together
 // `servedBy` is the one that answered, which differs after a fallback (T10).
 // The answer is saved (WP4, T12) and returned with the saved row's `id`; a
 // failed save returns it with `saved: false` and id null, never an error.
+//
+// Streamed (WP5, T9) when the request carries Accept: text/event-stream: the
+// headers go out only when Anthropic's stream produces its first event, so
+// everything before it (sign-in, the rate limits and the question check,
+// ahead of this function; the empty book, a missing key, an upstream error
+// before its first event) answers JSON as it always has. Then a `start`
+// event, a `text` event for each piece of the answer, a ping every PING_MS,
+// and `done` with the saved answer, or an `error` event for a failure after
+// the stream opened. `done` carries the JSON answer's fields but `success`,
+// `kind` and `question` (the page sent them), with the saved row's id as
+// `answerId`, as section 10 names it and the transition plan's response
+// does; and `answer`, the text as saved, which the page shows in place of
+// the pieces it joined: separate text blocks are saved one to a line,
+// trimmed, and a refusal nothing rescued discards what streamed (T10).
+// When the page's connection closes, the route stops writing and lets the
+// call finish and save (T15): the answer appears under Recent answers.
 async function answer(req, res, { kind, question }) {
+  const streaming = wantsStream(req.get('accept'));
+  const userId = req.user.userId;
+  // open: the stream's headers are sent; closed: the page's connection is gone
+  let open = false;
+  let closed = false;
+  let ping = null;
+  const stopPing = () => {
+    if (ping) clearInterval(ping);
+    ping = null;
+  };
+  const write = (chunk) => {
+    if (open && !closed && !res.writableEnded) res.write(chunk);
+  };
+  res.on('close', () => {
+    if (res.writableFinished) return;
+    closed = true;
+    stopPing();
+    if (streaming) console.warn(JSON.stringify({ event: 'ai_stream_closed', label: kind, userId, opened: open }));
+  });
+
   try {
     const now = new Date();
     const book = await loadBook(now);
@@ -69,8 +112,19 @@ async function answer(req, res, { kind, question }) {
       system: systemBlocks(book.text),
       prompt: kind === 'ask' ? askTurn(question, now) : briefTurn(now),
       maxTokens: MAX_TOKENS,
-      userId: req.user.userId,
+      userId,
       label: kind,
+      ...(streaming ? {
+        onStart: () => {
+          if (closed) return;
+          res.status(200).set(SSE_HEADERS);
+          res.flushHeaders();
+          open = true;
+          write(sseEvent('start', { model: AI_MODEL }));
+          ping = setInterval(() => write(ssePing()), PING_MS);
+        },
+        onText: (text) => write(sseEvent('text', { text })),
+      } : {}),
     });
     const { id, saved } = await saveAnswer(answerRow({
       kind,
@@ -81,13 +135,8 @@ async function answer(req, res, { kind, question }) {
       reportingYear: book.reportingYear,
       durationMs: Date.now() - started,
       model: AI_MODEL,
-    }), { label: kind, userId: req.user.userId });
-    return res.json({
-      success: true,
-      id,
-      saved,
-      kind,
-      question,
+    }), { label: kind, userId });
+    const answered = {
       answer: result.text,
       truncated: result.truncated,
       refused: result.refused,
@@ -98,13 +147,26 @@ async function answer(req, res, { kind, question }) {
       costUsd: result.costUsd,
       reportingYear: book.reportingYear,
       timestamp: now.toISOString(),
-    });
+    };
+    if (open) {
+      stopPing();
+      write(sseEvent('done', { answerId: id, saved, ...answered }));
+      return res.end();
+    }
+    if (closed) return undefined;
+    return res.json({ success: true, id, saved, kind, question, ...answered });
   } catch (error) {
+    stopPing();
     // A missing key or an API error is already described by the ai_error log
     // line; keep the stack trace for unexpected failures only.
     const expected = error?.code === 'AI_NOT_CONFIGURED' || typeof error?.status === 'number';
     if (!expected) console.error(`ai_${kind} failed:`, error);
     const { status, message } = describeError(error);
+    if (open) {
+      write(sseEvent('error', { error: message }));
+      return res.end();
+    }
+    if (closed) return undefined;
     return res.status(status).json({ success: false, error: message });
   }
 }

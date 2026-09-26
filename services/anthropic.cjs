@@ -189,12 +189,32 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
 
   // One Messages API call. `system` is optional: a string, or text blocks
   // ({ type: 'text', text, cache_control? }) passed through unchanged.
-  // `prompt` becomes the single user turn. `onText`, when given, receives
-  // each piece of the answer's text as it streams; an error it throws is
-  // logged once and never stops the call (T15). Writes one structured log line
-  // per call, success or failure, so cost is visible in the server log.
-  async function complete({ system, prompt, maxTokens = DEFAULT_MAX_TOKENS, userId, label, onText } = {}) {
+  // `prompt` becomes the single user turn. `onStart`, when given, is called
+  // once, when Anthropic's stream produces its first event (message_start;
+  // the SDK's retries of an HTTP error happen before it, and an error before
+  // it throws without calling it), so a route can open its own stream then
+  // and still answer an earlier error as JSON (WP5). `onText`, when given,
+  // receives each piece of the answer's text as it streams. An error either
+  // throws is logged once and never stops the call (T15). Writes one
+  // structured log line per call, success or failure, so cost is visible in
+  // the server log.
+  async function complete({ system, prompt, maxTokens = DEFAULT_MAX_TOKENS, userId, label, onStart, onText } = {}) {
     if (!client) throw notConfiguredError();
+
+    // A route's callback: an error it throws is logged once, as `event`, and
+    // the callback is not called again
+    const guarded = (fn, event) => {
+      let failed = false;
+      return (...args) => {
+        if (failed) return;
+        try {
+          fn(...args);
+        } catch (err) {
+          failed = true;
+          console.error(JSON.stringify({ event, label, userId, message: err?.message }));
+        }
+      };
+    };
 
     const started = Date.now();
     try {
@@ -207,18 +227,8 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
         ...(effort ? { output_config: { effort } } : {}),
       });
 
-      if (typeof onText === 'function') {
-        let failed = false;
-        stream.on('text', (delta) => {
-          if (failed) return;
-          try {
-            onText(delta);
-          } catch (err) {
-            failed = true;
-            console.error(JSON.stringify({ event: 'ai_on_text_error', label, userId, message: err?.message }));
-          }
-        });
-      }
+      if (typeof onStart === 'function') stream.once('streamEvent', guarded(() => onStart(), 'ai_on_start_error'));
+      if (typeof onText === 'function') stream.on('text', guarded(onText, 'ai_on_text_error'));
 
       const message = await stream.finalMessage();
       const out = parseResponse(message);

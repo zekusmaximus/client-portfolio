@@ -1,6 +1,8 @@
 // src/api.js
 // Centralized API client utility for the frontend
 
+import { createSseParser, eventJson } from './utils/sse';
+
 // Get API base URL and validate HTTPS in production
 const getApiBaseUrl = () => {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '';
@@ -169,6 +171,73 @@ async function del(endpoint) {
 }
 
 /**
+ * POST for a streamed answer (docs/plans/tier-1.md, WP5, T9): fetch with the
+ * cookie and `Accept: text/event-stream`, read with a stream reader (never
+ * EventSource, which cannot send a POST body). Each event reaches
+ * onEvent(type, data), `data` parsed as JSON. Resolves with { streamed: true }
+ * when the stream ends, whether or not it ended with `done`; the caller
+ * decides what a stream without it means.
+ *
+ * A failed response (sign-in, the rate limits, the checks, a missing key, an
+ * upstream error before the stream opened: all JSON) throws as post() does, so
+ * apiErrorMessage() reads its `error`. A successful response that is not an
+ * event stream (an API that ignores the header) resolves with
+ * { streamed: false, json }. A network failure or `signal` aborting rejects;
+ * an error thrown after `start` has been seen carries `streamOpened: true`.
+ *
+ * @param {string} endpoint - Path after `/api`, e.g. '/ai/ask'
+ * @param {Record<string, unknown>} body - Request payload
+ * @param {{ onEvent: (type: string, data: any) => void, signal?: AbortSignal }} options
+ */
+async function postStream(endpoint, body, { onEvent, signal } = {}) {
+  const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const basePath = normalized.startsWith('/api/') ? '' : '/api';
+
+  const response = await fetch(`${API_BASE_URL}${basePath}${normalized}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!response.ok) {
+    let errorMessage = `API call to ${normalized} failed with status ${response.status}`;
+    try {
+      const text = await response.text();
+      if (text) errorMessage += ` – ${text}`;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(errorMessage);
+  }
+
+  const type = response.headers.get('content-type') || '';
+  if (!type.toLowerCase().startsWith('text/event-stream')) {
+    return { streamed: false, json: await response.json() };
+  }
+
+  let opened = false;
+  const parser = createSseParser((event) => {
+    if (event.type === 'start') opened = true;
+    if (onEvent) onEvent(event.type, eventJson(event));
+  });
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.push(value);
+    }
+    parser.end();
+  } catch (err) {
+    if (opened && err && typeof err === 'object') err.streamOpened = true;
+    throw err;
+  }
+  return { streamed: true };
+}
+
+/**
  * The JSON body of a failed response, from an error thrown by the helpers
  * above (they fold the body into the Error message after the status), or null
  * when there is none.
@@ -197,6 +266,6 @@ export function apiErrorMessage(err, fallback = 'Request failed') {
   return (err && err.message) || fallback;
 }
 
-export const apiClient = { post, get, put, del };
+export const apiClient = { post, get, put, del, postStream };
 
 export default apiClient;

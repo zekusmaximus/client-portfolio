@@ -293,6 +293,32 @@ you want a clean preview console.
 Run the merged work package's acceptance list in `docs/plans/tier-0.md` and
 update its row in section 2.
 
+### 4.6 The AI tab's streamed answers
+
+From Tier 1 WP5 the AI tab's Ask and Brief show the answer as it is written
+(`docs/plans/tier-1.md`, section 10). The page posts with
+`Accept: text/event-stream` and reads the response as it arrives; the API
+sends `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`
+and `X-Accel-Buffering: no`, a `: ping` line every 15 seconds while the model
+thinks, and uses no compression. The stream passes through Render's proxy,
+and whether that proxy hands it on unbuffered can only be seen on
+gbacpod.com; nothing in the repository or the container can show it.
+
+To check after a deploy: ask a question. The answer card says "Thinking… n s",
+counting, then the words appear a few at a time and the answer grows until it
+is done. **Buffering looks like this:** "Thinking… n s" counts all the way
+through, and then the whole answer appears at once, at the end. The answer is
+still right and still saved, so nothing is lost, but report it: something
+between Render and the browser is holding the stream. In the browser's
+developer tools (Network tab, the `ask` request, Timing), a streamed answer's
+"Content Download" lasts as long as the answer took to write; a buffered one
+is a few milliseconds at the end.
+
+A partner who closes the tab or loses the connection mid-answer loses nothing:
+the API finishes the answer, saves it, and it appears under Recent answers
+(the page says so when its connection drops). The log shows one
+`ai_stream_closed` line (9.3) for each such answer.
+
 ---
 
 ## 5. Rolling back
@@ -694,6 +720,7 @@ example `"event":"ai_error"`.
 | Event | Level | Fields | Meaning and what to do |
 |---|---|---|---|
 | `ai_call` | info | `label`, `userId`, `model`, `stop`, `inputTokens`, `outputTokens`, `ms` | One Anthropic call. The token counts are the cost. `stop` of `max_tokens` means the answer was cut off (the page says so) |
+| `ai_stream_closed` | warn | `label`, `userId`, `opened` | The page's connection closed before a streamed answer was done (the tab was closed, the network dropped, or the partner signed out). The call carries on and the answer is saved (its `ai_call` line follows). `opened` false: it closed before the stream had started. Many of them for answers partners were watching: something between Render and the browser is cutting long connections (4.6) |
 | `ai_error` | error | `label`, `userId`, `model`, `status`, `message`, `ms` | A failed Anthropic call. `status` 401 or 403: the key is wrong or revoked (8.2). 429: Anthropic's rate limit. 5xx or overloaded: Anthropic's side, retry later. `null`: network or timeout |
 | `rate_limited` | warn | `limiter`, `key`, `limit`, `path` | Our own limiter refused a request (D11). `login_ip`: 20 logins per 15 min from one address. `login_user`: 5 failed logins per 15 min for one username; the account is locked for the rest of the window, including for its owner. `ai_user`: 30 AI calls per hour per partner. `ai_global`: 300 per day for the firm. Counters are in memory, so a redeploy clears them |
 | `origin_refused` | warn | `origin`, `method`, `path` | A state-changing request from a browser origin other than `FRONTEND_URL` was refused. From an unknown site: someone else's page tried, and was stopped. With `origin` `https://gbacpod.com`: `FRONTEND_URL` is wrong on Render |
@@ -707,7 +734,7 @@ example `"event":"ai_error"`.
 
 ```json
 { "status": "OK", "timestamp": "<ISO time>", "uptimeSeconds": 8509, "environment": "production",
-  "features": ["check-file"],
+  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream"],
   "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5" } }
 ```
 
@@ -717,7 +744,7 @@ example `"event":"ai_error"`.
 | `timestamp` | the server's clock when it answered |
 | `uptimeSeconds` | seconds since the process started. It resets on every deploy, restart and, on a Free instance, every spin-up |
 | `environment` | `NODE_ENV`; must be `production` on Render |
-| `features` | what this API can do that older deploys cannot: `check-file` (the upload page's Check file). The page asks before a check and sends nothing to an API without it, which would import the file instead. Missing means Render is still running a deploy from before 2026-09-25's Phase 3 |
+| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. The last one added is `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). A name missing after a merge means Render has not deployed that merge yet |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
 | `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`) |
@@ -817,6 +844,7 @@ Re-check with `npm audit` and `npm audit --omit=dev`. Do not run
 | Any other "Refused to ... Content Security Policy" line on gbacpod.com | what the new code loads; relax only the directive it needs, never `script-src` with `'unsafe-inline'` or `'unsafe-eval'` |
 | Every AI button says "not configured" | `ANTHROPIC_API_KEY` on Render; `/api/health` |
 | AI buttons fail with a message; others work | `ai_error` lines (section 9.3) |
+| An AI answer counts "Thinking… n s" and then appears all at once at the end | something between Render and the browser is buffering the stream (4.6). The answer is right and saved; report it |
 | "Too many requests" at sign-in | `rate_limited` with `login_user`: wait 15 minutes, or redeploy to clear the counters |
 | `/api/health` says `database: disconnected` | the database's page on Render; `pg_pool_error` lines |
 | The API is slow for a minute, then fine | a Free instance spinning up (section 11.3) |

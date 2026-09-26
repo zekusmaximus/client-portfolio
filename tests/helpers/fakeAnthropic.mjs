@@ -9,6 +9,8 @@
 //   { fixture: 'name.sse', pauseAfter: n, pauseMs: ms }  hold the stream open
 //                                                        after n events
 //   { fixture: 'name.sse', pauseAfter: n, until: promise } hold until it settles
+//   { fixture: 'name.sse', gapMs: ms }                   wait ms between events, so
+//                                                        an answer arrives a piece at a time
 //   { status, headers, body }                            an HTTP error
 //   { sse: 'event: ...' }                                a stream given inline
 //   { networkError: true }                               fetch() rejects (fakeFetch only)
@@ -52,8 +54,8 @@ export function parseSse(text) {
 
 function resolveItem(item) {
   if (typeof item === 'string') return { ...loadFixture(item), name: item };
-  if (item?.fixture) return { ...loadFixture(item.fixture), name: item.fixture, pauseAfter: item.pauseAfter, pauseMs: item.pauseMs, until: item.until };
-  if (item?.sse) return { ...parseSse(item.sse), name: 'inline', pauseAfter: item.pauseAfter, pauseMs: item.pauseMs, until: item.until };
+  if (item?.fixture) return { ...loadFixture(item.fixture), name: item.fixture, pauseAfter: item.pauseAfter, pauseMs: item.pauseMs, until: item.until, gapMs: item.gapMs };
+  if (item?.sse) return { ...parseSse(item.sse), name: 'inline', pauseAfter: item.pauseAfter, pauseMs: item.pauseMs, until: item.until, gapMs: item.gapMs };
   if (item?.networkError) return { kind: 'network' };
   if (typeof item?.status === 'number') return { kind: 'json', status: item.status, headers: item.headers || {}, body: item.body };
   throw new Error(`fakeAnthropic: cannot read queue item ${JSON.stringify(item)}`);
@@ -61,10 +63,12 @@ function resolveItem(item) {
 
 const pause = (item) => (item.until ? Promise.resolve(item.until).catch(() => {}) : new Promise((r) => setTimeout(r, item.pauseMs || 0)));
 
-// Writes the events in order through `write`, holding after pauseAfter events.
+// Writes the events in order through `write`, holding after pauseAfter events
+// and waiting gapMs between events when given.
 async function playEvents(item, write) {
   for (let i = 0; i < item.events.length; i += 1) {
     if (item.pauseAfter !== undefined && i === item.pauseAfter) await pause(item);
+    if (item.gapMs && i > 0) await new Promise((r) => setTimeout(r, item.gapMs));
     if (write(item.events[i]) === false) return;
   }
 }

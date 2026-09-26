@@ -90,6 +90,10 @@ app.use(cookieParser());
 // JSON only: no form-body parser, so a cross-site HTML form cannot submit a
 // body the routes will read (CSRF). 5 MB is ample for a CSV import.
 app.use(express.json({ limit: '5mb' }));
+// No compression middleware, here or anywhere: Ask and the brief stream their
+// answers as server-sent events (routes/ai.cjs, docs/plans/tier-1.md WP5),
+// and a compressor buffers its output, so the page would see nothing until
+// the whole answer had been written.
 
 // Auth routes
 const authRouter = require('./routes/auth.cjs');
@@ -125,8 +129,10 @@ app.get('/api/health', async (req, res) => {
     // button (ask-the-book): an API without it has no POST /api/ai/ask or
     // /api/ai/brief. And before the AI tab's Recent answers and this month's
     // cost (ai-answers): an API without it saves no answers and has no
-    // GET /api/ai/answers.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers'],
+    // GET /api/ai/answers. And before the AI tab streams an answer
+    // (ai-stream): an API without it ignores Accept: text/event-stream and
+    // answers JSON once the whole answer is written.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream'],
     services: {}
   };
 
