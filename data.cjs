@@ -19,9 +19,11 @@ const {
   SHEET_COLUMNS,
   findSheetColumns,
   checkSheet,
+  indexStoredClients,
   importWriteColumns,
   valuesList
 } = require('./utils/csvImport.cjs');
+const { unescapeStoredSql } = require('./utils/escaping.cjs');
 const { revenueObjectFromRows } = require('./utils/strategic.cjs');
 const {
   parseId,
@@ -209,12 +211,16 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       .map(c => c.name)
       .filter(n => typeof n === 'string' && n.trim().length > 0);
     
-    // Map to store existing clients: Lowercase Name -> Client Object
-    const existingClientsMap = new Map();
+    // Stored clients by their name as the sheet spells it, lower case
+    let stored = indexStoredClients([]);
     
     if (clientNames.length > 0) {
       // Fetch all potential matches in one query
       // Using ANY($1) allows us to match against an array of lowercased names.
+      // A name saved through the client form is stored HTML-escaped by
+      // sanitizeRequestBody (`Barnes &amp; Noble`), once per save, so it is
+      // compared unescaped, as indexStoredClients keys it; the update below
+      // then writes the sheet's spelling.
       // FOR UPDATE: the values kept for columns the file lacks are written back
       // below, so a form save cannot land in between and be overwritten.
       const { rows: allExistingClients } = await (await client).query(`
@@ -223,23 +229,22 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
                client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
                second_chair_id, originator_id, originator_is_firm
         FROM clients 
-        WHERE LOWER(name) = ANY($1)
+        WHERE LOWER(${unescapeStoredSql('name')}) = ANY($1)
         FOR UPDATE
       `, [clientNames.map(n => n.toLowerCase())]);
 
-      allExistingClients.forEach(c => {
-        if (c.name) {
-          existingClientsMap.set(c.name.toLowerCase(), c);
-        }
-      });
+      stored = indexStoredClients(allExistingClients);
     }
+    const existingClientsMap = stored.byName;
 
-    // Refuse the whole file on any problem (P8): header, a client named twice,
-    // a value outside its column's vocabulary, a person who does not resolve.
+    // Refuse the whole file on any problem (P8): header, a client named twice
+    // in the file or shared by two stored clients, a value outside its
+    // column's vocabulary, a person who does not resolve.
     const check = checkSheet(clientsWithScores, {
       headerErrors: sheetColumns.errors,
       roster,
-      existingByName: existingClientsMap
+      existingByName: existingClientsMap,
+      sharedNames: stored.shared
     });
     if (check.errors.length > 0) {
       await (await client).query('ROLLBACK');

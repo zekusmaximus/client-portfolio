@@ -15,28 +15,18 @@
 // parser resolves each name against the same roster: a name that is not on it
 // resolves to nobody, so the model can never put someone in a seat.
 
+// sanitizeRequestBody HTML-escapes every string in the request with
+// validator.escape, so a name with an apostrophe (O'Brien, which the People
+// list allows) arrives as O&#x27;Brien. unescapeText (utils/escaping.cjs)
+// undoes exactly that set.
+const { unescapeText } = require('./escaping.cjs');
+
 const TRANSITION_PLAN_SYSTEM =
   'You are a senior succession planning consultant specializing in government relations law firms.';
 
 // The most people a roster may hold; the firm has about a dozen
 const ROSTER_MAX = 50;
 const ROLE_NAMES = { partner: 'Partner', emeritus: 'Emeritus', associate: 'Associate' };
-
-// sanitizeRequestBody HTML-escapes every string in the request with
-// validator.escape, so a name with an apostrophe (O'Brien, which the People
-// list allows) arrives as O&#x27;Brien. Undo exactly that set.
-function unescapeText(text) {
-  if (typeof text !== 'string') return text;
-  return text
-    .replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#x2F;/g, '/')
-    .replace(/&#x5C;/g, '\\')
-    .replace(/&#96;/g, '`')
-    .replace(/&amp;/g, '&');
-}
 
 const nameKey = (name) => (typeof name === 'string' ? unescapeText(name).trim().replace(/\s+/g, ' ').toLowerCase() : '');
 const isLoad = (load) =>
