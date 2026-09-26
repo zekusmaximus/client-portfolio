@@ -614,7 +614,6 @@ module.exports = {
   formatEffort,
   formatRatio,
   formatClientEffort,
-  personName,
   stickinessText,
   cadenceText,
   conflictText,
