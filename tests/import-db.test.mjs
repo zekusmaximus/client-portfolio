@@ -761,6 +761,25 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.match(res.body.error, /^roster must list/);
   });
 
+  // Tier 1 WP1: the AI Advisor's three routes read the book through
+  // models/clientModel.cjs (listWithMetrics, getWithMetrics) before calling
+  // the model, so on this table shape each gets as far as the missing key.
+  // Production's older client_revenues has no contract_end_date column, and a
+  // query that read it answered 500 here before any AI call.
+  test("the AI Advisor's routes read the book on this table shape and stop at the missing key (503)", async () => {
+    const { body: list } = await call('GET', '/api/data/clients');
+    const client = list.clients.find((c) => c.name === HEALTH);
+    const notConfigured = 'AI is not configured on the server (missing API key).';
+    for (const [path, body] of [
+      ['/api/claude/analyze-portfolio', {}],
+      ['/api/claude/strategic-advice', { query: 'Who carries the most?' }],
+      ['/api/claude/client-recommendations', { clientId: client.id, includePortfolio: true }],
+    ]) {
+      const res = await call('POST', path, body);
+      assert.deepEqual([res.status, res.body.error], [503, notConfigured], `${path}: ${JSON.stringify(res.body)}`);
+    }
+  });
+
   test('Phase 5: a transition sheet (CLIENT, Lead, Second Chair) changes the two seats and nothing else; the partner who left can then be deactivated', async () => {
     const kevin = (await db.query("SELECT id FROM people WHERE name = 'Kevin'")).rows[0];
     const { rows: touched } = await db.query(`

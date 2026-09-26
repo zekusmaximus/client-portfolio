@@ -84,7 +84,7 @@ the build log names the Node version it used.
 |---|---|
 | Instance type (Free or paid) | confirm in the dashboard; it decides sections 7, 11 and the Shell |
 | Region | confirm in the dashboard; the database should be in the same one |
-| Node version | confirm in the dashboard and in a deploy log. Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22 |
+| Node version | 22.16.0 (confirmed by Jeff on 2026-09-26). Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22, and `@anthropic-ai/sdk` 0.128.0 supports Node 20 or later |
 | Root directory | confirm in the dashboard (the repository root is what the code needs) |
 | Build command | confirm in the dashboard (`npm ci` is what the code needs) |
 | Start command | confirm in the dashboard (`node server.cjs` or `npm start`) |

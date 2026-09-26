@@ -1,0 +1,15 @@
+{
+  "status": 529,
+  "headers": {
+    "request-id": "req_fake_529",
+    "retry-after-ms": "1"
+  },
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "overloaded_error",
+      "message": "Overloaded"
+    },
+    "request_id": "req_fake_529"
+  }
+}
