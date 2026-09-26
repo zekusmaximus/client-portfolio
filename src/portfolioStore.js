@@ -1,14 +1,29 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { apiClient } from './api';
+import { apiClient, apiErrorMessage } from './api';
 import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
 import { computeReportingYear, revenueForYear } from './utils/revenue';
 import { toggleId, withChoice } from './utils/departure';
 import { approvalBlocker, pinnedChoice, syncTransitions } from './utils/transitionPlans';
+import { appendAnswers } from './utils/recentAnswers';
 
 // The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
 // brief. They start empty and go back to empty on logout.
 const EMPTY_AI_RESULTS = { ask: null, brief: null };
+// The AI tab's saved answers (WP4): the recent list as the API pages it
+// (newest first, for everyone), whether older ones remain, and the answers
+// opened from it, whole, by id. Saved answers never change (none can be
+// edited or deleted in Tier 1), so an opened one is fetched once.
+const emptyAiAnswers = () => ({
+  items: [],
+  hasMore: false,
+  loaded: false,
+  loadingOlder: false,
+  error: null,
+  summary: null,
+  details: {},
+  openId: null,
+});
 
 // The Scenarios workflow (docs/plans/people-and-second-chair.md, Phase 5,
 // P11): the open stage, the ids of the people leaving, and the partner's
@@ -49,6 +64,10 @@ const usePortfolioStore = create(
       // answer. Not persisted (see partialize); cleared on logout.
       aiResults: { ...EMPTY_AI_RESULTS },
       aiError: null,
+      // Saved answers (WP4), from GET /api/ai/answers; not persisted, cleared
+      // on logout. After a refresh the list comes back from the API, with the
+      // answer just given at its top.
+      aiAnswers: emptyAiAnswers(),
 
       // Optimization state
       optimization: null,
@@ -283,6 +302,81 @@ const usePortfolioStore = create(
       setAiResult: (key, data) => set((state) => ({ aiResults: { ...state.aiResults, [key]: data } })),
       setAiError: (aiError) => set({ aiError }),
 
+      // Saved answers (WP4). The AI tab calls these only after /api/health
+      // lists ai-answers. fetchAiAnswers reloads the first page and this
+      // month's count and cost; the list stays on screen while it does.
+      fetchAiAnswers: async () => {
+        try {
+          const [list, summary] = await Promise.all([
+            apiClient.get('/ai/answers'),
+            apiClient.get('/ai/answers/summary'),
+          ]);
+          if (!get().isAuthenticated) return; // signed out while it loaded
+          set((state) => ({
+            aiAnswers: {
+              ...state.aiAnswers,
+              items: list.answers || [],
+              hasMore: list.hasMore === true,
+              loaded: true,
+              error: null,
+              summary,
+            },
+          }));
+        } catch (err) {
+          console.error('Failed to load the saved answers', err);
+          set((state) => ({ aiAnswers: { ...state.aiAnswers, loaded: true, error: apiErrorMessage(err, 'Could not load the saved answers.') } }));
+        }
+      },
+
+      // The next page after the last answer shown
+      fetchOlderAiAnswers: async () => {
+        const { items, loadingOlder } = get().aiAnswers;
+        if (loadingOlder || items.length === 0) return;
+        set((state) => ({ aiAnswers: { ...state.aiAnswers, loadingOlder: true } }));
+        try {
+          const older = await apiClient.get(`/ai/answers?before=${items[items.length - 1].id}`);
+          if (!get().isAuthenticated) return;
+          set((state) => ({
+            aiAnswers: {
+              ...state.aiAnswers,
+              items: appendAnswers(state.aiAnswers.items, older.answers),
+              hasMore: older.hasMore === true,
+              loadingOlder: false,
+              error: null,
+            },
+          }));
+        } catch (err) {
+          console.error('Failed to load older answers', err);
+          set((state) => ({ aiAnswers: { ...state.aiAnswers, loadingOlder: false, error: apiErrorMessage(err, 'Could not load older answers.') } }));
+        }
+      },
+
+      // Opens a saved answer in place (or closes it when it is the one open),
+      // fetching it whole the first time
+      toggleAiAnswer: async (id) => {
+        const { openId, details } = get().aiAnswers;
+        if (openId === id) {
+          set((state) => ({ aiAnswers: { ...state.aiAnswers, openId: null } }));
+          return;
+        }
+        set((state) => ({ aiAnswers: { ...state.aiAnswers, openId: id, error: null } }));
+        if (details[id]) return;
+        try {
+          const { answer } = await apiClient.get(`/ai/answers/${id}`);
+          if (!get().isAuthenticated) return;
+          set((state) => ({ aiAnswers: { ...state.aiAnswers, details: { ...state.aiAnswers.details, [id]: answer } } }));
+        } catch (err) {
+          console.error('Failed to open a saved answer', err);
+          set((state) => ({
+            aiAnswers: {
+              ...state.aiAnswers,
+              openId: state.aiAnswers.openId === id ? null : state.aiAnswers.openId,
+              error: apiErrorMessage(err, 'Could not open that answer.'),
+            },
+          }));
+        }
+      },
+
       // Authentication actions
       login: async (username, password) => {
         try {
@@ -320,6 +414,7 @@ const usePortfolioStore = create(
             peopleError: null,
             aiResults: { ...EMPTY_AI_RESULTS },
             aiError: null,
+            aiAnswers: emptyAiAnswers(),
             successionWorkflow: emptySuccessionWorkflow(),
             transitionPlans: {},
             ...emptyExecution()
