@@ -371,6 +371,18 @@ A failed run emails you. The drill runs in the first week of each quarter.
 After changing `pg-backup.sh` or `backup.yml` here, copy them into the private
 repository (INSTALL.md step 5).
 
+`ai_answers`, the saved AI answers (`docs/plans/tier-1.md`, WP4), is dumped,
+restored and counted like every other table in the public schema:
+`pg-backup.sh` lists the tables at run time, so the backup needs no change for
+it, and its log's counts include it from the first night after the deploy.
+The backup role reads a table created after the role only through
+`pg_read_all_data` or the default privileges in INSTALL.md step 2. `people`
+(the people plan's Phase 1) was the first such table, so a nightly run that
+fails with `permission denied for table people` or `... ai_answers` means
+that grant is missing: make it as step 2 says, then run the backup by hand
+(INSTALL.md step 7). A job that uses the database's own URL, because step 2
+was skipped, reads every table and needs nothing.
+
 ---
 
 ## 7. Partners and passwords

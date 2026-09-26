@@ -162,5 +162,39 @@ BEGIN
   END IF;
 END $$;
 
+-- AI answers (docs/plans/tier-1.md, T12, T13). No foreign key to clients:
+-- client ids are integers on production's older tables and uuids here, and
+-- reset-book refuses while any key to clients does not cascade. The client's
+-- and the asker's names are copied so an answer reads the same after either
+-- is gone.
+CREATE TABLE IF NOT EXISTS ai_answers (
+    id SERIAL PRIMARY KEY,
+    kind VARCHAR(20) NOT NULL CHECK (kind IN ('ask', 'brief', 'transition-plan')),
+    question TEXT,
+    answer TEXT NOT NULL,
+    client_id TEXT,
+    client_name VARCHAR(255),
+    asked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    asked_by_username VARCHAR(255),
+    model VARCHAR(100) NOT NULL,
+    served_by VARCHAR(100),
+    fell_back BOOLEAN NOT NULL DEFAULT false,
+    stop_reason VARCHAR(40),
+    truncated BOOLEAN NOT NULL DEFAULT false,
+    refused BOOLEAN NOT NULL DEFAULT false,
+    refusal_category VARCHAR(60),
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(10, 4),
+    prices_read_on DATE,
+    book_sha256 CHAR(64),
+    reporting_year INTEGER,
+    duration_ms INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_answers_created_at ON ai_answers (created_at DESC, id DESC);
+
 -- No default users are created for security reasons
 -- Use the create-admin.cjs script to create your first administrator account
