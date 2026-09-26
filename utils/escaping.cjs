@@ -32,7 +32,8 @@ function unescapeText(text) {
 // way, though its name pattern refuses the `;` until the partner retypes it; a
 // direct request, or a field without that pattern, has no such check. Every
 // escape after the first only adds `amp;` after an `&`, so collapsing an `&`
-// and the `amp;`s after it to `&` undoes those, and unescapeText the first.
+// and every `amp;` after it to `&` undoes those (and the first escape of an
+// `&`); unescapeText then undoes the first escape of everything else.
 const REPEATED_AMP = '&(amp;)+';
 
 /** Undo validator.escape however many times it was applied: the name as the sheet spells it. */
