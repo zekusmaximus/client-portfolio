@@ -6,9 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Active plan: `docs/plans/people-and-second-chair.md` (the People list, one
 partner lead and an optional second chair per client, a fresh book, then the
-Partnership and Scenarios rebuilds). Read it before making changes and update
-its status table when you finish a phase. `docs/plans/tier-0.md` (stabilisation)
-is done in code; its remaining items are Jeff's checks on the live site.
+Partnership and Scenarios rebuilds). Phases 1 to 6 have merged; its remaining
+items are Jeff's checks on the live site. Read it before making changes and
+update its status table when you finish a phase. `docs/plans/tier-0.md`
+(stabilisation) is done in code; its remaining items are Jeff's checks on the
+live site. Next: `docs/plans/tier-1.md` (the AI rebuild), approved by Jeff on
+2026-09-26; read it before any AI change, run its work packages in order and
+update its status table when you finish one.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
 `PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
 data scoping by design; an emeritus and associates appear in the book as
