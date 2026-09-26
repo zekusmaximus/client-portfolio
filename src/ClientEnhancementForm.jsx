@@ -67,7 +67,8 @@ const ClientEnhancementForm = ({ onClose }) => {
     originator_id: '',
     originator_is_firm: false,
     interaction_frequency: 'As-Needed',
-    stickiness: 3,
+    // null is "Not rated": nobody has judged the relationship yet
+    stickiness: null,
     high_maintenance: false,
     notes: '',
     revenues: []
@@ -107,7 +108,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         originator_id: '',
         originator_is_firm: false,
         interaction_frequency: 'As-Needed',
-        stickiness: 3,
+        stickiness: null,
         high_maintenance: false,
         notes: '',
         revenues: [{ year: new Date().getFullYear(), revenue_amount: '' }]
@@ -574,8 +575,8 @@ const ClientEnhancementForm = ({ onClose }) => {
             </Label>
             <RadioGroup
               key={`stickiness-${formData.stickiness}`}
-              value={String(formData.stickiness)}
-              onValueChange={(value) => handleFieldChange('stickiness', parseInt(value, 10))}
+              value={formData.stickiness === null ? 'none' : String(formData.stickiness)}
+              onValueChange={(value) => handleFieldChange('stickiness', value === 'none' ? null : parseInt(value, 10))}
             >
               {[
                 [5, "Personal bond — won't leave"],
@@ -583,6 +584,7 @@ const ClientEnhancementForm = ({ onClose }) => {
                 [3, 'Solid but transactional'],
                 [2, 'New / still shallow'],
                 [1, 'Cold — never met in person'],
+                ['none', 'Not rated — nobody has judged it yet'],
               ].map(([val, label]) => (
                 <div key={val} className="flex items-center space-x-2">
                   <RadioGroupItem value={String(val)} id={`stickiness-${val}`} />

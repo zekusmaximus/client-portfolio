@@ -1115,7 +1115,10 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
 
     // A partner types notes with an ampersand and a `<` (which DOMPurify escapes before the server does) and saves
     const typedNotes = 'R&D < 5% of "budget"';
+    const unrated = async () => (await db.query('SELECT stickiness FROM clients WHERE id::text = $1', [barnesId])).rows[0].stickiness;
+    assert.equal(await unrated(), null, 'nobody has rated it');
     await formSave({ ...(await openForm()), practiceArea: ['Education'], notes: typedNotes });
+    assert.equal(await unrated(), null, 'saved for another reason, it is still not rated');
     const first = await stored();
     assert.equal(first.name, 'Barnes &amp; Noble Education Fund');
     // Saved twice more with only the stickiness changed: shown as typed, stored unchanged

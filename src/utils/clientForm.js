@@ -6,6 +6,10 @@
 // Fund`, whose `;` the form's name pattern refuses, so every later edit of the
 // client failed until the partner retyped the `&`; and notes, which have no
 // pattern, gained a level of escaping with each save.
+//
+// A client nobody has rated keeps `stickiness: null` ("Not rated"): the form
+// used to fill it with 3, so saving the client for any reason rated it 3, and
+// the book counts a rated 3 as safe where an unrated client is unknown (T5).
 
 import { unescapeStored } from './escaping.js';
 
@@ -26,7 +30,7 @@ export function clientFormData(client, now = new Date()) {
     originator_id: client.originator_id ? String(client.originator_id) : '',
     originator_is_firm: client.originator_is_firm === true,
     interaction_frequency: client.interaction_frequency || 'As-Needed',
-    stickiness: client.stickiness || 3,
+    stickiness: Number.isInteger(client.stickiness) ? client.stickiness : null,
     high_maintenance: client.high_maintenance === true,
     notes: unescapeStored(client.notes || ''),
     revenues: revenuesWithDefault
