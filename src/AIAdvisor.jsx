@@ -1,34 +1,36 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Brain, 
-  MessageSquare, 
-  BarChart3, 
-  User, 
-  Lightbulb,
-  AlertCircle,
-  Sparkles
-} from 'lucide-react';
-import usePortfolioStore from './portfolioStore';
-import { formatClientName } from './utils/textUtils';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertCircle, Brain, FileText, Loader2, MessageSquare } from 'lucide-react';
 import Markdown from 'react-markdown';
+import usePortfolioStore from './portfolioStore';
 import { apiClient, apiErrorMessage } from './api';
-import { getEnhancedClientCount } from './utils/clientUtils';
 import AIBookPanel from './components/AIBookPanel';
+import { EXAMPLE_QUESTIONS, QUESTION_MAX, ratedForStickiness } from './utils/askTheBook';
+
+// The AI tab (docs/plans/tier-1.md, WP3): Ask the book and the brief, both
+// answered on the whole book as the server renders it (utils/book.cjs), which
+// "What the AI is given" shows. Answers live in the store, so a tab switch
+// keeps them. Netlify can publish this page before Render deploys the API, so
+// the tab asks /api/health for ask-the-book before it offers Ask or Brief.
+
+const NOT_UPDATED = 'The API has not been updated yet; try again in a few minutes.';
+const count = (n) => Number(n || 0).toLocaleString('en-US');
 
 // One AI answer: the markdown body plus the "cut off" / "declined" notices.
 // react-markdown at its defaults renders no raw HTML, so the model's output is
-// text and markup only.
-const AIAnswer = ({ text, truncated, refused }) => (
+// text and markup only. A declined answer has no text (T10).
+const AIAnswer = ({ text, truncated, refused, refusalCategory }) => (
   <div>
     {refused && (
       <div className="mb-3 flex items-center gap-2 text-sm text-amber-700">
         <AlertCircle className="h-4 w-4" />
-        <span>The AI declined to answer this request.</span>
+        <span>
+          The AI declined to answer this request.{refusalCategory ? ` (Category: ${refusalCategory}.)` : ''}
+        </span>
       </div>
     )}
     <div className="ai-markdown text-sm">
@@ -43,128 +45,81 @@ const AIAnswer = ({ text, truncated, refused }) => (
   </div>
 );
 
+const AnswerCard = ({ title, icon: Icon, result, testId }) => (
+  <Card data-testid={testId}>
+    <CardHeader>
+      <CardTitle className="flex flex-wrap items-center gap-2">
+        <Icon className="h-5 w-5" />
+        {title}
+        <Badge variant="outline" className="text-xs font-normal">
+          {new Date(result.timestamp).toLocaleString()}
+        </Badge>
+      </CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-4">
+      {result.question && (
+        <p className="whitespace-pre-wrap rounded-md border-l-4 border-muted bg-muted/30 px-3 py-2 text-sm" data-testid={`${testId}-question`}>
+          {result.question}
+        </p>
+      )}
+      <AIAnswer
+        text={result.answer}
+        truncated={result.truncated}
+        refused={result.refused}
+        refusalCategory={result.refusalCategory}
+      />
+    </CardContent>
+  </Card>
+);
+
 const AIAdvisor = () => {
   const reportingYear = usePortfolioStore((s) => s.getReportingYear());
-  // Answers and the last error live in the store (WP2) so they survive a tab switch.
+  const totalRevenue = usePortfolioStore((s) => s.getTotalRevenue());
   const {
     clients,
-    fetchClients,
-    clientsLoading,
     aiResults: results,
     aiError: error,
     setAiResult,
     setAiError,
+    setCurrentView,
   } = usePortfolioStore();
-  const [activeTab, setActiveTab] = useState('portfolio');
-  const [isLoading, setIsLoading] = useState(false);
-  const [customQuery, setCustomQuery] = useState('');
-  const [selectedClient, setSelectedClient] = useState(null);
+  // checking, ready or unavailable
+  const [api, setApi] = useState('checking');
+  const [question, setQuestion] = useState('');
+  const [pending, setPending] = useState({ ask: false, brief: false });
 
-  const hasData = clients && clients.length > 0;
+  const hasData = Array.isArray(clients) && clients.length > 0;
+  const rated = ratedForStickiness(clients);
 
-  const handlePortfolioAnalysis = async () => {
-    if (!hasData) return;
-    try {
-      setIsLoading(true);
-      setAiError(null);
+  useEffect(() => {
+    let current = true;
+    apiClient.get('/api/health')
+      .then((health) => {
+        if (!current) return;
+        setApi(Array.isArray(health?.features) && health.features.includes('ask-the-book') ? 'ready' : 'unavailable');
+      })
+      .catch(() => { if (current) setApi('unavailable'); });
+    return () => { current = false; };
+  }, []);
 
-      // Extract only necessary client IDs for analysis, filtering out clients without valid IDs
-      const clientIds = clients.filter(c => c.id && String(c.id).trim() !== '').map(c => String(c.id).trim());
-      
-      if (clientIds.length === 0) {
-        throw new Error('No valid client IDs found. Please ensure clients are properly loaded.');
-      }
-      
-      const data = await apiClient.post('/claude/analyze-portfolio', { clientIds });
-
-      if (data.success) {
-        setAiResult('portfolioAnalysis', data);
-      } else {
-        throw new Error(data.error || 'Analysis failed');
-      }
-
-    } catch (err) {
-      console.error('Portfolio analysis error:', err);
-      setAiError(apiErrorMessage(err));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleStrategicAdvice = async () => {
-    if (!hasData) return;
-
-    setIsLoading(true);
+  const run = async (kind) => {
+    const asked = question.trim();
+    if (kind === 'ask' && !asked) return;
+    setPending((p) => ({ ...p, [kind]: true }));
     setAiError(null);
-
     try {
-      // Extract only necessary client IDs for advice
-      const clientIds = clients.map(c => c.id);
-      const data = await apiClient.post('/claude/strategic-advice', {
-        clientIds,
-        query: customQuery || undefined,
-        context: 'Government relations law firm portfolio optimization',
-      });
-
-      if (data.success) {
-        setAiResult('strategicAdvice', data);
-        setCustomQuery(''); // Clear the query after successful request
-      } else {
-        throw new Error(data.error || 'Advice generation failed');
-      }
-
+      const data = kind === 'ask'
+        ? await apiClient.post('/ai/ask', { question: asked })
+        : await apiClient.post('/ai/brief', {});
+      if (!data.success) throw new Error(data.error || 'The AI request failed.');
+      setAiResult(kind, data);
+      // Clear the box only if it still holds the question just answered
+      if (kind === 'ask') setQuestion((text) => (text.trim() === asked ? '' : text));
     } catch (err) {
-      console.error('Strategic advice error:', err);
+      console.error(`AI ${kind} error:`, err);
       setAiError(apiErrorMessage(err));
     } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleClientRecommendations = async (client) => {
-    if (!client) {
-      setAiError('No client selected.');
-      return;
-    }
-
-    // Validate client has a proper ID
-    if (!client.id || (typeof client.id !== 'string' && typeof client.id !== 'number') || String(client.id).trim() === '') {
-      setAiError('Client is missing a valid ID. Please refresh the client list and try again.');
-      return;
-    }
-
-    // Validate client has a name
-    if (!client.name || typeof client.name !== 'string' || client.name.trim() === '') {
-      setAiError('Client data is incomplete. Please refresh the client list and try again.');
-      return;
-    }
-
-    setIsLoading(true);
-    setAiError(null);
-    setSelectedClient(client);
-
-    try {
-      // Only send the client ID and basic context, not the entire clients array
-      const payload = {
-        clientId: String(client.id).trim(),
-        clientName: client.name.trim(),
-        clientRevenue: usePortfolioStore.getState().getClientRevenue(client),
-        portfolioSize: clients.length,
-      };
-      
-      const data = await apiClient.post('/claude/client-recommendations', payload);
-
-      if (data.success) {
-        setAiResult('clientRecommendations', data);
-      } else {
-        throw new Error(data.error || 'Recommendations generation failed');
-      }
-
-    } catch (err) {
-      console.error('Client recommendations error:', err);
-      setAiError(apiErrorMessage(err));
-    } finally {
-      setIsLoading(false);
+      setPending((p) => ({ ...p, [kind]: false }));
     }
   };
 
@@ -174,23 +129,16 @@ const AIAdvisor = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5" />
-            AI Strategic Advisor
+            Ask the book
           </CardTitle>
         </CardHeader>
-        <CardContent className="pt-6">
-          <div className="text-center">
-            <Brain className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-lg font-medium mb-2">Ready to provide AI-powered insights</p>
-            <p className="text-muted-foreground mb-4">
-              Once you have clients in your portfolio, I can analyze your data and provide strategic recommendations for portfolio optimization, client prioritization, and growth opportunities.
-            </p>
-            <Button 
-              onClick={() => usePortfolioStore.getState().setCurrentView('client-details')}
-              variant="outline"
-            >
-              Add Clients to Get Started
-            </Button>
-          </div>
+        <CardContent className="space-y-4">
+          <p className="text-muted-foreground">
+            The book has no clients yet. Import the sheet on Data Upload, then ask about the book here.
+          </p>
+          <Button variant="outline" onClick={() => setCurrentView('data-upload')}>
+            Go to Data Upload
+          </Button>
         </CardContent>
       </Card>
     );
@@ -198,49 +146,117 @@ const AIAdvisor = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header: what the AI has to work with */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5" />
-            AI Strategic Advisor
+            Ask the book
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground mb-4">
-            Get AI-powered strategic recommendations and insights for your client portfolio using advanced analysis.
+          <p className="mb-4 text-muted-foreground">
+            Ask a question about the whole book, or get the brief. The AI answers from the book as the server builds it,
+            shown under "What the AI is given"; client notes are never sent.
           </p>
-          
-          {/* Portfolio Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-muted/30 rounded-lg">
+          <div className="grid grid-cols-1 gap-4 rounded-lg bg-muted/30 p-4 md:grid-cols-3">
             <div className="text-center">
-              <p className="text-2xl font-bold">{clients.length}</p>
-              <p className="text-sm text-muted-foreground">Total Clients</p>
+              <p className="text-2xl font-bold">{count(clients.length)}</p>
+              <p className="text-sm text-muted-foreground">Clients</p>
             </div>
             <div className="text-center">
-              <p className="text-2xl font-bold">
-                ${usePortfolioStore.getState().getTotalRevenue().toLocaleString()}
-              </p>
-              <p className="text-sm text-muted-foreground">Total Revenue</p>
+              <p className="text-2xl font-bold">${count(totalRevenue)}</p>
+              <p className="text-sm text-muted-foreground">{reportingYear} revenue</p>
             </div>
-            <div className="text-center">
-              <p className="text-2xl font-bold">
-                {getEnhancedClientCount(clients)}
+            <div className="text-center" data-testid="ai-rated">
+              <p className="text-2xl font-bold">{count(rated)} of {count(clients.length)}</p>
+              <p className="text-sm text-muted-foreground">
+                Rated for stickiness{rated < clients.length ? '; the rest count as unknown, never as safe' : ''}
               </p>
-              <p className="text-sm text-muted-foreground">Enhanced Clients</p>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* The book as the AI sees it (Tier 1 WP2) */}
+      {/* The book as the AI sees it (WP2) */}
       <AIBookPanel />
 
-      {/* Error Display */}
+      {/* Ask and the brief */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="h-5 w-5" />
+            Ask
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {api === 'checking' && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Checking the API…
+            </div>
+          )}
+          {api === 'unavailable' && (
+            <Alert data-testid="ask-unavailable"><AlertDescription>{NOT_UPDATED}</AlertDescription></Alert>
+          )}
+          {api === 'ready' && (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {EXAMPLE_QUESTIONS.map((example) => (
+                  <Button
+                    key={example}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="ask-example"
+                    onClick={() => setQuestion(example)}
+                  >
+                    {example}
+                  </Button>
+                ))}
+              </div>
+              <div>
+                <label htmlFor="ask-question" className="mb-2 block text-sm font-medium">
+                  Your question
+                </label>
+                <Textarea
+                  id="ask-question"
+                  data-testid="ask-question"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  maxLength={QUESTION_MAX}
+                  rows={3}
+                  placeholder="Ask anything the book can answer: loads, exposure, coverage, practice areas, revenue by year."
+                />
+                {question.length > QUESTION_MAX - 200 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {count(question.length)} of {count(QUESTION_MAX)} characters
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button data-testid="ask-submit" onClick={() => run('ask')} disabled={pending.ask || !question.trim()}>
+                  {pending.ask ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MessageSquare className="mr-2 h-4 w-4" />}
+                  {pending.ask ? 'Asking…' : 'Ask'}
+                </Button>
+                <Button data-testid="brief-submit" variant="outline" onClick={() => run('brief')} disabled={pending.brief}>
+                  {pending.brief ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
+                  {pending.brief ? 'Writing the brief…' : 'Brief'}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The brief covers who's carrying what, where the exposure is, coverage, what's worth a conversation, and
+                what the book can't tell you. Each question stands alone: the AI does not see earlier answers.
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       {error && (
         <Card className="border-red-200 bg-red-50">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-red-600">
+            <div className="flex items-center gap-2 text-red-600" data-testid="ai-error">
               <AlertCircle className="h-4 w-4" />
               <p>{error}</p>
             </div>
@@ -248,235 +264,10 @@ const AIAdvisor = () => {
         </Card>
       )}
 
-      {/* AI Analysis Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="portfolio">Portfolio Analysis</TabsTrigger>
-          <TabsTrigger value="strategic">Strategic Advice</TabsTrigger>
-          <TabsTrigger value="client">Client Insights</TabsTrigger>
-        </TabsList>
-
-        {/* Portfolio Analysis Tab */}
-        <TabsContent value="portfolio" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5" />
-                Comprehensive Portfolio Analysis
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground mb-4">
-                Get a detailed SWOT analysis and strategic assessment of your entire client portfolio.
-              </p>
-              
-              <Button
-                onClick={handlePortfolioAnalysis}
-                disabled={isLoading}
-                className="mb-4"
-              >
-                {isLoading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Analyze Portfolio
-                  </>
-                )}
-              </Button>
-
-              {isLoading && activeTab === 'portfolio' && (
-                <div className="mt-4 p-4 bg-muted/30 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                    <span>Generating portfolio analysis...</span>
-                  </div>
-                </div>
-              )}
-
-              {results.portfolioAnalysis && (
-                <div className="mt-6 p-4 bg-muted/30 rounded-lg">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Lightbulb className="h-4 w-4 text-yellow-500" />
-                    <span className="font-semibold">AI Analysis Results</span>
-                    <Badge variant="outline" className="text-xs">
-                      {new Date(results.portfolioAnalysis.timestamp).toLocaleString()}
-                    </Badge>
-                  </div>
-                  <AIAnswer
-                    text={results.portfolioAnalysis.analysis}
-                    truncated={results.portfolioAnalysis.truncated}
-                    refused={results.portfolioAnalysis.refused}
-                  />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Strategic Advice Tab */}
-        <TabsContent value="strategic" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MessageSquare className="h-5 w-5" />
-                Strategic Consultation
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground mb-4">
-                Ask specific questions or get general strategic recommendations for your practice.
-              </p>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium mb-2 block">
-                    Ask a specific question (optional):
-                  </label>
-                  <Textarea
-                    value={customQuery}
-                    onChange={(e) => setCustomQuery(e.target.value)}
-                    placeholder="e.g., How can I improve client retention? What are the best growth opportunities? How should I handle succession planning?"
-                    rows={3}
-                  />
-                </div>
-                
-                <Button
-                  onClick={handleStrategicAdvice}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                      Generating Advice...
-                    </>
-                  ) : (
-                    <>
-                      <Brain className="h-4 w-4 mr-2" />
-                      Get Strategic Advice
-                    </>
-                  )}
-                </Button>
-
-                {isLoading && activeTab === 'strategic' && (
-                  <div className="mt-4 p-4 bg-muted/30 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                      <span>Generating strategic advice...</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {results.strategicAdvice && (
-                <div className="mt-6 p-4 bg-muted/30 rounded-lg">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Lightbulb className="h-4 w-4 text-yellow-500" />
-                    <span className="font-semibold">Strategic Recommendations</span>
-                    <Badge variant="outline" className="text-xs">
-                      {new Date(results.strategicAdvice.timestamp).toLocaleString()}
-                    </Badge>
-                  </div>
-                  <AIAnswer
-                    text={results.strategicAdvice.advice}
-                    truncated={results.strategicAdvice.truncated}
-                    refused={results.strategicAdvice.refused}
-                  />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Client Insights Tab */}
-        <TabsContent value="client" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <User className="h-5 w-5" />
-                  Client-Specific Recommendations
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={fetchClients}
-                  disabled={clientsLoading}
-                >
-                  {clientsLoading ? 'Refreshing...' : 'Refresh Clients'}
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground mb-4">
-                Get tailored recommendations for individual clients based on their profile and your portfolio context.
-              </p>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {clients.filter(client => client.id && client.name && String(client.id).trim() !== '').map((client) => (
-                  <div 
-                    key={client.id} 
-                    className="p-3 border rounded-lg hover:bg-muted/30 cursor-pointer transition-colors"
-                    onClick={() => handleClientRecommendations(client)}
-                  >
-                    <h4 className="font-semibold mb-2">{formatClientName(client.name)}</h4>
-                    <div className="text-sm text-muted-foreground">
-                      <p>{reportingYear} Revenue: ${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
-                      <p>Strategic Value: {(client.strategicValue || 0).toFixed(1)}</p>
-                      {client.practiceArea && client.practiceArea.length > 0 && (
-                        <p>Practice Areas: {client.practiceArea.join(', ')}</p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {clients.filter(client => client.id && client.name && String(client.id).trim() !== '').length === 0 && (
-                <div className="mt-4 p-4 bg-muted/30 rounded-lg text-center">
-                  <AlertCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-muted-foreground">
-                    No clients available for AI recommendations. Please ensure clients are properly loaded from the database.
-                  </p>
-                </div>
-              )}
-
-              {isLoading && selectedClient && (
-                <div className="mt-4 p-4 bg-muted/30 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                    <span>Generating recommendations for {selectedClient.name}...</span>
-                  </div>
-                </div>
-              )}
-
-              {results.clientRecommendations && (
-                <div className="mt-6 p-4 bg-muted/30 rounded-lg">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Lightbulb className="h-4 w-4 text-yellow-500" />
-                    <span className="font-semibold">
-                      Recommendations for {results.clientRecommendations.client}
-                    </span>
-                    <Badge variant="outline" className="text-xs">
-                      {new Date(results.clientRecommendations.timestamp).toLocaleString()}
-                    </Badge>
-                  </div>
-                  <AIAnswer
-                    text={results.clientRecommendations.recommendations}
-                    truncated={results.clientRecommendations.truncated}
-                    refused={results.clientRecommendations.refused}
-                  />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      {results.ask && <AnswerCard title="Answer" icon={MessageSquare} result={results.ask} testId="ask-answer" />}
+      {results.brief && <AnswerCard title="Brief" icon={FileText} result={results.brief} testId="brief-answer" />}
     </div>
   );
 };
 
 export default AIAdvisor;
-

@@ -300,6 +300,17 @@ update its row in section 2.
 Decide which half is broken. The page and the API roll back separately, and
 neither touches the database: data problems are section 6.
 
+**From Tier 1 WP3 on (the AI tab's Ask the book), roll back both halves
+together, to deploys of the same merge** (`docs/plans/tier-1.md`, section 3
+item 5). WP3 deleted the AI Advisor's three routes (`/api/claude/...`) and the
+page that called them. A page from before WP3 on an API from after it shows a
+404 as the error on every AI Advisor button; that is what rolling back Netlify
+alone past WP3 does, and what a partner sees in a tab left open across the
+deploy until it is refreshed. The newer page on an older API is safe: it asks
+`/api/health` for `ask-the-book` and, without it, shows "The API has not been
+updated yet; try again in a few minutes." instead of the Ask box. So roll back
+Render and Netlify together (5.1 and 5.2), and check both with section 4.
+
 ### 5.1 The page (Netlify)
 
 Deploys > the last good deploy > **Publish deploy**. It publishes that earlier

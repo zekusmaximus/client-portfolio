@@ -3,8 +3,7 @@
  *
  * Consumed by:
  *   - data.cjs            (via clientAnalyzer.cjs re-export) — dashboard CRUD path
- *   - models/clientModel  (listWithMetrics / getWithMetrics) — AI + scenarios path
- *   - claude.cjs          (generatePortfolioSummary)
+ *   - models/clientModel  (listWithMetrics) — the AI's book (utils/book.cjs)
  *
  * Every client reduces to three axes plus a risk flag (see PRODUCT_BRIEF.md):
  *   - Value      → most-recent-year revenue
@@ -196,49 +195,6 @@ function calculateStrategicScores(clients) {
   }));
 }
 
-/**
- * Generate a portfolio summary from scored clients.
- */
-function generatePortfolioSummary(clients) {
-  const totalRevenue = clients.reduce((sum, c) => sum + (c.averageRevenue || 0), 0);
-  const avgStrategicValue = clients.length > 0
-    ? clients.reduce((sum, c) => sum + (c.strategicValue || 0), 0) / clients.length
-    : 0;
-
-  const practiceAreas = clients.reduce((acc, c) => {
-    if (c.practiceArea && Array.isArray(c.practiceArea)) {
-      c.practiceArea.forEach((area) => {
-        acc[area] = (acc[area] || 0) + 1;
-      });
-    }
-    return acc;
-  }, {});
-
-  const riskProfile = clients.reduce((acc, c) => {
-    acc[c.conflictRisk || 'Unknown'] = (acc[c.conflictRisk || 'Unknown'] || 0) + 1;
-    return acc;
-  }, {});
-
-  const topClients = clients
-    .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0))
-    .slice(0, 5)
-    .map((c) => ({
-      name: c.name,
-      revenue: c.averageRevenue || 0,
-      strategicValue: c.strategicValue || 0,
-      practiceArea: c.practiceArea || [],
-    }));
-
-  return {
-    totalClients: clients.length,
-    totalRevenue,
-    avgStrategicValue: avgStrategicValue.toFixed(2),
-    practiceAreas,
-    riskProfile,
-    topClients,
-  };
-}
-
 module.exports = {
   EFFORT_BY_CADENCE,
   HANDFUL_MULTIPLIER,
@@ -248,5 +204,4 @@ module.exports = {
   getStickiness,
   calculateStrategicValue,
   calculateStrategicScores,
-  generatePortfolioSummary,
 };

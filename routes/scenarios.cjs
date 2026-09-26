@@ -13,7 +13,7 @@ const {
   parseTransitionPlanResponse,
 } = require('../utils/transitionPlan.cjs');
 
-// Apply middleware: auth first, then the AI budgets (D11) shared with claude.cjs
+// Apply middleware: auth first, then the AI budgets (D11) shared with routes/ai.cjs
 router.use(auth);
 router.use(aiUserLimiter);
 router.use(aiGlobalLimiter);

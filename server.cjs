@@ -71,9 +71,9 @@ app.use(cors({
 
 // Refuse state-changing requests from a foreign browser origin. CORS only hides
 // the response: a cross-site form POST still reaches the route, with the
-// partner's SameSite=None cookie, and the AI Advisor's analyze-portfolio and
-// strategic-advice routes need no body at all, so dropping the form parser
-// alone would still let any website spend the AI budget. Browsers send Origin on
+// partner's SameSite=None cookie, and the AI tab's brief (POST /api/ai/brief)
+// needs no body at all, so dropping the form parser alone would still let any
+// website spend the AI budget. Browsers send Origin on
 // every cross-origin POST, PUT and DELETE; one that is neither allowlisted nor
 // this server's own origin is refused before any route runs. Requests without
 // Origin (curl, server to server) do not carry a partner's browser cookie.
@@ -100,10 +100,10 @@ const scenariosRouter = require('./routes/scenarios.cjs');
 app.use('/api/scenarios', scenariosRouter);
 
 // API Routes (the page itself is served by Netlify, not by Express)
-app.use('/api/claude', require('./claude.cjs').router);
 app.use('/api/data', require('./data.cjs'));
 app.use('/api/people', require('./routes/people.cjs'));
-// The book as the AI sees it (docs/plans/tier-1.md, WP2); auth inside the router
+// The book as the AI sees it, Ask the book and the brief (docs/plans/tier-1.md,
+// WP2 and WP3); auth and the AI rate limiters inside the router
 app.use('/api/ai', require('./routes/ai.cjs'));
 
 // Health check endpoint
@@ -120,8 +120,10 @@ app.get('/api/health', async (req, res) => {
     // before the associate split's Accept (second-chair-assign): an API
     // without it has no PUT /api/data/clients/:id/second-chair. And before
     // the AI tab's "What the AI is given" panel (ai-book): an API without it
-    // has no GET /api/ai/book.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book'],
+    // has no GET /api/ai/book. And before the AI tab's Ask box and Brief
+    // button (ask-the-book): an API without it has no POST /api/ai/ask or
+    // /api/ai/brief.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book'],
     services: {}
   };
 

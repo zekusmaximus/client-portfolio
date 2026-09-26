@@ -1,8 +1,9 @@
 // Rate limits (docs/plans/tier-0.md, D11). One instance of each limiter for the
-// whole process: the AI limiters are mounted in both claude.cjs and
-// routes/scenarios.cjs, so the per-user and daily budgets cover every AI
-// endpoint together. Counters live in memory and reset on restart (a Render
-// redeploy), which is acceptable for six partners on one process.
+// whole process: the AI limiters are mounted on routes/ai.cjs's POST routes
+// (Ask the book and the brief) and on every route of routes/scenarios.cjs, so
+// the per-user and daily budgets cover every AI endpoint together. Counters
+// live in memory and reset on restart (a Render redeploy), which is
+// acceptable for six partners on one process.
 //
 // Behind Render's proxy `req.ip` is only the client's address when
 // TRUST_PROXY_HOPS is set (server.cjs); without it every partner would share
