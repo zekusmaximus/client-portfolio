@@ -4,7 +4,9 @@ const db = require('../db.cjs');
 const auth = require('../middleware/auth.cjs');
 const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs');
 const { handleValidationErrors, sanitizeRequestBody } = require('../middleware/validation.cjs');
-const { complete, describeError } = require('../services/anthropic.cjs');
+const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs');
+const { answerRow } = require('../utils/aiAnswers.cjs');
+const { saveAnswer } = require('../models/aiAnswerModel.cjs');
 const {
   checkPlanRequest,
   checkRoster,
@@ -34,6 +36,12 @@ router.use(sanitizeRequestBody);
 // (docs/plans/people-and-second-chair.md, Phase 5); every name is checked
 // against the People list before anything goes to the model, and the plan's
 // recommended lead and second chair are resolved against it.
+//
+// The plan is saved (docs/plans/tier-1.md, WP4, T12) as a 'transition-plan'
+// answer with the client's id as text and its name with the request
+// sanitizer's escaping undone. The response keeps its shape (T14) and adds
+// answerId and saved beside plan: a failed save returns the plan with
+// saved: false and answerId null, never an error.
 router.post('/transition-plan', handleValidationErrors, async (req, res) => {
   const { client, stage1Data, roster } = req.body || {};
   const refusal = checkPlanRequest(req.body);
@@ -55,6 +63,7 @@ router.post('/transition-plan', handleValidationErrors, async (req, res) => {
 
   try {
     const { system, prompt } = createTransitionPlanPrompt(client, stage1Data, checked.roster);
+    const started = Date.now();
     const result = await complete({
       system,
       prompt,
@@ -62,6 +71,15 @@ router.post('/transition-plan', handleValidationErrors, async (req, res) => {
       userId: req.user.userId,
       label: 'transition-plan',
     });
+    const { id: answerId, saved } = await saveAnswer(answerRow({
+      kind: 'transition-plan',
+      client,
+      user: req.user,
+      result,
+      reportingYear: stage1Data.reportingYear,
+      durationMs: Date.now() - started,
+      model: AI_MODEL,
+    }), { label: 'transition-plan', userId: req.user.userId });
     const parsed = parseTransitionPlanResponse(result.text, client, checked.roster);
 
     res.json({
@@ -73,6 +91,8 @@ router.post('/transition-plan', handleValidationErrors, async (req, res) => {
         truncated: result.truncated,
         refused: result.refused,
       },
+      answerId,
+      saved,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

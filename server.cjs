@@ -102,8 +102,9 @@ app.use('/api/scenarios', scenariosRouter);
 // API Routes (the page itself is served by Netlify, not by Express)
 app.use('/api/data', require('./data.cjs'));
 app.use('/api/people', require('./routes/people.cjs'));
-// The book as the AI sees it, Ask the book and the brief (docs/plans/tier-1.md,
-// WP2 and WP3); auth and the AI rate limiters inside the router
+// The book as the AI sees it, Ask the book and the brief, and the saved
+// answers (docs/plans/tier-1.md, WP2 to WP4); auth and the AI rate limiters
+// inside the router
 app.use('/api/ai', require('./routes/ai.cjs'));
 
 // Health check endpoint
@@ -122,8 +123,10 @@ app.get('/api/health', async (req, res) => {
     // the AI tab's "What the AI is given" panel (ai-book): an API without it
     // has no GET /api/ai/book. And before the AI tab's Ask box and Brief
     // button (ask-the-book): an API without it has no POST /api/ai/ask or
-    // /api/ai/brief.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book'],
+    // /api/ai/brief. And before the AI tab's Recent answers and this month's
+    // cost (ai-answers): an API without it saves no answers and has no
+    // GET /api/ai/answers.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers'],
     services: {}
   };
 
