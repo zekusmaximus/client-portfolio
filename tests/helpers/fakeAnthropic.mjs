@@ -138,14 +138,17 @@ const promptText = (body) => {
 // A transition plan in the six sections the parser reads, recommending the
 // first partner on the prompt's roster as lead and the next person as second
 // chair, so the page's resolution against the roster can be seen working.
-function transitionPlanAnswer(prompt) {
+// The strategy says how many client rows the book in the system blocks had
+// (WP6: a plan is written on the book), when there was one.
+function transitionPlanAnswer(prompt, system = '') {
   const client = (prompt.match(/\*\*Name\*\*:\s*(.+)/) || [])[1]?.trim() || 'this client';
   const roster = [...prompt.matchAll(/^- (.+?) \((Partner|Emeritus|Associate)\): leads /gm)].map((m) => ({ name: m[1], role: m[2] }));
   const lead = roster.find((p) => p.role === 'Partner');
   const second = roster.find((p) => p !== lead);
+  const rows = bookClientRows(system);
   return [
     '## TRANSITION STRATEGY',
-    `Fake Anthropic plan for ${client}: introduce the new lead in a joint meeting, then hand over the day-to-day contact.`,
+    `Fake Anthropic plan for ${client}${rows === null ? '' : `, written on a book of ${rows} client rows`}: introduce the new lead in a joint meeting, then hand over the day-to-day contact.`,
     '',
     '## RECOMMENDED LEAD',
     lead ? lead.name : 'None',
@@ -185,7 +188,7 @@ function bookClientRows(system) {
 export function describeRequest(body) {
   const prompt = promptText(body);
   const system = systemText(body?.system);
-  if (prompt.includes('## RECOMMENDED LEAD')) return transitionPlanAnswer(prompt);
+  if (prompt.includes('## RECOMMENDED LEAD')) return transitionPlanAnswer(prompt, system);
   const firstLine = prompt.split('\n').find((line) => line.trim() !== '') || '';
   const blocks = Array.isArray(body?.system) ? body.system : [];
   const rows = bookClientRows(system);

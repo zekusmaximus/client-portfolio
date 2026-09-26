@@ -1,11 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db.cjs');
 const auth = require('../middleware/auth.cjs');
 const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs');
-const clientModel = require('../models/clientModel.cjs');
 const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs');
-const { buildBook } = require('../utils/book.cjs');
+const { loadBook } = require('../models/bookModel.cjs');
 const { systemBlocks, askTurn, briefTurn, checkQuestion, FIRM_TIME_ZONE } = require('../utils/askPrompts.cjs');
 const { answerRow, readAnswerId, readListQuery } = require('../utils/aiAnswers.cjs');
 const { sseEvent, ssePing, wantsStream, pingInterval, SSE_HEADERS } = require('../utils/sse.cjs');
@@ -25,16 +23,8 @@ const { saveAnswer, listAnswers, getAnswer, monthSummary } = require('../models/
 // names the client form stored escaped (unescapeText).
 router.use(auth);
 
-// The book, built at each request from the database: the clients as
-// listWithMetrics scores them (people read from the nested lead, secondChair
-// and originator, not the legacy text) and the People list.
-async function loadBook(now) {
-  const [clients, { rows: people }] = await Promise.all([
-    clientModel.listWithMetrics(),
-    db.query('SELECT id, name, role, active FROM people'),
-  ]);
-  return buildBook({ people, clients, now });
-}
+// The book is built at each request from the database (loadBook,
+// models/bookModel.cjs, shared with the transition plan's route).
 
 // GET /api/ai/book - { success, reportingYear, clientCount, peopleCount,
 // chars, estimatedTokens, text }. estimatedTokens is chars / 4, an estimate:

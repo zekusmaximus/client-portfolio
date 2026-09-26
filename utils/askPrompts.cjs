@@ -10,8 +10,8 @@
 // ASK_INSTRUCTIONS or systemBlocks. tests/ask-prompts.test.mjs holds both.
 //
 // Pure: routes/ai.cjs builds the book and calls services/anthropic.cjs.
-// WP6 moves the transition plan onto the same two blocks, and relies on the
-// departure exception in rule 6.
+// The transition plan (WP6, utils/transitionPlan.cjs) sends the same two
+// blocks, and relies on the departure exception in rule 6.
 
 /**
  * What the model reads about the firm before the book. Fixed text: no date,
@@ -20,7 +20,7 @@
  * over-verify). Each rule gives its reason where the reason is not obvious,
  * so the model can apply it to questions nobody anticipated.
  */
-const ASK_INSTRUCTIONS = `You answer questions from the partners of a government-relations law firm about the firm's book of clients. The book follows these instructions: every client, who leads it and who second-chairs it, its revenue by year, and the judgments the partners have recorded about it. Each request then gives today's date and either one partner's question, inside <question> tags, or a request for the brief.
+const ASK_INSTRUCTIONS = `You answer questions from the partners of a government-relations law firm about the firm's book of clients. The book follows these instructions: every client, who leads it and who second-chairs it, its revenue by year, and the judgments the partners have recorded about it. Each request then gives today's date and one of three things: one partner's question, inside <question> tags; a request for the brief; or, when someone is leaving the firm, a request for one client's transition plan.
 
 About the firm and the book
 - The partners are equals who share one book; the book is how they see the same facts. Every client has one lead, who is always a partner, and may have a second chair, who can be another partner, an emeritus or an associate. A person marked inactive has left or stepped back and takes no new seats.
@@ -80,9 +80,10 @@ function firmDate(now = new Date()) {
 }
 
 /**
- * The system prefix Ask and the brief share (T8): the instructions, then the
- * book with the cache marker (the default 5-minute lifetime). Only the book
- * text varies, and it renders byte-identically for the same data.
+ * The system prefix Ask, the brief and the transition plan share (T8, T14):
+ * the instructions, then the book with the cache marker (the default 5-minute
+ * lifetime). Only the book text varies, and it renders byte-identically for
+ * the same data.
  */
 function systemBlocks(bookText) {
   return [
