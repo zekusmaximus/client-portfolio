@@ -243,6 +243,67 @@ test('an onText that throws is logged once and the answer still completes (T15)'
   assert.equal(lines.filter((line) => line.event === 'ai_on_text_error').length, 1);
 });
 
+// WP5 (docs/plans/tier-1.md, section 10): onStart tells a route that
+// Anthropic's stream has produced its first event, so it can open its own
+// stream then and still answer anything earlier as JSON.
+test('onStart is called once, when the stream produces its first event, before the first onText', async () => {
+  const { service } = serviceWith(['text-with-thinking.sse']);
+  const order = [];
+  const { result } = await captureLogs(() => service.complete({
+    prompt: 'x',
+    onStart: (...args) => order.push(['start', args.length]),
+    onText: (d) => order.push(['text', d]),
+  }));
+  assert.equal(result.text, '## EXECUTIVE SUMMARY\nMike leads six clients and carries the heaviest book.');
+  assert.deepEqual(order, [
+    ['start', 0],
+    ['text', '## EXECUTIVE SUMMARY\n'],
+    ['text', 'Mike leads six clients '],
+    ['text', 'and carries the heaviest book.'],
+  ]);
+});
+
+test('onStart: once for a refusal before output and for a stream that fails after it started; never for an HTTP error', async () => {
+  for (const [queue, fails] of [
+    [['refusal-before-output.sse'], false],
+    [['overloaded-mid-stream.sse'], true],
+    [['http-429-rate-limit.json', 'http-429-rate-limit.json', 'http-429-rate-limit.json'], true],
+    [['http-401-authentication.json'], true],
+    [[{ networkError: true }, { networkError: true }, { networkError: true }], true],
+  ]) {
+    const { service } = serviceWith(queue);
+    let starts = 0;
+    const { error } = await captureLogs(() => service.complete({ prompt: 'x', onStart: () => { starts += 1; } }));
+    assert.equal(Boolean(error), fails, queue[0]);
+    const expected = queue[0].endsWith?.('.sse') ? 1 : 0;
+    assert.equal(starts, expected, `${JSON.stringify(queue[0])}: onStart ${expected} time(s)`);
+  }
+  // A 429 retried into a stream: started once, after the retry
+  const { service, requests } = serviceWith(['http-429-rate-limit.json', 'text-with-thinking.sse']);
+  let starts = 0;
+  const { result } = await captureLogs(() => service.complete({ prompt: 'x', onStart: () => { starts += 1; } }));
+  assert.equal(requests.length, 2);
+  assert.equal(starts, 1);
+  assert.equal(result.stopReason, 'end_turn');
+});
+
+test('an onStart that throws is logged once and the answer still completes, its text still reaching onText (T15)', async () => {
+  const { service } = serviceWith(['text-with-thinking.sse']);
+  const deltas = [];
+  const { result, lines } = await captureLogs(() => service.complete({
+    prompt: 'x',
+    label: 'test',
+    userId: 7,
+    onStart: () => { throw new Error('the page went away'); },
+    onText: (d) => deltas.push(d),
+  }));
+  assert.equal(result.text, '## EXECUTIVE SUMMARY\nMike leads six clients and carries the heaviest book.');
+  assert.equal(deltas.length, 3);
+  const logged = lines.filter((line) => line.event === 'ai_on_start_error');
+  assert.deepEqual(logged, [{ event: 'ai_on_start_error', label: 'test', userId: 7, message: 'the page went away' }]);
+  assert.equal(lines.filter((line) => line.event === 'ai_call').length, 1);
+});
+
 // ---------------------------------------------------------------- request ---
 
 test('the request on claude-opus-5: streamed, system blocks unchanged, the fallback beta and "default", nothing else', async () => {

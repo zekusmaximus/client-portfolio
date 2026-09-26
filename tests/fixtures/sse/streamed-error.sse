@@ -1,0 +1,9 @@
+event: start
+data: {"model":"claude-opus-5"}
+
+event: text
+data: {"text":"Partial "}
+
+event: error
+data: {"error":"The AI service is temporarily unavailable."}
+

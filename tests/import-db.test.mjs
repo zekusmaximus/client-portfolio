@@ -37,7 +37,8 @@ import escaping from '../utils/escaping.cjs';
 import askPrompts from '../utils/askPrompts.cjs';
 import aiAnswers from '../utils/aiAnswers.cjs';
 import aiCost from '../utils/aiCost.cjs';
-import { startFakeAnthropic, describeRequest } from './helpers/fakeAnthropic.mjs';
+import { startFakeAnthropic, describeRequest, streamedText } from './helpers/fakeAnthropic.mjs';
+import { createSseParser, eventJson } from '../src/utils/sse.js';
 import { clientFormData } from '../src/utils/clientForm.js';
 import { sanitizeFormData } from '../src/utils/validation.js';
 import { toPersonId } from '../src/utils/people.js';
@@ -101,6 +102,17 @@ function startServer(env) {
     });
   });
   return { child, ready, get output() { return output; } };
+}
+
+// Polls `check` until it returns something truthy, or fails after `ms`
+async function waitFor(check, what, ms = 10000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 // Production's users, clients and client_revenues as they predate init-db.sql:
@@ -259,6 +271,14 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.deepEqual([res.status, res.body.error], empty);
     res = await call('POST', '/api/ai/brief', {});
     assert.deepEqual([res.status, res.body.error], empty);
+    // WP5: asked for a stream, the same JSON: the check comes before the stream opens
+    const streamed = await fetch(`${base}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Cookie: cookie },
+      body: JSON.stringify({ question: 'Is Mike overloaded?' }),
+    });
+    assert.match(streamed.headers.get('content-type'), /^application\/json/);
+    assert.deepEqual([streamed.status, (await streamed.json()).error], empty);
   });
 
   test('the section 3 example imports leads, second chairs, originators and judgments', async () => {
@@ -500,7 +520,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -1641,6 +1661,284 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       aiServer.child.kill();
       await fake.close();
       if (clientId !== undefined) await fetch(`${base}/api/data/clients/${clientId}`, { method: 'DELETE', headers: { Cookie: cookie } });
+    }
+  });
+
+  // Tier 1 WP5 (docs/plans/tier-1.md, section 10): Ask and the brief streamed
+  // as server-sent events when the request carries Accept: text/event-stream.
+  // Everything before the upstream's first event answers JSON as before; the
+  // rest runs on a server.cjs pointed at the fake Anthropic server, each test
+  // its own, with AI_STREAM_PING_MS small so a held stream pings.
+
+  // One streamed request, read as the page reads it (src/utils/sse.js):
+  // { status, headers, events: [{ type, data }], sequence } where sequence is
+  // every event's type and every ping in the order they came; or { status,
+  // headers, json } when the answer is not a stream
+  const streamPost = async (url, body, { as = cookie, signal, onEvent } = {}) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Cookie: as },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!(res.headers.get('content-type') || '').startsWith('text/event-stream')) {
+      return { status: res.status, headers: res.headers, json: await res.json() };
+    }
+    const events = [];
+    const parser = createSseParser((event) => {
+      const parsed = { type: event.type, data: eventJson(event) };
+      events.push(parsed);
+      if (onEvent) onEvent(parsed);
+    });
+    const decoder = new TextDecoder();
+    let raw = '';
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      raw += decoder.decode(value, { stream: true });
+      parser.push(value);
+    }
+    parser.end();
+    const sequence = raw.split('\n\n').filter(Boolean).map((block) => (block === ': ping' ? 'ping' : block.match(/^event: (\w+)/)[1]));
+    return { status: res.status, headers: res.headers, events, sequence };
+  };
+  const textOf = (events) => events.filter((e) => e.type === 'text').map((e) => e.data.text).join('');
+  const typesOf = (events) => [...new Set(events.map((e) => e.type))];
+  const rateRemaining = (headers) => Number((headers.get('ratelimit') || '').match(/remaining=(\d+)/)?.[1]);
+
+  // A server.cjs on this database pointed at a new fake Anthropic server
+  const startStreamingServer = async () => {
+    const fake = await startFakeAnthropic();
+    const aiEnv = { ...env, PORT: String(await freePort()), ANTHROPIC_API_KEY: 'test', ANTHROPIC_BASE_URL: fake.url, AI_STREAM_PING_MS: '40' };
+    const aiServer = startServer(aiEnv);
+    await aiServer.ready;
+    const aiBase = `http://127.0.0.1:${aiEnv.PORT}`;
+    return { fake, aiServer, aiBase, stop: async () => { aiServer.child.kill(); await fake.close(); } };
+  };
+  const answerRowById = async (id) => (await db.query('SELECT * FROM ai_answers WHERE id = $1', [id])).rows[0];
+  const logLines = (server, event) => server.output.split('\n')
+    .filter((line) => line.includes(`"event":"${event}"`))
+    .map((line) => JSON.parse(line.slice(line.indexOf('{'))));
+
+  test('WP5: without a key, a streamed Ask and brief answer JSON 503; sign-in and the question check answer JSON too; /api/health lists ai-stream', async () => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.ok(health.features.includes('ai-stream'));
+    const notConfigured = [503, 'AI is not configured on the server (missing API key).'];
+    for (const [path, body] of [['/api/ai/ask', { question: 'Who carries the most?' }], ['/api/ai/brief', {}]]) {
+      const res = await streamPost(`${base}${path}`, body);
+      assert.match(res.headers.get('content-type'), /^application\/json/, path);
+      assert.deepEqual([res.status, res.json.success, res.json.error], [notConfigured[0], false, notConfigured[1]], path);
+    }
+    const blank = await streamPost(`${base}/api/ai/ask`, { question: '  ' });
+    assert.deepEqual([blank.status, blank.json.error], [400, 'Type a question to ask.']);
+    const anonymous = await streamPost(`${base}/api/ai/ask`, { question: 'Is Mike overloaded?' }, { as: '' });
+    assert.equal(anonymous.status, 401);
+    assert.match(anonymous.headers.get('content-type'), /^application\/json/);
+    // Each was answered in full, as JSON; none counts as a page that went away
+    assert.equal(logLines(server, 'ai_stream_closed').length, 0);
+  });
+
+  test('WP5: through the fake Anthropic server, a streamed Ask gives start, text events and done in order; the text equals the JSON answer; done names the saved row; the brief streams; each counts once against the AI limits', async () => {
+    const { fake, aiServer, aiBase, stop } = await startStreamingServer();
+    try {
+      const post = async (path, body) => {
+        const res = await fetch(`${aiBase}${path}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(body),
+        });
+        return { status: res.status, headers: res.headers, body: await res.json() };
+      };
+      const question = "Who carries the most, Smith & O'Brien's lead included?";
+
+      // The same question as JSON, then streamed: the fake's answer names the
+      // request, which is the same both times, so the answers are too
+      const json = await post('/api/ai/ask', { question });
+      assert.equal(json.status, 200, JSON.stringify(json.body));
+      const streamed = await streamPost(`${aiBase}/api/ai/ask`, { question });
+      assert.equal(streamed.status, 200);
+      assert.equal(streamed.headers.get('content-type'), 'text/event-stream; charset=utf-8');
+      assert.equal(streamed.headers.get('cache-control'), 'no-cache, no-transform');
+      assert.equal(streamed.headers.get('x-accel-buffering'), 'no');
+      assert.deepEqual(typesOf(streamed.events), ['start', 'text', 'done']);
+      assert.equal(streamed.events[0].type, 'start');
+      assert.deepEqual(streamed.events[0].data, { model: 'claude-opus-5' });
+      assert.equal(streamed.events.at(-1).type, 'done');
+      assert.ok(streamed.events.filter((e) => e.type === 'text').length > 1, 'the answer came in pieces');
+      assert.equal(textOf(streamed.events), json.body.answer, 'the joined text equals the JSON answer');
+      assert.equal(JSON.stringify(fake.requests[1].body), JSON.stringify(fake.requests[0].body), 'the same request both ways');
+
+      // done: the JSON answer's fields but success, kind and question, with
+      // the saved row's id as answerId
+      const done = streamed.events.at(-1).data;
+      assert.deepEqual(Object.keys(done).sort(), [
+        'answer', 'answerId', 'costUsd', 'model', 'refusalCategory', 'refused', 'reportingYear', 'saved',
+        'servedBy', 'timestamp', 'truncated', 'usage',
+      ]);
+      assert.deepEqual([done.saved, typeof done.answerId, done.answer], [true, 'number', json.body.answer]);
+      assert.ok(done.answerId > json.body.id);
+      assert.deepEqual([done.truncated, done.refused, done.refusalCategory, done.servedBy, done.model], [false, false, null, 'claude-opus-5', 'claude-opus-5']);
+      assert.equal(done.costUsd, json.body.costUsd);
+      assert.equal(done.reportingYear, json.body.reportingYear);
+      let row = await answerRowById(done.answerId);
+      assert.deepEqual([row.kind, row.question, row.answer, row.asked_by_username], ['ask', question, json.body.answer, 'importer']);
+
+      // T16: the limiters answer on the stream, and a streamed answer counts once
+      assert.ok(streamed.headers.get('ratelimit-policy'));
+      assert.equal(rateRemaining(streamed.headers), rateRemaining(json.headers) - 1);
+
+      // The brief
+      const brief = await streamPost(`${aiBase}/api/ai/brief`, {});
+      assert.deepEqual(typesOf(brief.events), ['start', 'text', 'done']);
+      assert.equal(textOf(brief.events), describeRequest(fake.requests.at(-1).body));
+      row = await answerRowById(brief.events.at(-1).data.answerId);
+      assert.deepEqual([row.kind, row.question, row.answer], ['brief', null, textOf(brief.events)]);
+      assert.equal(rateRemaining(brief.headers), rateRemaining(streamed.headers) - 1);
+
+      // A recorded stream with a thinking block, and a fallback mid-stream:
+      // the joined text equals the JSON answer for the same fixture
+      for (const fixture of ['text-with-thinking.sse', 'fallback-mid-stream.sse']) {
+        fake.enqueue(fixture, fixture);
+        const asJson = await post('/api/ai/ask', { question: 'Is Mike overloaded?' });
+        const asStream = await streamPost(`${aiBase}/api/ai/ask`, { question: 'Is Mike overloaded?' });
+        assert.equal(textOf(asStream.events), asJson.body.answer, fixture);
+        const fixtureDone = asStream.events.at(-1).data;
+        assert.equal(fixtureDone.answer, asJson.body.answer, fixture);
+        assert.equal(fixtureDone.servedBy, asJson.body.servedBy, fixture);
+        assert.equal((await answerRowById(fixtureDone.answerId)).answer, asJson.body.answer, fixture);
+      }
+
+      // Two separate text blocks: the saved answer puts a line break between
+      // them, which no text event carries; done's answer is the saved text
+      const events = streamedText('First block.');
+      const second = [
+        'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n',
+        'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Second block. "}}\n\n',
+        'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+      ];
+      fake.enqueue({ sse: [...events.slice(0, 4), ...second, ...events.slice(4)].join('') });
+      const twoBlocks = await streamPost(`${aiBase}/api/ai/ask`, { question: 'Two blocks?' });
+      assert.equal(textOf(twoBlocks.events), 'First block.Second block. ');
+      const twoDone = twoBlocks.events.at(-1).data;
+      assert.equal(twoDone.answer, 'First block.\nSecond block.');
+      assert.equal((await answerRowById(twoDone.answerId)).answer, twoDone.answer);
+
+      // A refusal after text had streamed: done says so, and the saved answer is empty (T10)
+      fake.enqueue('refusal-mid-stream.sse');
+      const declined = await streamPost(`${aiBase}/api/ai/ask`, { question: 'Is Mike overloaded?' });
+      assert.equal(textOf(declined.events), 'Here is the first part of an answer that');
+      const declinedDone = declined.events.at(-1).data;
+      assert.deepEqual([declinedDone.refused, declinedDone.answer, declinedDone.refusalCategory], [true, '', 'general_harms']);
+      row = await answerRowById(declinedDone.answerId);
+      assert.deepEqual([row.refused, row.answer], [true, '']);
+      assert.equal(logLines(aiServer, 'ai_stream_closed').length, 0, 'every stream ran to done');
+    } finally {
+      await stop();
+    }
+  });
+
+  test('WP5: a page that disconnects mid-answer, or before the stream opened, still leaves the whole answer saved (T15)', async () => {
+    const { fake, aiServer, aiBase, stop } = await startStreamingServer();
+    try {
+      const count = async () => (await db.query('SELECT count(*)::int AS n FROM ai_answers')).rows[0].n;
+      const WHOLE = '## EXECUTIVE SUMMARY\nMike leads six clients and carries the heaviest book.';
+
+      // Disconnect after the first text event, while the rest is held back
+      let release;
+      fake.enqueue({ fixture: 'text-with-thinking.sse', pauseAfter: 7, until: new Promise((resolve) => { release = resolve; }) });
+      const before = await count();
+      const page = new AbortController();
+      const seen = [];
+      // Should no text event come (a server that does not stream), let go
+      // after five seconds, so the test fails instead of waiting on the fake
+      const safety = setTimeout(() => { release(); page.abort(); }, 5000);
+      await assert.rejects(streamPost(`${aiBase}/api/ai/ask`, { question: 'Who closes the tab?' }, {
+        signal: page.signal,
+        onEvent: (event) => {
+          seen.push(event.type);
+          if (event.type === 'text') page.abort();
+        },
+      }), { name: 'AbortError' });
+      clearTimeout(safety);
+      assert.deepEqual(seen, ['start', 'text']);
+      const [closed] = await waitFor(() => logLines(aiServer, 'ai_stream_closed').length === 1 && logLines(aiServer, 'ai_stream_closed'), 'ai_stream_closed');
+      assert.deepEqual(closed, { event: 'ai_stream_closed', label: 'ask', userId: closed.userId, opened: true });
+      assert.equal(await count(), before, 'not saved before the answer is finished');
+      release();
+      await waitFor(async () => (await count()) === before + 1, 'the saved answer');
+      const { rows: [saved] } = await db.query('SELECT * FROM ai_answers ORDER BY id DESC LIMIT 1');
+      assert.deepEqual([saved.question, saved.answer, saved.stop_reason, saved.asked_by_username], ['Who closes the tab?', WHOLE, 'end_turn', 'importer']);
+      assert.equal(logLines(aiServer, 'ai_call').length, 1);
+
+      // Disconnect while the upstream has not produced its first event: no
+      // headers were sent, and the answer is still saved
+      let releaseEarly;
+      fake.enqueue({ fixture: 'text-with-thinking.sse', pauseAfter: 0, until: new Promise((resolve) => { releaseEarly = resolve; }) });
+      const early = new AbortController();
+      const pending = streamPost(`${aiBase}/api/ai/ask`, { question: 'Who closes it sooner?' }, { signal: early.signal });
+      await waitFor(() => fake.requests.length === 2, 'the request upstream');
+      early.abort();
+      await assert.rejects(pending, { name: 'AbortError' });
+      await waitFor(() => logLines(aiServer, 'ai_stream_closed').length === 2, 'the second ai_stream_closed');
+      assert.equal(logLines(aiServer, 'ai_stream_closed')[1].opened, false);
+      releaseEarly();
+      await waitFor(async () => (await count()) === before + 2, 'the second saved answer');
+      const { rows: [earlySaved] } = await db.query('SELECT * FROM ai_answers ORDER BY id DESC LIMIT 1');
+      assert.deepEqual([earlySaved.question, earlySaved.answer], ['Who closes it sooner?', WHOLE]);
+      assert.equal(logLines(aiServer, 'ai_error').length, 0);
+    } finally {
+      await stop();
+    }
+  });
+
+  test('WP5: an upstream 429 before the first event answers JSON 429; an error after the stream opened is an error event and not saved; a held stream pings; a failed save reaches done as saved: false', async () => {
+    const { fake, aiServer, aiBase, stop } = await startStreamingServer();
+    try {
+      const count = async () => (await db.query('SELECT count(*)::int AS n FROM ai_answers')).rows[0].n;
+      const before = await count();
+
+      // 429 on the first attempt and both retries: JSON, the usual status and message
+      fake.enqueue('http-429-rate-limit.json', 'http-429-rate-limit.json', 'http-429-rate-limit.json');
+      const limited = await streamPost(`${aiBase}/api/ai/ask`, { question: 'Is Mike overloaded?' });
+      assert.match(limited.headers.get('content-type'), /^application\/json/);
+      assert.deepEqual([limited.status, limited.json.error], [429, 'The AI service is rate-limiting us. Try again in a minute.']);
+      assert.equal(fake.requests.length, 3);
+
+      // Overloaded after output had started: an error event with the message
+      // the JSON path gives, logged and not saved
+      fake.enqueue('overloaded-mid-stream.sse');
+      const failed = await streamPost(`${aiBase}/api/ai/ask`, { question: 'Is Mike overloaded?' });
+      assert.equal(failed.status, 200);
+      assert.deepEqual(failed.events.map((e) => e.type), ['start', 'text', 'error']);
+      assert.deepEqual(failed.events[2].data, { error: 'The AI service is temporarily unavailable.' });
+      assert.equal(await count(), before, 'an AI error is not saved');
+      assert.deepEqual(logLines(aiServer, 'ai_error').map((l) => [l.label, l.type]), [['ask', 'rate_limit_error'], ['ask', 'overloaded_error']]);
+
+      // Held open while the model "thinks", longer than AI_STREAM_PING_MS
+      // (40 ms here): pings between start and the first words, none after done
+      fake.enqueue({ fixture: 'text-with-thinking.sse', pauseAfter: 2, pauseMs: 400 });
+      const held = await streamPost(`${aiBase}/api/ai/ask`, { question: 'Is Mike overloaded?' });
+      const firstText = held.sequence.indexOf('text');
+      assert.equal(held.sequence[0], 'start');
+      assert.ok(held.sequence.slice(1, firstText).filter((s) => s === 'ping').length >= 3, held.sequence.join(' '));
+      assert.equal(held.sequence.at(-1), 'done');
+      assert.equal(held.events.at(-1).data.saved, true);
+
+      // A failed save reaches the page: done with saved false and no id, and one ai_answer_save_failed line
+      await db.query('ALTER TABLE ai_answers ADD CONSTRAINT wp5_refuse_every_row CHECK (false) NOT VALID');
+      try {
+        const unsaved = await streamPost(`${aiBase}/api/ai/ask`, { question: 'Is Mike overloaded?' });
+        const done = unsaved.events.at(-1);
+        assert.equal(done.type, 'done');
+        assert.deepEqual([done.data.saved, done.data.answerId], [false, null]);
+        assert.equal(done.data.answer, textOf(unsaved.events));
+        assert.ok(done.data.answer.startsWith('**Fake Anthropic answer.**'));
+        assert.deepEqual(logLines(aiServer, 'ai_answer_save_failed').map((l) => [l.label, l.kind, l.code]), [['ask', 'ask', '23514']]);
+      } finally {
+        await db.query('ALTER TABLE ai_answers DROP CONSTRAINT wp5_refuse_every_row');
+      }
+      assert.equal(await count(), before + 1, 'only the held answer was saved');
+    } finally {
+      await stop();
     }
   });
 });
