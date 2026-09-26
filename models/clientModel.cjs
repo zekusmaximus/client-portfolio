@@ -8,15 +8,17 @@ const {
 } = require('../utils/people.cjs');
 
 /* List all clients, each with nested revenues array and its people (lead,
-   second chair, originator; the legacy people fields filled from them) */
+   second chair, originator; the legacy people fields filled from them).
+   The revenue rows read only columns production's older client_revenues has
+   (no contract_end_date: see CLAUDE.md, File Structure, and
+   tests/import-db.test.mjs), so the AI routes work on both table shapes. */
 exports.listWithRevenues = async () => {
   const { rows } = await db.query(
     `SELECT c.*, jsonb_agg(
          jsonb_build_object(
            'id', r.id,
            'year', r.year,
-           'revenue_amount', r.revenue_amount,
-           'contract_end_date', r.contract_end_date
+           'revenue_amount', r.revenue_amount
          ) ORDER BY r.year
        ) AS revenues,
        ${CLIENT_PEOPLE_COLUMNS}
@@ -36,8 +38,7 @@ exports.get = async (clientId) => {
          jsonb_build_object(
            'id', r.id,
            'year', r.year,
-           'revenue_amount', r.revenue_amount,
-           'contract_end_date', r.contract_end_date
+           'revenue_amount', r.revenue_amount
          ) ORDER BY r.year
        ) AS revenues,
        ${CLIENT_PEOPLE_COLUMNS}
