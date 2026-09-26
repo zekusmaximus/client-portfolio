@@ -13,7 +13,8 @@
 // suite's database, then the section 3 template into the empty book. Tier 1
 // WP3's Ask and brief run first on the empty book, and last on the whole book,
 // once without a key and once through a second server.cjs pointed at the fake
-// Anthropic server (tests/helpers/fakeAnthropic.mjs).
+// Anthropic server (tests/helpers/fakeAnthropic.mjs); WP4's saved answers
+// last of all, the same two ways.
 //
 // The whole suite runs twice: on the tables init-db.sql creates, and on
 // production's older tables (PRODUCTION_TABLES_SQL), created before
@@ -24,7 +25,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
 import { createServer } from 'node:net';
 import { promisify } from 'node:util';
@@ -34,6 +35,8 @@ import Papa from 'papaparse';
 import validator from 'validator';
 import escaping from '../utils/escaping.cjs';
 import askPrompts from '../utils/askPrompts.cjs';
+import aiAnswers from '../utils/aiAnswers.cjs';
+import aiCost from '../utils/aiCost.cjs';
 import { startFakeAnthropic, describeRequest } from './helpers/fakeAnthropic.mjs';
 import { clientFormData } from '../src/utils/clientForm.js';
 import { sanitizeFormData } from '../src/utils/validation.js';
@@ -72,7 +75,8 @@ const freePort = () => new Promise((resolve, reject) => {
   });
 });
 
-// Resolves when the server has applied init-db.sql and is listening.
+// Resolves when the server has applied init-db.sql and is listening. `output`
+// is everything it has written so far, for its structured log lines.
 function startServer(env) {
   const child = spawn(process.execPath, ['server.cjs'], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
@@ -96,7 +100,7 @@ function startServer(env) {
       reject(new Error(`server exited with ${code}:\n${output}`));
     });
   });
-  return { child, ready };
+  return { child, ready, get output() { return output; } };
 }
 
 // Production's users, clients and client_revenues as they predate init-db.sql:
@@ -496,7 +500,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -1309,10 +1313,12 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       assert.equal(fake.requests.length, 1);
       const askRequest = fake.requests[0].body;
       assert.deepEqual(Object.keys(asked.body).sort(), [
-        'answer', 'costUsd', 'kind', 'model', 'question', 'refusalCategory', 'refused',
-        'reportingYear', 'servedBy', 'success', 'timestamp', 'truncated', 'usage',
+        'answer', 'costUsd', 'id', 'kind', 'model', 'question', 'refusalCategory', 'refused',
+        'reportingYear', 'saved', 'servedBy', 'success', 'timestamp', 'truncated', 'usage',
       ]);
       assert.equal(asked.body.success, true);
+      assert.equal(asked.body.saved, true, 'WP4: the answer is saved');
+      assert.ok(Number.isInteger(asked.body.id), 'WP4: with the saved row\'s id');
       assert.equal(asked.body.kind, 'ask');
       assert.equal(asked.body.question, question);
       assert.equal(asked.body.answer, describeRequest(askRequest));
@@ -1369,6 +1375,272 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     } finally {
       aiServer.child.kill();
       await fake.close();
+    }
+  });
+
+  // Tier 1 WP4 (docs/plans/tier-1.md, section 9): the saved answers. On the
+  // keyless server: the rows WP3's fake-server test left, and nothing from the
+  // requests before it that stopped at a check or the missing key; the three
+  // GET routes' sign-in, their 404s and 400s, and no AI limiter on them.
+  test('WP4: WP3\'s four answers are saved and nothing else; the GET routes need sign-in, spend no AI budget, and answer 404 and 400 as they should', async () => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.ok(health.features.includes('ai-answers'));
+
+    // WP3's fake-server test: an Ask, the brief, a second Ask and a refusal.
+    // Every other AI request so far stopped at a check or the missing key
+    const importer = (await db.query("SELECT id FROM users WHERE username = 'importer'")).rows[0].id;
+    const { rows: saved } = await db.query('SELECT * FROM ai_answers ORDER BY created_at, id');
+    assert.deepEqual(saved.map((r) => [r.kind, r.refused, r.asked_by, r.asked_by_username]), [
+      ['ask', false, importer, 'importer'],
+      ['brief', false, importer, 'importer'],
+      ['ask', false, importer, 'importer'],
+      ['ask', true, importer, 'importer'],
+    ]);
+    assert.equal(saved[0].question, "Is Smith & O'Brien's lead book <1.0× the partners' average?", 'as written');
+    assert.equal(saved[1].question, null);
+    assert.deepEqual([saved[3].answer, saved[3].refusal_category], ['', 'cyber']);
+
+    // The list, newest first, with exactly the fields the plan names
+    const { status, body: list } = await call('GET', '/api/ai/answers');
+    assert.equal(status, 200, JSON.stringify(list));
+    assert.deepEqual(list.answers.map((a) => a.id), saved.map((r) => r.id).reverse());
+    assert.equal(list.hasMore, false);
+    assert.deepEqual(Object.keys(list.answers[0]).sort(), [
+      'asked_by_username', 'client_name', 'cost_usd', 'created_at', 'id', 'kind', 'preview',
+      'question', 'refused', 'served_by', 'truncated',
+    ]);
+    assert.equal(list.answers[3].preview, saved[0].answer.slice(0, 200));
+    assert.ok(saved[0].answer.length > 200, 'the preview is a prefix');
+
+    // Sign-in for all three; no AI rate limiter on any
+    for (const path of ['/api/ai/answers', '/api/ai/answers/summary', `/api/ai/answers/${saved[0].id}`]) {
+      const anonymous = await fetch(`${base}${path}`);
+      assert.equal(anonymous.status, 401, path);
+      const signedIn = await fetch(`${base}${path}`, { headers: { Cookie: cookie } });
+      assert.equal(signedIn.status, 200, path);
+      assert.equal(signedIn.headers.get('ratelimit-policy'), null, `no AI limiter on GET ${path}`);
+    }
+
+    // 404 for an id that is not a positive integer or not found
+    const maxId = Math.max(...saved.map((r) => r.id));
+    for (const id of ['abc', '0', '-1', '1.5', '99999999999', String(maxId + 1000)]) {
+      const res = await call('GET', `/api/ai/answers/${id}`);
+      assert.deepEqual([res.status, res.body.success], [404, false], id);
+    }
+    for (const query of ['limit=0', 'limit=51', 'limit=x', 'before=abc', 'before=0']) {
+      const res = await call('GET', `/api/ai/answers?${query}`);
+      assert.equal(res.status, 400, query);
+    }
+  });
+
+  // Then through a second server.cjs pointed at the fake Anthropic server, as
+  // WP3's test does: each kind saved with who asked, the list's pages, this
+  // month's count and cost, and a failed save that still returns the answer
+  test('WP4: through the fake Anthropic server, Ask, the brief and a transition plan are saved, the list pages with before, the summary counts this month, and a failed save still returns the answer', async () => {
+    const fake = await startFakeAnthropic();
+    const aiEnv = { ...env, PORT: String(await freePort()), ANTHROPIC_API_KEY: 'test', ANTHROPIC_BASE_URL: fake.url };
+    const aiServer = startServer(aiEnv);
+    const importer = (await db.query("SELECT id FROM users WHERE username = 'importer'")).rows[0].id;
+    let clientId;
+    try {
+      await aiServer.ready;
+      const aiBase = `http://127.0.0.1:${aiEnv.PORT}`;
+      const post = async (path, body, as = cookie) => {
+        const res = await fetch(`${aiBase}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: as },
+          body: JSON.stringify(body),
+        });
+        return { status: res.status, body: await res.json() };
+      };
+      const stored = async (id) => (await db.query(
+        "SELECT *, to_char(prices_read_on, 'YYYY-MM-DD') AS read_on FROM ai_answers WHERE id = $1", [id])).rows[0];
+      const count = async () => (await db.query('SELECT count(*)::int AS n FROM ai_answers')).rows[0].n;
+      // The cost as NUMERIC(10, 4) stores it, from the response's estimate
+      const asStored = async (usd) => (await db.query('SELECT round($1::numeric, 4)::text AS v', [String(usd)])).rows[0].v;
+      const { body: book } = await call('GET', '/api/ai/book');
+      const bookSha = createHash('sha256').update(book.text, 'utf8').digest('hex');
+
+      // Ask: saved with the signed-in partner, the question as written, and
+      // everything the answer cost
+      const question = "Who's the natural home for a $300k healthcare client & O'Brien's <book>?";
+      const asked = await post('/api/ai/ask', { question: `\n ${question} ` });
+      assert.equal(asked.status, 200, JSON.stringify(asked.body));
+      assert.deepEqual([asked.body.saved, typeof asked.body.id], [true, 'number']);
+      let row = await stored(asked.body.id);
+      assert.deepEqual(
+        [row.kind, row.question, row.answer, row.client_id, row.client_name, row.asked_by, row.asked_by_username],
+        ['ask', question, asked.body.answer, null, null, importer, 'importer']);
+      assert.deepEqual([row.model, row.served_by, row.fell_back, row.stop_reason, row.truncated, row.refused, row.refusal_category],
+        ['claude-opus-5', 'claude-opus-5', false, 'end_turn', false, false, null]);
+      assert.deepEqual([row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens],
+        [asked.body.usage.input_tokens, asked.body.usage.output_tokens, 0, 0]);
+      assert.ok(row.input_tokens > 1000, 'the book is in the input');
+      assert.equal(row.cost_usd, await asStored(asked.body.costUsd));
+      assert.equal(row.read_on, aiCost.PRICES_READ_ON);
+      assert.equal(row.book_sha256, bookSha, 'the book the answer was given on');
+      assert.equal(row.reporting_year, book.reportingYear);
+      assert.ok(row.duration_ms >= 0);
+      assert.ok(row.created_at instanceof Date);
+
+      // The one-answer route gives the row, whole
+      const one = await call('GET', `/api/ai/answers/${asked.body.id}`);
+      assert.equal(one.status, 200);
+      assert.equal(one.body.answer.answer, asked.body.answer);
+      assert.equal(one.body.answer.question, question);
+      assert.equal(one.body.answer.cost_usd, row.cost_usd, 'NUMERIC arrives as text');
+      assert.equal(one.body.answer.prices_read_on, aiCost.PRICES_READ_ON);
+      assert.equal(one.body.answer.book_sha256, bookSha);
+
+      // The brief: no question
+      const brief = await post('/api/ai/brief', {});
+      assert.equal(brief.status, 200, JSON.stringify(brief.body));
+      row = await stored(brief.body.id);
+      assert.deepEqual([row.kind, row.question, row.answer, row.book_sha256], ['brief', null, brief.body.answer, bookSha]);
+
+      // A transition plan: the client's id as text (an integer on production's
+      // tables, a uuid here) and its name unescaped, although the client form
+      // stored it escaped and the route's sanitizer escapes it again
+      const NAME = "Smith & O'Brien Holdings";
+      const paula = (await db.query("SELECT id FROM people WHERE name = 'Paula'")).rows[0].id;
+      const created = await call('POST', '/api/data/clients', {
+        name: NAME, practice_area: ['Healthcare'], conflict_risk: 'Low', notes: '', interaction_frequency: 'Monthly',
+        stickiness: 4, high_maintenance: false, lead_id: paula, second_chair_id: null, originator_id: null,
+        originator_is_firm: false, revenues: [{ year: 2026, revenue_amount: 50000 }],
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      clientId = created.body.client.id;
+      assert.equal(created.body.client.name, 'Smith &amp; O&#x27;Brien Holdings', 'stored escaped by the sanitizer');
+      const { body: clients } = await call('GET', '/api/data/clients');
+      const client = clients.clients.find((c) => String(c.id) === String(clientId));
+      const { body: everyone } = await call('GET', '/api/people');
+      const zero = { count: 0, revenue: 0, effort: 0 };
+      const roster = everyone.people.filter((p) => p.active && p.name !== 'Paula')
+        .map((p) => ({ name: p.name, role: p.role, lead: zero, second: zero }));
+      const planBody = { client, stage1Data: { departing: [{ name: 'Paula', role: 'partner' }], impactData: { totalRevenueAtRisk: 50000 }, reportingYear: 2026 }, roster };
+      const planned = await post('/api/scenarios/transition-plan', planBody);
+      assert.equal(planned.status, 200, JSON.stringify(planned.body));
+      assert.deepEqual(Object.keys(planned.body).sort(), ['answerId', 'plan', 'saved', 'success', 'timestamp']);
+      assert.equal(planned.body.saved, true);
+      assert.equal(planned.body.plan.clientId, client.id, 'the plan keeps its shape (T14)');
+      row = await stored(planned.body.answerId);
+      assert.equal(row.kind, 'transition-plan');
+      assert.equal(row.client_id, String(clientId));
+      assert.match(row.client_id, shape.idType === 'integer' ? /^\d+$/ : /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      assert.equal(row.client_name, NAME);
+      assert.deepEqual([row.question, row.book_sha256, row.reporting_year, row.asked_by], [null, null, 2026, importer]);
+      assert.match(row.answer, /^## TRANSITION STRATEGY\n/);
+      assert.equal(fake.requests.at(-1).body.max_tokens, 8000);
+
+      // The client can go; its answer reads the same (no key to clients, T12)
+      const gone = await fetch(`${base}/api/data/clients/${clientId}`, { method: 'DELETE', headers: { Cookie: cookie } });
+      assert.equal(gone.status, 204);
+      clientId = undefined;
+      assert.equal((await call('GET', `/api/ai/answers/${planned.body.answerId}`)).body.answer.client_name, NAME);
+
+      // A fallback-served answer, a cut-off one and a refusal, each as it ran
+      fake.enqueue('fallback-mid-stream.sse', 'max-tokens.sse', 'refusal-before-output.sse');
+      const fellBack = await post('/api/ai/ask', { question: 'Is Mike overloaded?' });
+      row = await stored(fellBack.body.id);
+      assert.deepEqual([row.model, row.served_by, row.fell_back, row.refused], ['claude-opus-5', 'claude-opus-4-8', true, false]);
+      assert.equal(row.cost_usd, await asStored(fellBack.body.costUsd));
+      const cutOff = await post('/api/ai/ask', { question: 'List every client.' });
+      row = await stored(cutOff.body.id);
+      assert.deepEqual([row.truncated, row.stop_reason, row.answer], [true, 'max_tokens', cutOff.body.answer]);
+      const refused = await post('/api/ai/ask', { question: 'Where is our biggest retention risk?' });
+      row = await stored(refused.body.id);
+      assert.deepEqual([row.refused, row.answer, row.refusal_category, row.cost_usd], [true, '', 'cyber', '0.0000']);
+
+      // An AI error is logged, not saved
+      const before = await count();
+      fake.enqueue('http-400-invalid-request.json');
+      const failed = await post('/api/ai/ask', { question: 'Is Mike overloaded?' });
+      assert.equal(failed.status, 502, JSON.stringify(failed.body));
+      assert.equal(await count(), before);
+
+      // Another partner: their answer is saved as theirs, and they see the same list
+      const second = { username: 'second-partner', password: generatedPassword() };
+      await execFileAsync(process.execPath, ['create-admin.cjs', second.username, second.password], { cwd: repo, env });
+      const login = await fetch(`${base}/api/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(second),
+      });
+      assert.equal(login.status, 200);
+      const secondCookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+      const theirs = await post('/api/ai/ask', { question: 'Who leads the most clients?' }, secondCookie);
+      assert.equal(theirs.status, 200, JSON.stringify(theirs.body));
+      row = await stored(theirs.body.id);
+      assert.equal(row.asked_by_username, 'second-partner');
+      assert.equal(row.asked_by, (await db.query("SELECT id FROM users WHERE username = 'second-partner'")).rows[0].id);
+      const listFor = async (as) => (await (await fetch(`${base}/api/ai/answers`, { headers: { Cookie: as } })).json()).answers;
+      const shared = await listFor(secondCookie);
+      assert.deepEqual(shared, await listFor(cookie));
+      assert.equal(shared[0].id, theirs.body.id);
+      assert.ok(shared.some((a) => a.id === asked.body.id && a.asked_by_username === 'importer'));
+
+      // The list pages with before: newest first by created_at then id, each answer once
+      const all = (await db.query('SELECT id FROM ai_answers ORDER BY created_at DESC, id DESC')).rows.map((r) => r.id);
+      assert.ok(all.length > 9, `${all.length} answers`);
+      const paged = [];
+      let page = await call('GET', '/api/ai/answers?limit=3');
+      for (;;) {
+        assert.equal(page.status, 200, JSON.stringify(page.body));
+        assert.ok(page.body.answers.length <= 3);
+        paged.push(...page.body.answers.map((a) => a.id));
+        if (!page.body.hasMore) break;
+        page = await call('GET', `/api/ai/answers?before=${paged.at(-1)}&limit=3`);
+      }
+      assert.deepEqual(paged, all);
+      const first = await call('GET', '/api/ai/answers');
+      assert.deepEqual(first.body.answers.map((a) => a.id), all.slice(0, 20), 'twenty by default');
+      assert.equal(first.body.hasMore, all.length > 20);
+      assert.equal(first.body.answers.find((a) => a.id === planned.body.answerId).client_name, NAME);
+
+      // This month, in America/New_York: an answer an instant before the
+      // month began is not counted, one at its first instant is
+      const month = aiAnswers.firmMonth(new Date());
+      const insertAt = async (at, cost) => (await db.query(
+        "INSERT INTO ai_answers (kind, answer, model, cost_usd, created_at) VALUES ('brief', 'x', 'claude-opus-5', $1, $2) RETURNING id",
+        [cost, at])).rows[0].id;
+      const lastMonth = await insertAt(new Date(Date.parse(month.from) - 1).toISOString(), '5.0000');
+      const firstInstant = await insertAt(month.from, '0.2500');
+      const unpriced = await insertAt(month.from, null);
+      const { rows: [sums] } = await db.query(
+        'SELECT count(*)::int AS n, sum(cost_usd)::text AS usd FROM ai_answers WHERE created_at >= $1 AND created_at < $2', [month.from, month.to]);
+      const summary = await call('GET', '/api/ai/answers/summary');
+      assert.equal(summary.status, 200, JSON.stringify(summary.body));
+      assert.deepEqual(summary.body, {
+        success: true, timeZone: 'America/New_York', month: month.month, from: month.from, to: month.to,
+        answers: sums.n, costUsd: sums.usd, unpriced: 1,
+      });
+      assert.equal(sums.n, all.length + 2, 'every answer of this suite and the first instant; not the one before it');
+      await db.query('DELETE FROM ai_answers WHERE id = ANY($1)', [[lastMonth, firstInstant, unpriced]]);
+
+      // A failed save still returns the answer the partner paid for, with
+      // saved: false and one ai_answer_save_failed line; Ask and a transition plan
+      const saveLines = () => aiServer.output.split('\n').filter((line) => line.includes('"event":"ai_answer_save_failed"'));
+      assert.deepEqual(saveLines(), []);
+      await db.query('ALTER TABLE ai_answers ADD CONSTRAINT wp4_refuse_every_row CHECK (false) NOT VALID');
+      try {
+        const lost = await count();
+        const unsaved = await post('/api/ai/ask', { question: 'Is Mike overloaded?' });
+        assert.equal(unsaved.status, 200, JSON.stringify(unsaved.body));
+        assert.deepEqual([unsaved.body.saved, unsaved.body.id], [false, null]);
+        assert.equal(unsaved.body.answer, describeRequest(fake.requests.at(-1).body), 'the answer is returned');
+        const clientForPlan = (await call('GET', '/api/data/clients')).body.clients[0];
+        const unsavedPlan = await post('/api/scenarios/transition-plan', { ...planBody, client: clientForPlan });
+        assert.equal(unsavedPlan.status, 200, JSON.stringify(unsavedPlan.body));
+        assert.deepEqual([unsavedPlan.body.saved, unsavedPlan.body.answerId], [false, null]);
+        assert.match(unsavedPlan.body.plan.strategy || JSON.stringify(unsavedPlan.body.plan), /Fake Anthropic plan/);
+        assert.equal(await count(), lost);
+        const lines = saveLines().map((line) => JSON.parse(line.slice(line.indexOf('{'))));
+        assert.deepEqual(lines.map((l) => [l.label, l.kind, l.code]), [['ask', 'ask', '23514'], ['transition-plan', 'transition-plan', '23514']]);
+      } finally {
+        await db.query('ALTER TABLE ai_answers DROP CONSTRAINT wp4_refuse_every_row');
+      }
+    } finally {
+      aiServer.child.kill();
+      await fake.close();
+      if (clientId !== undefined) await fetch(`${base}/api/data/clients/${clientId}`, { method: 'DELETE', headers: { Cookie: cookie } });
     }
   });
 });
