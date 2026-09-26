@@ -14,7 +14,8 @@
 // WP3's Ask and brief run first on the empty book, and last on the whole book,
 // once without a key and once through a second server.cjs pointed at the fake
 // Anthropic server (tests/helpers/fakeAnthropic.mjs); WP4's saved answers
-// last of all, the same two ways.
+// the same two ways, WP5's streamed answers, and WP6's transition plan on the
+// book last of all.
 //
 // The whole suite runs twice: on the tables init-db.sql creates, and on
 // production's older tables (PRODUCTION_TABLES_SQL), created before
@@ -37,14 +38,15 @@ import escaping from '../utils/escaping.cjs';
 import askPrompts from '../utils/askPrompts.cjs';
 import aiAnswers from '../utils/aiAnswers.cjs';
 import aiCost from '../utils/aiCost.cjs';
+import aiBook from '../utils/book.cjs';
 import { startFakeAnthropic, describeRequest, streamedText } from './helpers/fakeAnthropic.mjs';
 import { createSseParser, eventJson } from '../src/utils/sse.js';
 import { clientFormData } from '../src/utils/clientForm.js';
 import { sanitizeFormData } from '../src/utils/validation.js';
 import { toPersonId } from '../src/utils/people.js';
 import { departureModel } from '../src/utils/departure.js';
-import { revenueForYear } from '../src/utils/revenue.js';
-import { buildTransitionSheet } from '../src/utils/transitionPlans.js';
+import { computeReportingYear, revenueForYear } from '../src/utils/revenue.js';
+import { buildTransitionSheet, planRequest } from '../src/utils/transitionPlans.js';
 import { buildBookSheet } from '../src/utils/bookSheet.js';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
@@ -1538,6 +1540,8 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       const roster = everyone.people.filter((p) => p.active && p.name !== 'Paula')
         .map((p) => ({ name: p.name, role: p.role, lead: zero, second: zero }));
       const planBody = { client, stage1Data: { departing: [{ name: 'Paula', role: 'partner' }], impactData: { totalRevenueAtRisk: 50000 }, reportingYear: 2026 }, roster };
+      // WP6: the plan is written on the book, which now holds this client
+      const { body: planBook } = await call('GET', '/api/ai/book');
       const planned = await post('/api/scenarios/transition-plan', planBody);
       assert.equal(planned.status, 200, JSON.stringify(planned.body));
       assert.deepEqual(Object.keys(planned.body).sort(), ['answerId', 'plan', 'saved', 'success', 'timestamp']);
@@ -1548,9 +1552,12 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       assert.equal(row.client_id, String(clientId));
       assert.match(row.client_id, shape.idType === 'integer' ? /^\d+$/ : /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
       assert.equal(row.client_name, NAME);
-      assert.deepEqual([row.question, row.book_sha256, row.reporting_year, row.asked_by], [null, null, 2026, importer]);
+      // WP6: the book the plan was given on and its reporting year (until
+      // WP6, no hash and the request's year)
+      assert.deepEqual([row.question, row.book_sha256, row.reporting_year, row.asked_by],
+        [null, createHash('sha256').update(planBook.text, 'utf8').digest('hex'), planBook.reportingYear, importer]);
       assert.match(row.answer, /^## TRANSITION STRATEGY\n/);
-      assert.equal(fake.requests.at(-1).body.max_tokens, 8000);
+      assert.equal(fake.requests.at(-1).body.max_tokens, 16000, 'T11');
 
       // The client can go; its answer reads the same (no key to clients, T12)
       const gone = await fetch(`${base}/api/data/clients/${clientId}`, { method: 'DELETE', headers: { Cookie: cookie } });
@@ -1940,5 +1947,158 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     } finally {
       await stop();
     }
+  });
+
+  // Tier 1 WP6 (docs/plans/tier-1.md, section 11): a transition plan on the
+  // book, on its own server.cjs pointed at the fake Anthropic server (the
+  // keyless server has spent most of its AI budget). One request, the one
+  // Stage 2 sends (planRequest over the API's clients and People list), with
+  // the client's figures and the roster's loads inflated: the model must see
+  // the book's. Each test checks one outcome of it, so each can fail alone.
+  describe('WP6: transition plans on the book', () => {
+    let wp6;
+
+    before(async () => {
+      const started = await startStreamingServer();
+      wp6 = { ...started };
+      const post = async (path, body) => {
+        const res = await fetch(`${started.aiBase}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: cookie },
+          body: JSON.stringify(body),
+        });
+        return { status: res.status, body: await res.json() };
+      };
+      const { body: { clients } } = await call('GET', '/api/data/clients');
+      const { body: { people } } = await call('GET', '/api/people');
+      const target = clients.find((c) => c.name === HEALTH);
+      assert.ok(target?.lead, 'the template client, with a lead');
+      const year = computeReportingYear(clients, new Date());
+      const departure = departureModel({ people, clients, departingIds: [target.lead.id], revenueOf: (c) => revenueForYear(c, year) });
+      const decision = departure.decisions.find((d) => String(d.client.id) === String(target.id));
+      const request = planRequest(decision, departure, year);
+      const inflate = (l) => ({ count: l.count + 90, revenue: l.revenue + 9000000, effort: l.effort + 900 });
+      const body = {
+        ...request,
+        client: {
+          ...request.client, averageRevenue: 7654321, stickinessScore: 9.9, effort: 77, practiceArea: ['Tax'],
+          successionRisk: 8, transitionComplexity: 6, relationshipType: 'primary',
+        },
+        roster: request.roster.map((p) => ({ ...p, lead: inflate(p.lead), second: inflate(p.second) })),
+      };
+      const { body: bookAnswer } = await call('GET', '/api/ai/book');
+      const planned = await post('/api/scenarios/transition-plan', body);
+      Object.assign(wp6, {
+        post, people, target, leaving: target.lead, year, departure, request, body, bookAnswer, planned,
+        sent: started.fake.requests[0]?.body,
+      });
+    });
+
+    after(async () => {
+      await wp6?.stop();
+    });
+
+    test('WP6: the plan sends Ask\'s two system blocks byte for byte (the book GET /api/ai/book shows, the cache marker on it), and an Ask right after sends the same', async () => {
+      const { planned, sent, bookAnswer, fake, post, leaving } = wp6;
+      assert.equal(planned.status, 200, JSON.stringify(planned.body));
+      assert.equal(typeof wp6.target.id, shape.idType === 'integer' ? 'number' : 'string', 'this run\'s client id type');
+      assert.deepEqual(sent.system, askPrompts.systemBlocks(bookAnswer.text));
+      assert.ok(!JSON.stringify(sent.system).includes('## ROSTER'), 'the scenario only in the user turn');
+      assert.match(planned.body.plan.strategy, new RegExp(`written on a book of ${bookAnswer.clientCount} client rows`), 'the fake saw the book');
+      const asked = await post('/api/ai/ask', { question: `Who could take ${leaving.name}'s seats?` });
+      assert.equal(asked.status, 200, JSON.stringify(asked.body));
+      assert.equal(JSON.stringify(fake.requests.at(-1).body.system), JSON.stringify(sent.system), 'one cache entry for both (T8)');
+    });
+
+    test('WP6: the client\'s facts in the prompt come from the book, not the request; the succession metrics from the request', () => {
+      const { sent, target, leaving, year } = wp6;
+      assert.equal(sent.messages.length, 1);
+      const turn = sent.messages[0].content;
+      assert.match(turn, /^Today is \d{4}-\d{2}-\d{2}\.\n\n/);
+      // A client's effort as the book's client table shows it, to the hundredth
+      const effort = String(Math.round(target.effort * 100) / 100);
+      for (const line of [
+        `- **Name**: ${escaping.unescapeText(target.name)}`,
+        `- **Practice Areas**: ${target.practice_area.join('; ')}`,
+        `- **Current Lead**: ${leaving.name} (leaving)`,
+        `- **Current Second Chair**: ${target.secondChair ? target.secondChair.name : 'none'}`,
+        `- **Effort**: ${effort}`,
+        '- **Succession Risk**: 8/10',
+        '- **Transition Complexity**: 6/10',
+        '- **Relationship Type**: primary',
+      ]) assert.ok(turn.includes(`${line}\n`), line);
+      assert.ok(turn.includes(`- **Revenue ${year}**: ${aiBook.formatMoney(revenueForYear(target, year))} (on file: `), 'the reporting year\'s revenue, then every year on file');
+      assert.ok(!/7,654,321|Tax|9\.9|\*\*Effort\*\*: 77/.test(turn), 'none of the request\'s figures for the client');
+    });
+
+    test('WP6: the roster\'s loads in the prompt are the book\'s, not the inflated ones the request carried', () => {
+      const { sent, request, departure } = wp6;
+      const turn = sent.messages[0].content;
+      const lines = [...turn.matchAll(/^- .+? \((Partner|Emeritus|Associate)\): leads .+$/gm)].map((m) => m[0]);
+      // The book's figures are the page's own before rosterFor rounds them,
+      // formatted as the book formats them
+      const role = { partner: 'Partner', emeritus: 'Emeritus', associate: 'Associate' };
+      const clientsText = (n) => `${n} client${n === 1 ? '' : 's'}`;
+      const load = (l) => `${clientsText(l.count)} (${aiBook.formatMoney(l.revenue)}, effort ${aiBook.formatEffort(l.effort)})`;
+      assert.deepEqual(lines, request.roster.map((p) => {
+        const row = departure.before.rows.find((r) => r.person.name === p.name);
+        return `- ${p.name} (${role[p.role]}): leads ${load(row.lead)}; second chair on ${load(row.second)}`;
+      }));
+      assert.ok(!/\$9,|9\d clients|effort 9\d\d/.test(lines.join('\n')), lines.join('\n'));
+    });
+
+    test('WP6: 16,000 tokens (T11); the response keeps its shape (T14); saved with the book it was given on and its reporting year', async () => {
+      const { planned, sent, target, bookAnswer } = wp6;
+      assert.equal(sent.max_tokens, 16000);
+      assert.deepEqual(Object.keys(planned.body).sort(), ['answerId', 'plan', 'saved', 'success', 'timestamp']);
+      assert.deepEqual(Object.keys(planned.body.plan).sort(), [
+        'clientId', 'clientName', 'communicationTemplate', 'createdAt', 'priority', 'recommendedLead',
+        'recommendedSecondChair', 'refused', 'risks', 'status', 'strategy', 'tasks', 'timelineDays', 'truncated',
+      ], 'the plan the page reads, as before');
+      assert.equal(planned.body.plan.clientId, target.id);
+      const row = await answerRowById(planned.body.answerId);
+      assert.deepEqual([row.kind, row.client_id, row.client_name, row.book_sha256, row.reporting_year], [
+        'transition-plan', String(target.id), escaping.unescapeStored(target.name),
+        createHash('sha256').update(bookAnswer.text, 'utf8').digest('hex'), bookAnswer.reportingYear,
+      ]);
+    });
+
+    test('WP6: the recommendation resolves against the roster, with the People list\'s ids; a name off the roster never fills a seat', async () => {
+      const { planned, request, people, fake, post, body, leaving } = wp6;
+      // The fake recommends the first partner on the roster it received and the next person
+      const byName = new Map(people.map((p) => [p.name, p]));
+      const leadPick = request.roster.find((p) => p.role === 'partner');
+      const secondPick = request.roster.find((p) => p !== leadPick);
+      const seat = (p) => ({ id: byName.get(p.name).id, name: p.name, role: byName.get(p.name).role });
+      assert.deepEqual(planned.body.plan.recommendedLead.person, seat(leadPick));
+      assert.deepEqual(planned.body.plan.recommendedSecondChair.person, seat(secondPick));
+
+      // The partner leaving as lead, someone never on the People list as second chair: nobody
+      fake.enqueue({ sse: streamedText(`## TRANSITION STRATEGY\nHand over.\n\n## RECOMMENDED LEAD\n${leaving.name}\nStays on.\n\n## RECOMMENDED SECOND CHAIR\nJane Outsider\nNew.\n\n## TIMELINE\n30 days`).join('') });
+      const offRoster = await post('/api/scenarios/transition-plan', body);
+      assert.equal(offRoster.status, 200, JSON.stringify(offRoster.body));
+      for (const side of ['recommendedLead', 'recommendedSecondChair']) {
+        assert.deepEqual([offRoster.body.plan[side].person, offRoster.body.plan[side].problem],
+          [null, 'The recommendation names nobody on the roster.'], side);
+      }
+    });
+
+    test('WP6: a client not in the book answers 404 before the model; the roster refusals still answer 400', async () => {
+      const { fake, post, body, leaving } = wp6;
+      const reached = fake.requests.length;
+      const missing = shape.idType === 'integer' ? 2147483000 : '00000000-0000-4000-8000-000000000000';
+      let res = await post('/api/scenarios/transition-plan', { ...body, client: { ...body.client, id: missing } });
+      assert.deepEqual([res.status, res.body], [404, { success: false, error: 'Client not found.' }]);
+      const zero = { count: 0, revenue: 0, effort: 0 };
+      const entry = (who) => ({ name: who, role: 'partner', lead: zero, second: zero });
+      res = await post('/api/scenarios/transition-plan', { ...body, roster: [...body.roster, entry('Nobody')] });
+      assert.deepEqual([res.status, res.body.error], [400, 'Not on the People list: Nobody.']);
+      res = await post('/api/scenarios/transition-plan', { ...body, roster: [...body.roster, entry(leaving.name)] });
+      assert.deepEqual([res.status, res.body.error], [400, `Leaving, so not on the roster: ${leaving.name}.`]);
+      res = await post('/api/scenarios/transition-plan', { ...body, roster: undefined });
+      assert.equal(res.status, 400);
+      assert.match(res.body.error, /^roster must list/);
+      assert.equal(fake.requests.length, reached, 'none of them reached the model');
+    });
   });
 });
