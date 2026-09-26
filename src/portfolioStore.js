@@ -320,10 +320,6 @@ const usePortfolioStore = create(
       
       setCurrentView: (view) => set({ currentView: view }),
 
-      // The AI tab's answers: one slot per kind (ask, brief), each the route's whole answer
-      setAiResult: (key, data) => set((state) => ({ aiResults: { ...state.aiResults, [key]: data } })),
-      setAiError: (aiError) => set({ aiError }),
-
       // Ask (question) or the brief (question null), owned by the store so a
       // tab switch, which unmounts the tab, neither loses the answer nor
       // stops it (WP5). stream: true reads the answer as it is written
