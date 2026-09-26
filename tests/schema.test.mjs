@@ -17,8 +17,10 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import schemaCheck from '../utils/schemaCheck.cjs';
+import aiAnswers from '../utils/aiAnswers.cjs';
 
-const { USER_FOREIGN_KEYS_SQL, checkUserForeignKeys, checkClientForeignKeys, checkBookReset } = schemaCheck;
+const { USER_FOREIGN_KEYS_SQL, CLIENT_FOREIGN_KEYS_SQL, checkUserForeignKeys, checkClientForeignKeys, checkBookReset } = schemaCheck;
+const { answerRow, insertParams, INSERT_ANSWER_SQL } = aiAnswers;
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const initSql = readFileSync(new URL('../init-db.sql', import.meta.url), 'utf8');
 const serverUrl = process.env.SCHEMA_TEST_SERVER_URL;
@@ -645,6 +647,225 @@ describe('reset-book on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
       assert.equal(result.code, 0, result.stdout + result.stderr);
       assert.match(result.stdout, /^Removed 0 clients and 0 revenue rows\. Accounts: 0 and people: 7, unchanged\.$/m);
       assert.equal((await roster(db)).length, 7);
+    });
+  });
+});
+
+// --- ai_answers (docs/plans/tier-1.md, WP4; T12) -----------------------------
+
+// init-db.sql as it was before WP4: everything above the ai_answers section.
+// Applying it to a new database gives a pre-WP4 schema; applying it to a
+// migrated one is what a Render rollback to pre-WP4 code does at start.
+const ANSWERS_MARKER = '-- AI answers';
+const preAnswersSql = initSql.slice(0, initSql.indexOf(ANSWERS_MARKER));
+
+test('init-db.sql still contains the ai_answers section marker the rollback tests cut at', () => {
+  assert.ok(initSql.indexOf(ANSWERS_MARKER) > initSql.indexOf(PEOPLE_MARKER));
+  assert.doesNotMatch(preAnswersSql, /ai_answers/);
+  assert.match(initSql.slice(initSql.indexOf(ANSWERS_MARKER)), /^CREATE TABLE IF NOT EXISTS ai_answers \(/m);
+});
+
+// ai_answers' columns as the catalog describes them, its constraints (with
+// their oids, so a drop and re-add shows) and its indexes
+async function answersCatalog(db) {
+  const rows = async (sql) => (await db.query(sql)).rows;
+  return {
+    columns: await rows(`
+      SELECT attname AS name, format_type(atttypid, atttypmod) AS type, attnotnull AS not_null,
+             pg_get_expr(d.adbin, d.adrelid) AS default_value
+        FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+       WHERE a.attrelid = 'ai_answers'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+       ORDER BY a.attnum`),
+    constraints: await rows(`
+      SELECT oid::bigint::text AS oid, conname, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint WHERE conrelid = 'ai_answers'::regclass ORDER BY conname`),
+    indexes: await rows(`SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'ai_answers' ORDER BY indexname`),
+  };
+}
+
+const answersRows = async (db) =>
+  (await db.query('SELECT to_jsonb(a) AS row FROM ai_answers a ORDER BY id')).rows;
+
+// Three saved answers, as the routes write them: an Ask by partner-a, a brief
+// by partner-b and a transition plan for one of seed()'s clients by partner-a
+async function saveAnswers(db) {
+  const userId = async (username) => (await db.query('SELECT id FROM users WHERE username = $1', [username])).rows[0].id;
+  const client = (await db.query("SELECT id, name FROM clients WHERE name = 'A1'")).rows[0];
+  const result = {
+    text: 'Mike leads six clients.', servedBy: 'claude-opus-5', stopReason: 'end_turn', costUsd: 0.0421,
+    pricesReadOn: '2026-09-26', tokens: { inputTokens: 5200, outputTokens: 800, cacheReadTokens: 0, cacheWrite5mTokens: 4400, cacheWrite1hTokens: 0 },
+  };
+  const rows = [
+    answerRow({ kind: 'ask', question: 'Is Mike overloaded?', user: { userId: await userId('partner-a'), username: 'partner-a' }, result, bookText: 'book', reportingYear: 2025, durationMs: 9000, model: 'claude-opus-5' }),
+    answerRow({ kind: 'brief', user: { userId: await userId('partner-b'), username: 'partner-b' }, result, bookText: 'book', reportingYear: 2025, durationMs: 21000, model: 'claude-opus-5' }),
+    answerRow({ kind: 'transition-plan', client, user: { userId: await userId('partner-a'), username: 'partner-a' }, result, reportingYear: 2025, durationMs: 15000, model: 'claude-opus-5' }),
+  ];
+  for (const row of rows) await db.query(INSERT_ANSWER_SQL, insertParams(row));
+  return rows;
+}
+
+describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  test('a new database has ai_answers with its columns, checks, key and index; a second start changes nothing', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      const catalog = await answersCatalog(db);
+      assert.deepEqual(catalog.columns.map((c) => [c.name, c.type, c.not_null]), [
+        ['id', 'integer', true],
+        ['kind', 'character varying(20)', true],
+        ['question', 'text', false],
+        ['answer', 'text', true],
+        ['client_id', 'text', false],
+        ['client_name', 'character varying(255)', false],
+        ['asked_by', 'integer', false],
+        ['asked_by_username', 'character varying(255)', false],
+        ['model', 'character varying(100)', true],
+        ['served_by', 'character varying(100)', false],
+        ['fell_back', 'boolean', true],
+        ['stop_reason', 'character varying(40)', false],
+        ['truncated', 'boolean', true],
+        ['refused', 'boolean', true],
+        ['refusal_category', 'character varying(60)', false],
+        ['input_tokens', 'integer', true],
+        ['output_tokens', 'integer', true],
+        ['cache_read_tokens', 'integer', true],
+        ['cache_write_tokens', 'integer', true],
+        ['cost_usd', 'numeric(10,4)', false],
+        ['prices_read_on', 'date', false],
+        ['book_sha256', 'character(64)', false],
+        ['reporting_year', 'integer', false],
+        ['duration_ms', 'integer', false],
+        ['created_at', 'timestamp with time zone', true],
+      ]);
+      assert.deepEqual(catalog.constraints.map((c) => [c.conname, c.definition]), [
+        ['ai_answers_asked_by_fkey', 'FOREIGN KEY (asked_by) REFERENCES users(id) ON DELETE SET NULL'],
+        ['ai_answers_kind_check', "CHECK (((kind)::text = ANY ((ARRAY['ask'::character varying, 'brief'::character varying, 'transition-plan'::character varying])::text[])))"],
+        ['ai_answers_pkey', 'PRIMARY KEY (id)'],
+      ]);
+      assert.deepEqual(catalog.indexes.map((i) => i.indexname), ['ai_answers_pkey', 'idx_ai_answers_created_at']);
+      assert.match(catalog.indexes[1].indexdef, /USING btree \(created_at DESC, id DESC\)$/);
+      // No key to clients (T12): reset-book would refuse, or a cascade empty the answers
+      const { rows: toClients } = await db.query(CLIENT_FOREIGN_KEYS_SQL);
+      assert.deepEqual(toClients.map((k) => k.table_name), ['client_revenues']);
+
+      // The checks: kind, the NOT NULLs and the key to users; the defaults
+      await db.query("INSERT INTO users (username, password_hash) VALUES ('partner-a', 'x')");
+      await db.query('BEGIN');
+      assert.equal(await sqlState(db, "INSERT INTO ai_answers (kind, answer, model) VALUES ('other', '', 'claude-opus-5')"), '23514');
+      assert.equal(await sqlState(db, "INSERT INTO ai_answers (kind, answer, model) VALUES ('ask', NULL, 'claude-opus-5')"), '23502');
+      assert.equal(await sqlState(db, "INSERT INTO ai_answers (kind, answer, model) VALUES ('ask', '', NULL)"), '23502');
+      assert.equal(await sqlState(db, "INSERT INTO ai_answers (kind, answer, model, asked_by) VALUES ('ask', '', 'claude-opus-5', 999999)"), '23503');
+      assert.equal(await sqlState(db, "INSERT INTO ai_answers (kind, answer, model, cost_usd) VALUES ('brief', '', 'claude-opus-5', 0.123456)"), null);
+      const { rows: [saved] } = await db.query('SELECT * FROM ai_answers');
+      assert.deepEqual(
+        [saved.fell_back, saved.truncated, saved.refused, saved.input_tokens, saved.output_tokens, saved.cache_read_tokens, saved.cache_write_tokens],
+        [false, false, false, 0, 0, 0, 0]);
+      assert.equal(saved.cost_usd, '0.1235', 'NUMERIC(10, 4), returned as text');
+      assert.ok(saved.created_at instanceof Date);
+      await db.query('ROLLBACK');
+
+      await applyInit(db);
+      assert.deepEqual(await answersCatalog(db), catalog, 'the second start dropped or changed something');
+    });
+  });
+
+  test('applying init-db.sql again leaves saved answers as they are', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      const before = { answers: await answersRows(db), book: await bookSnapshot(db) };
+      assert.equal(before.answers.length, 3);
+      await applyInit(db);
+      await applyInit(db);
+      assert.deepEqual({ answers: await answersRows(db), book: await bookSnapshot(db) }, before);
+    });
+  });
+
+  test('a pre-WP4 database migrates with every client, revenue row and person intact, and an empty ai_answers', async () => {
+    await withDatabase(async (db) => {
+      await db.query(preAnswersSql);
+      await seedBook(db);
+      const before = await bookSnapshot(db);
+      assert.equal((await db.query("SELECT to_regclass('ai_answers') AS t")).rows[0].t, null);
+
+      await applyInit(db);
+      assert.deepEqual(await bookSnapshot(db), before);
+      assert.deepEqual(await answersRows(db), []);
+      assert.equal((await answersCatalog(db)).columns.length, 25);
+    });
+  });
+
+  test('a rollback start (the pre-WP4 file on a migrated database) succeeds and leaves the table and its rows', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      const before = { catalog: await answersCatalog(db), answers: await answersRows(db), book: await bookSnapshot(db) };
+
+      await db.query(preAnswersSql);
+      assert.deepEqual({ catalog: await answersCatalog(db), answers: await answersRows(db), book: await bookSnapshot(db) }, before);
+
+      // And forward again
+      await applyInit(db);
+      assert.deepEqual({ catalog: await answersCatalog(db), answers: await answersRows(db), book: await bookSnapshot(db) }, before);
+    });
+  });
+
+  test('check-schema still ends OK: the new key to users is SET NULL', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      const result = await runScript('scripts/check-schema.cjs', url);
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^ok {2}ai_answers\.ai_answers_asked_by_fkey: FOREIGN KEY \(asked_by\) REFERENCES users\(id\) ON DELETE SET NULL$/m);
+      assert.match(result.stdout, /^ok {2}clients\.clients_user_id_fkey: .*ON DELETE SET NULL$/m);
+      assert.match(result.stdout, /^OK: /m);
+    });
+  });
+
+  test('delete-user on an account with answers keeps them, with asked_by null and the username kept', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      const before = await answersRows(db);
+
+      const result = await runScript('scripts/delete-user.cjs', url, 'partner-a');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^Deleted user partner-a\. /m);
+
+      const after = await answersRows(db);
+      assert.equal(after.length, 3);
+      assert.deepEqual(after.map(({ row }) => [row.kind, row.asked_by === null, row.asked_by_username]), [
+        ['ask', true, 'partner-a'],
+        ['brief', false, 'partner-b'],
+        ['transition-plan', true, 'partner-a'],
+      ]);
+      // Nothing else in any answer changed
+      const strip = ({ row }) => ({ ...row, asked_by: null });
+      assert.deepEqual(after.map(strip), before.map(strip));
+      assert.deepEqual(await counts(db), { users: 1, clients: 5, revenues: 10 });
+    });
+  });
+
+  test('reset-book --confirm with answers saved succeeds and leaves them untouched', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      const saved = await saveAnswers(db);
+      const before = await answersRows(db);
+      assert.equal(before[2].row.client_id, String((await db.query("SELECT id FROM clients WHERE name = 'A1'")).rows[0].id));
+      assert.equal(saved[2].client_name, 'A1');
+
+      let result = await runScript('scripts/reset-book.cjs', url);
+      assert.equal(result.code, 1, result.stdout + result.stderr);
+      assert.doesNotMatch(result.stdout, /ai_answers/, 'not a table that references clients');
+
+      result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^Removed 5 clients and 10 revenue rows\. Accounts: 2 and people: 9, unchanged\.$/m);
+      assert.deepEqual(await answersRows(db), before);
     });
   });
 });
