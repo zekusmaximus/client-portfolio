@@ -1,11 +1,15 @@
 // The book as the AI sees it (docs/plans/tier-1.md, WP2; T3, T4, T5): every
 // client and every person who carries one, built on the server from the
 // database at each request and rendered as deterministic text. The AI tab
-// shows this exact text ("What the AI is given"); from WP3 the prompts send it.
+// shows this exact text ("What the AI is given"); Ask and the brief (WP3) and
+// the transition plan (WP6) send it.
 //
-// Pure: no db.cjs import, so tests can load it. routes/ai.cjs reads the
-// clients (models/clientModel.cjs listWithMetrics, which scores them with
-// utils/strategic.cjs) and the People list and calls buildBook.
+// Pure: no db.cjs import, so tests can load it. models/bookModel.cjs (loadBook,
+// shared by routes/ai.cjs and routes/scenarios.cjs) reads the clients
+// (models/clientModel.cjs listWithMetrics, which scores them with
+// utils/strategic.cjs) and the People list and calls buildBook. The
+// transition plan's prompt (utils/transitionPlan.cjs) formats its client and
+// roster with the formatters exported here, so it shows the book's figures.
 //
 // The per-person figures port the page's arithmetic, which stays in the
 // page's own ES modules (T3: the server never require()s src/): partnershipModel
@@ -22,7 +26,9 @@
 // commitment). A default is labelled as one: an unrated client reads "not
 // rated" and a missing cadence "not set", never a value.
 
-const { unescapeText } = require('./transitionPlan.cjs');
+// From utils/escaping.cjs directly: utils/transitionPlan.cjs re-exports it,
+// and itself requires this module for the transition plan's figures (WP6).
+const { unescapeText } = require('./escaping.cjs');
 const { getEffort, calculateStrategicValue, EFFORT_BY_CADENCE, HANDFUL_MULTIPLIER } = require('./strategic.cjs');
 
 /**
@@ -607,4 +613,8 @@ module.exports = {
   formatMoney,
   formatEffort,
   formatRatio,
+  formatClientEffort,
+  stickinessText,
+  cadenceText,
+  conflictText,
 };

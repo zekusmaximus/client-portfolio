@@ -41,8 +41,9 @@ const whole = (n) => {
  * name with the request sanitizer's escaping undone (unescapeStored), since
  * the transition-plan route runs behind sanitizeRequestBody and the page
  * sends names as the API stored them. `user` is the JWT payload
- * ({ userId, username }). `bookText` is the book the answer was given on
- * (null for a transition plan until WP6), stored as its hash.
+ * ({ userId, username }). `bookText` is the book the answer was given on,
+ * stored as its hash (a transition plan's since WP6, when it moved onto the
+ * book; before that it stored none).
  *
  * A refused answer stores empty text and its category. The cost and the date
  * its prices were read come from utils/aiCost.cjs through complete(), so the

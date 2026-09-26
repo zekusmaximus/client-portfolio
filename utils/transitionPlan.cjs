@@ -14,15 +14,32 @@
 // a second chair by name from that roster, each in its own section, and the
 // parser resolves each name against the same roster: a name that is not on it
 // resolves to nobody, so the model can never put someone in a seat.
+//
+// On the book (docs/plans/tier-1.md, WP6, T14): the plan is written with the
+// whole book in view. Its system blocks are Ask's and the brief's
+// (systemBlocks in utils/askPrompts.cjs: the instructions, then the book with
+// the one cache marker), byte for byte, so a plan and a question on the same
+// book share one cache entry (T8); the date, the scenario, the client and the
+// roster go in the user turn. The client's facts come from its entry in the
+// server's book (utils/book.cjs) and the roster's loads from the book's rows,
+// whatever figures the page sent; only the page's succession metrics
+// (successionRisk, transitionComplexity, relationshipType) come from the
+// request, since the server has no copy of src/utils/successionUtils.js.
 
 // sanitizeRequestBody HTML-escapes every string in the request with
 // validator.escape, so a name with an apostrophe (O'Brien, which the People
 // list allows) arrives as O&#x27;Brien. unescapeText (utils/escaping.cjs)
 // undoes exactly that set.
 const { unescapeText } = require('./escaping.cjs');
-
-const TRANSITION_PLAN_SYSTEM =
-  'You are a senior succession planning consultant specializing in government relations law firms.';
+const { systemBlocks, firmDate } = require('./askPrompts.cjs');
+const {
+  formatMoney,
+  formatEffort,
+  formatClientEffort,
+  stickinessText,
+  cadenceText,
+  conflictText,
+} = require('./book.cjs');
 
 // The most people a roster may hold; the firm has about a dozen
 const ROSTER_MAX = 50;
@@ -93,104 +110,155 @@ function checkRoster(roster, people = [], departing = []) {
   return { roster: errors.length ? [] : checked, errors };
 }
 
-const money = (n) => `$${Math.round(Number(n) || 0).toLocaleString('en-US')}`;
-const effortText = (n) => String(Math.round((Number(n) || 0) * 10) / 10);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** One roster line for the prompt: "- Joe (Partner): leads 4 clients ($199,000, effort 9); second chair on 1 client ($120,000, effort 1.5)". */
+/**
+ * One roster line for the prompt: "- Joe (Partner): leads 4 clients ($199,000,
+ * effort 9); second chair on 1 client ($120,000, effort 1.5)". The figures are
+ * formatted as the book formats them (formatMoney, formatEffort), so a line
+ * shows what the book's People tables show for the same person. The fake
+ * Anthropic server finds the roster by this shape (tests/helpers/fakeAnthropic.mjs).
+ */
 function rosterLine(p) {
-  return `- ${p.name} (${ROLE_NAMES[p.role] || p.role}): leads ${plural(p.lead.count, 'client')} (${money(p.lead.revenue)}, effort ${effortText(p.lead.effort)}); ` +
-    `second chair on ${plural(p.second.count, 'client')} (${money(p.second.revenue)}, effort ${effortText(p.second.effort)})`;
+  return `- ${p.name} (${ROLE_NAMES[p.role] || p.role}): leads ${plural(p.lead.count, 'client')} (${formatMoney(p.lead.revenue)}, effort ${formatEffort(p.lead.effort)}); ` +
+    `second chair on ${plural(p.second.count, 'client')} (${formatMoney(p.second.revenue)}, effort ${formatEffort(p.second.effort)})`;
 }
 
-// `client` is one affected client as the frontend holds it: a scored client
-// from GET /api/data/clients (averageRevenue, stickinessScore, effort,
-// strategicValue, the nested lead and secondChair) plus the succession
-// metrics the store adds (successionRisk, transitionComplexity,
-// relationshipType). `stage1Data` carries the impact analysis: departing
-// ([{ name, role }]; older callers sent selectedPartners, names), impactData
-// ({ totalRevenueAtRisk }) and reportingYear. `roster` is checkRoster's.
-// The retention estimate Stage 1 used to send, built on the retired
-// relationshipStrength, is gone (people plan, Phase 5), and the prompt no
-// longer states one.
-function createTransitionPlanPrompt(client, stage1Data = {}, roster = []) {
-  const revenue = Number(client.averageRevenue) || 0;
-  const practiceAreas = Array.isArray(client.practiceArea)
-    ? client.practiceArea.join(', ')
-    : client.practiceArea || 'Not specified';
-  const relationshipType = client.relationshipType || 'unknown';
-  const successionRisk = client.successionRisk || 5;
-  const transitionComplexity = client.transitionComplexity || 5;
-  const stickiness = client.stickinessScore != null && client.stickinessScore !== ''
-    ? `${client.stickinessScore}/10`
-    : 'Not specified';
-  const effort = client.effort != null && client.effort !== '' ? String(client.effort) : 'Not specified';
-  const cadence = client.interaction_frequency || 'Not specified';
-  const handful = client.high_maintenance === true || client.high_maintenance === 'true' ? 'Yes' : 'No';
+/**
+ * The book's entry for a client (buildBook's model.clients), found by the id
+ * as text: an integer on production's older tables, a uuid on the tables
+ * init-db.sql creates (CLAUDE.md, File Structure). null when the book has no
+ * such client.
+ */
+function bookClient(book, id) {
+  if (id === null || id === undefined || id === '') return null;
+  const wanted = String(id);
+  return (book?.model?.clients || []).find((c) => String(c.id) === wanted) || null;
+}
 
-  const departingList = Array.isArray(stage1Data.departing) && stage1Data.departing.length > 0
-    ? stage1Data.departing.map((d) => (typeof d === 'string' ? d : `${d?.name} (${ROLE_NAMES[d?.role] || d?.role || 'role not given'})`))
-    : Array.isArray(stage1Data.selectedPartners) ? stage1Data.selectedPartners : [];
-  const departingPartners = departingList.length > 0 ? departingList.join(', ') : 'Not specified';
-  const leaving = new Set(departingNames(stage1Data).map(nameKey));
-  const seat = (name) => (name ? `${name}${leaving.has(nameKey(name)) ? ' (leaving)' : ''}` : 'None');
-  const leadName = client.lead?.name || client.primary_lobbyist || '';
-  const secondName = client.secondChair?.name || '';
-  const year = Number.isInteger(Number(stage1Data.reportingYear)) && Number(stage1Data.reportingYear) > 0
-    ? ` in ${Number(stage1Data.reportingYear)}` : '';
-  const impact = stage1Data.impactData || {};
-  const revenueAtRisk = Number(impact.totalRevenueAtRisk) || 0;
+/**
+ * The roster with each person's lead and second-chair loads ({ count,
+ * revenue, effort }) taken from the book's rows (utils/book.cjs, the port of
+ * the page's partnershipModel), whatever loads the request carried (T14).
+ * `roster` is checkRoster's, whose ids come from the People list the book was
+ * built from; someone the book has no row for holds no seat in it.
+ */
+function rosterFromBook(roster = [], model = {}) {
+  const rows = new Map((model.rows || []).map((r) => [String(r.person.id), r]));
+  const load = (l) => ({ count: l?.count || 0, revenue: l?.revenue || 0, effort: l?.effort || 0 });
+  return roster.map((p) => {
+    const row = rows.get(String(p.id));
+    return { id: p.id, name: p.name, role: p.role, lead: load(row?.lead), second: load(row?.second) };
+  });
+}
 
-  const prompt = `Create a detailed transition plan for this specific client based on the Stage 1 impact analysis.
+// "Kevin", "Kevin and Anna", "Kevin, Anna and Jay"
+const andList = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 
-## CLIENT PROFILE
-- **Name**: ${client.name}
-- **Annual Revenue**: $${revenue.toLocaleString()}
-- **Practice Areas**: ${practiceAreas}
-- **Current Lead**: ${leadName ? seat(leadName) : 'Not assigned'}
-- **Current Second Chair**: ${seat(secondName)}
-- **Relationship Type**: ${relationshipType}
-- **Succession Risk**: ${successionRisk}/10
-- **Transition Complexity**: ${transitionComplexity}/10
-- **Stickiness**: ${stickiness}
-- **Effort**: ${effort} (relative work units)
-- **Contact Cadence**: ${cadence}
-- **High-maintenance ("handful")**: ${handful}
+// A succession metric the page computed (src/utils/successionUtils.js), out of 10
+const metric = (value) => {
+  const n = Number(value);
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(n) ? `${n}/10` : 'not given';
+};
 
-## STAGE 1 CONTEXT
-- **Departing**: ${departingPartners}
-- **Total Revenue at Risk**: $${revenueAtRisk.toLocaleString()}
+/**
+ * One client's transition plan on the book (T14).
+ *
+ * `client` is the affected client as the page holds it; only its id (to find
+ * it in the book) and the succession metrics the store adds (successionRisk,
+ * transitionComplexity, relationshipType) are read. `stage1Data` carries who
+ * is leaving (departing: [{ name, role }]; older callers sent
+ * selectedPartners, names) and impactData.totalRevenueAtRisk, the page's
+ * figure. `roster` is checkRoster's: its loads are replaced with the book's
+ * (rosterFromBook). `book` is buildBook's result; `today` is taken in the
+ * firm's zone. The retention estimate Stage 1 used to send, built on the
+ * retired relationshipStrength, is gone (people plan, Phase 5), and the
+ * prompt states none.
+ *
+ * @returns {{ system: Array, prompt: string }} system is systemBlocks(book.text), byte for byte
+ */
+function createTransitionPlanPrompt(client, stage1Data = {}, roster = [], book, { today = new Date() } = {}) {
+  const entry = bookClient(book, client?.id);
+  if (!entry) throw new Error(`Client ${client?.id} is not in the book.`);
+  const data = stage1Data || {};
+  const year = book.reportingYear;
+  const years = book.model.years || [];
+
+  const departing = Array.isArray(data.departing) && data.departing.length > 0
+    ? data.departing
+      .map((d) => (typeof d === 'string' ? unescapeText(d).trim() : `${unescapeText(String(d?.name ?? '')).trim()} (${ROLE_NAMES[d?.role] || d?.role || 'role not given'})`))
+    : Array.isArray(data.selectedPartners) ? data.selectedPartners.map((n) => unescapeText(String(n)).trim()) : [];
+  const leaving = new Set(departingNames(data).map(nameKey));
+  const seat = (p) => (p ? `${p.name}${leaving.has(nameKey(p.name)) ? ' (leaving)' : ''}${p.active ? '' : ' (inactive)'}` : 'none');
+  const atRisk = Number(data.impactData?.totalRevenueAtRisk);
+  const revenueAtRisk = data.impactData?.totalRevenueAtRisk !== undefined && data.impactData?.totalRevenueAtRisk !== null && Number.isFinite(atRisk)
+    ? `${formatMoney(atRisk)} (the page's figure: the ${year} revenue of the clients the people leaving lead or second-chair)`
+    : 'not given';
+  const onFile = years.length
+    ? ` (on file: ${years.map((y) => `${y} ${entry.revenueByYear[y] === null ? '—' : formatMoney(entry.revenueByYear[y])}`).join('; ')})`
+    : '';
+  const opening = departing.length > 0
+    ? `${andList(departing)} ${departing.length === 1 ? 'is' : 'are'} leaving the firm. Write the transition plan for one client they hold a seat on, ${entry.name}: who should take the seats they leave, with reasons, and how to hand the relationship over.`
+    : `Write the transition plan for one client, ${entry.name}, in a departure scenario that does not say who is leaving: who should hold its seats, with reasons, and how to hand the relationship over.`;
+  const staying = rosterFromBook(roster, book.model);
+
+  const prompt = `Today is ${firmDate(today)}.
+
+${opening}
+
+## THE SCENARIO
+- **Departing**: ${departing.length > 0 ? departing.join(', ') : 'not given'}
+- **Revenue at Risk**: ${revenueAtRisk}
+
+## THE CLIENT
+As the book lists it (its row in the Clients table):
+- **Name**: ${entry.name}
+- **Revenue ${year}**: ${formatMoney(entry.revenue)}${onFile}
+- **Practice Areas**: ${entry.practiceAreas.length ? entry.practiceAreas.join('; ') : 'not set'}
+- **Current Lead**: ${seat(entry.lead)}
+- **Current Second Chair**: ${seat(entry.secondChair)}
+- **Stickiness**: ${stickinessText(entry.stickiness)}
+- **Cadence**: ${cadenceText(entry.cadence)}
+- **Handful**: ${entry.handful ? 'yes' : 'no'}
+- **Conflict Risk**: ${conflictText(entry.conflictRisk)}
+- **Effort**: ${formatClientEffort(entry.effort)}
+- **Strategic Value**: ${entry.strategicValue.toFixed(1)}
+
+From the page's succession analysis, which the book does not hold:
+- **Relationship Type**: ${client.relationshipType ? unescapeText(String(client.relationshipType)) : 'not given'}
+- **Succession Risk**: ${metric(client.successionRisk)}
+- **Transition Complexity**: ${metric(client.transitionComplexity)}
 
 ## ROSTER
-The people who are staying, with the clients each leads now and the clients each is second chair on now, their revenue${year} and their effort. Recommend people only from this roster, by name exactly as written here: nobody else can take a seat.
-${roster.length > 0 ? roster.map(rosterLine).join('\n') : '- (no roster given)'}
+The people who are staying, with the clients each leads now and the clients each is second chair on now, their revenue in ${year} and their effort, as the book's People tables give them. Recommend people only from this roster, by name exactly as written here: nobody else can take a seat.
+${staying.length > 0 ? staying.map(rosterLine).join('\n') : '- (no roster given)'}
 
-Please create a comprehensive transition plan with the following structure:
+Write the plan under these seven headings, in this order, each as a level-2 heading exactly as written:
 
 ## TRANSITION STRATEGY
-[Specific approach tailored to this client's risk profile and relationship type]
+[How to hand this client over, from what the book records about it (its stickiness, cadence, conflict risk and who holds its seats now) and the succession analysis above.]
 
 ## RECOMMENDED LEAD
-[On the first line, exactly one name from the roster whose role is Partner, as written there, and nothing else; then one or two sentences on why, from practice area, load and the client's needs. If the current lead is staying, name them.]
+[On the first line, exactly one name from the roster whose role is Partner, as written there, and nothing else; then one or two sentences on why, from the practice areas they hold, their load against the partners' average and the client's needs. If the current lead is staying, name them.]
 
 ## RECOMMENDED SECOND CHAIR
 [On the first line, exactly one name from the roster, other than the recommended lead, as written there, and nothing else, or None; then one or two sentences on why. If the current second chair is staying and is not the recommended lead, name them unless there is a reason to change.]
 
 ## TIMELINE
-[Recommend timeline in days - be specific (e.g., 30, 60, 90 days)]
+[The number of days you recommend for the handover, such as 30, 60 or 90 days, and why, in a sentence.]
 
 ## KEY RISKS & MITIGATION
-[Identify 2-3 specific risks and mitigation strategies]
+[Two or three risks to this relationship during the handover, each with how to reduce it.]
 
 ## ACTION ITEMS
-[3-5 specific, actionable tasks with clear owners and deadlines]
+[Three to five tasks as a numbered list, one to a line, each naming who does it (the recommended lead or second chair, or someone leaving) and the day of the handover it falls on.]
 
 ## CLIENT COMMUNICATION TEMPLATE
-[Draft email template for initial client communication about transition]
+[A short draft email to the client introducing the change. The book holds no contacts, so address it to the client by its name and name no one at the client.]
 
-Focus on practical, implementable recommendations. Consider the client's revenue impact, relationship dynamics, and succession risk level in your recommendations.`;
+The timeline and the days in the action items are your recommendation, counted from the start of the handover: give no calendar dates. Keep the plan to about 600 words, the email included.`;
 
-  return { system: TRANSITION_PLAN_SYSTEM, prompt };
+  return { system: systemBlocks(book.text), prompt };
 }
 
 // A client id as GET /api/data/clients sends it: an integer on production's
@@ -371,7 +439,6 @@ function extractTasksFromResponse(text) {
 }
 
 module.exports = {
-  TRANSITION_PLAN_SYSTEM,
   ROSTER_MAX,
   checkPlanRequest,
   checkRoster,
@@ -379,6 +446,9 @@ module.exports = {
   unescapeText,
   rosterNamesIn,
   resolveRecommendation,
+  rosterLine,
+  bookClient,
+  rosterFromBook,
   createTransitionPlanPrompt,
   parseTransitionPlanResponse,
   extractSection,
