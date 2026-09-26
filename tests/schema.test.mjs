@@ -736,11 +736,12 @@ describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
         ['duration_ms', 'integer', false],
         ['created_at', 'timestamp with time zone', true],
       ]);
-      assert.deepEqual(catalog.constraints.map((c) => [c.conname, c.definition]), [
-        ['ai_answers_asked_by_fkey', 'FOREIGN KEY (asked_by) REFERENCES users(id) ON DELETE SET NULL'],
-        ['ai_answers_kind_check', "CHECK (((kind)::text = ANY ((ARRAY['ask'::character varying, 'brief'::character varying, 'transition-plan'::character varying])::text[])))"],
-        ['ai_answers_pkey', 'PRIMARY KEY (id)'],
-      ]);
+      assert.deepEqual(catalog.constraints.map((c) => c.conname), ['ai_answers_asked_by_fkey', 'ai_answers_kind_check', 'ai_answers_pkey']);
+      assert.equal(catalog.constraints[0].definition, 'FOREIGN KEY (asked_by) REFERENCES users(id) ON DELETE SET NULL');
+      // The check's text is PostgreSQL's deparse, which may vary by version: its kinds, and the inserts below
+      assert.match(catalog.constraints[1].definition, /^CHECK /);
+      for (const kind of ['ask', 'brief', 'transition-plan']) assert.ok(catalog.constraints[1].definition.includes(`'${kind}'`), kind);
+      assert.equal(catalog.constraints[2].definition, 'PRIMARY KEY (id)');
       assert.deepEqual(catalog.indexes.map((i) => i.indexname), ['ai_answers_pkey', 'idx_ai_answers_created_at']);
       assert.match(catalog.indexes[1].indexdef, /USING btree \(created_at DESC, id DESC\)$/);
       // No key to clients (T12): reset-book would refuse, or a cascade empty the answers
