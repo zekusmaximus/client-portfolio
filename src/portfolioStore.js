@@ -10,6 +10,25 @@ import { appendAnswers } from './utils/recentAnswers';
 // The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
 // brief. They start empty and go back to empty on logout.
 const EMPTY_AI_RESULTS = { ask: null, brief: null };
+// The AI tab's requests in flight (WP5), one per kind like aiResults: each
+// { kind, question, text, startedAt, firstTextAt, streamed } while its answer
+// is being written, then null. `text` is what has streamed so far, updated at
+// most every AI_TEXT_RENDER_MS so the tab re-renders about ten times a second
+// however fast the pieces come; `streamed` is false on the JSON path.
+const EMPTY_AI_STREAMING = { ask: null, brief: null };
+const AI_TEXT_RENDER_MS = 100;
+const AI_DROPPED = 'The connection dropped. The answer is still being written and will appear under Recent answers.';
+// The requests themselves, outside the state: each kind's AbortController and
+// the text not yet shown. Only logout aborts one (T15: the server finishes
+// and saves the answer whatever the page does).
+const aiRequests = {};
+const abortAiRequests = () => {
+  for (const kind of Object.keys(aiRequests)) {
+    clearTimeout(aiRequests[kind].timer);
+    aiRequests[kind].controller.abort();
+    delete aiRequests[kind];
+  }
+};
 // The AI tab's saved answers (WP4): the recent list as the API pages it
 // (newest first, for everyone), whether older ones remain, and the answers
 // opened from it, whole, by id. Saved answers never change (none can be
@@ -64,6 +83,9 @@ const usePortfolioStore = create(
       // answer. Not persisted (see partialize); cleared on logout.
       aiResults: { ...EMPTY_AI_RESULTS },
       aiError: null,
+      // The requests in flight (WP5): in the store, so a tab switch keeps an
+      // answer streaming and its spinner; not persisted, cleared on logout
+      aiStreaming: { ...EMPTY_AI_STREAMING },
       // Saved answers (WP4), from GET /api/ai/answers; not persisted, cleared
       // on logout. After a refresh the list comes back from the API, with the
       // answer just given at its top.
@@ -302,6 +324,88 @@ const usePortfolioStore = create(
       setAiResult: (key, data) => set((state) => ({ aiResults: { ...state.aiResults, [key]: data } })),
       setAiError: (aiError) => set({ aiError }),
 
+      // Ask (question) or the brief (question null), owned by the store so a
+      // tab switch, which unmounts the tab, neither loses the answer nor
+      // stops it (WP5). stream: true reads the answer as it is written
+      // (POST with Accept: text/event-stream, when /api/health lists
+      // ai-stream); false posts for JSON as WP3 did. Either way the answer
+      // lands in aiResults with the JSON answer's shape, `done`'s answerId
+      // as its id, and the saved list reloads when the tab has loaded it. A
+      // refusal replaces the partial text with the notice (the saved answer
+      // is empty). A stream that ends without `done` or `error` after it
+      // opened says the connection dropped: the server still finishes and
+      // saves the answer (T15). Logout aborts the request; nothing else does.
+      askStream: async (kind, question = null, { stream = true } = {}) => {
+        if (get().aiStreaming[kind]) return;
+        const request = { controller: new AbortController(), text: '', timer: null };
+        aiRequests[kind] = request;
+        const current = () => aiRequests[kind] === request;
+        const update = (changes) => set((state) => (state.aiStreaming[kind]
+          ? { aiStreaming: { ...state.aiStreaming, [kind]: { ...state.aiStreaming[kind], ...changes } } }
+          : {}));
+        const flush = () => {
+          request.timer = null;
+          if (current()) update({ text: request.text });
+        };
+        const finish = (changes) => {
+          clearTimeout(request.timer);
+          delete aiRequests[kind];
+          set((state) => ({ ...changes(state), aiStreaming: { ...state.aiStreaming, [kind]: null } }));
+        };
+        set((state) => ({
+          aiError: null,
+          aiStreaming: {
+            ...state.aiStreaming,
+            [kind]: { kind, question, text: '', startedAt: Date.now(), firstTextAt: null, streamed: stream },
+          },
+        }));
+
+        const path = kind === 'ask' ? '/ai/ask' : '/ai/brief';
+        const body = kind === 'ask' ? { question } : {};
+        try {
+          let result = null;
+          let failure = null;
+          if (stream) {
+            const outcome = await apiClient.postStream(path, body, {
+              signal: request.controller.signal,
+              onEvent: (type, data) => {
+                if (!current()) return;
+                if (type === 'text' && typeof data?.text === 'string') {
+                  const first = request.text === '';
+                  request.text += data.text;
+                  // The first words at once, so "Thinking…" gives way to them
+                  if (first) update({ text: request.text, firstTextAt: Date.now() });
+                  else if (!request.timer) request.timer = setTimeout(flush, AI_TEXT_RENDER_MS);
+                } else if (type === 'done' && data) {
+                  const { answerId, ...answered } = data;
+                  result = { success: true, id: answerId ?? null, kind, question, ...answered };
+                } else if (type === 'error') {
+                  failure = data?.error || 'The AI request failed.';
+                }
+              },
+            });
+            if (!outcome.streamed) result = outcome.json;
+            else if (!result && !failure) failure = AI_DROPPED;
+          } else {
+            result = await apiClient.post(path, body);
+          }
+          if (!current()) return;
+          if (!failure && !result?.success) failure = result?.error || 'The AI request failed.';
+          if (failure) {
+            finish(() => ({ aiError: failure }));
+            return;
+          }
+          finish((state) => ({ aiResults: { ...state.aiResults, [kind]: result } }));
+          // The answer just given heads the saved list, with this month's new
+          // total, when the tab has loaded the list (an API with ai-answers)
+          if (get().aiAnswers.loaded) get().fetchAiAnswers();
+        } catch (err) {
+          if (!current()) return; // aborted by logout
+          console.error(`AI ${kind} error:`, err);
+          finish(() => ({ aiError: err?.streamOpened ? AI_DROPPED : apiErrorMessage(err) }));
+        }
+      },
+
       // Saved answers (WP4). The AI tab calls these only after /api/health
       // lists ai-answers. fetchAiAnswers reloads the first page and this
       // month's count and cost; the list stays on screen while it does.
@@ -397,6 +501,7 @@ const usePortfolioStore = create(
       },
 
       logout: async () => {
+        abortAiRequests();
         try {
           await apiClient.post('/auth/logout');
         } catch (err) {
@@ -414,6 +519,7 @@ const usePortfolioStore = create(
             peopleError: null,
             aiResults: { ...EMPTY_AI_RESULTS },
             aiError: null,
+            aiStreaming: { ...EMPTY_AI_STREAMING },
             aiAnswers: emptyAiAnswers(),
             successionWorkflow: emptySuccessionWorkflow(),
             transitionPlans: {},

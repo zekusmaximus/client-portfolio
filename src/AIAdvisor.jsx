@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Brain, ChevronDown, ChevronUp, FileText, History, Loader2, MessageSquare } from 'lucide-react';
 import Markdown from 'react-markdown';
 import usePortfolioStore from './portfolioStore';
-import { apiClient, apiErrorMessage } from './api';
+import { apiClient } from './api';
 import AIBookPanel from './components/AIBookPanel';
 import { EXAMPLE_QUESTIONS, QUESTION_MAX, ratedForStickiness } from './utils/askTheBook';
 import { answerTitle, formatCost, monthLine } from './utils/recentAnswers';
@@ -19,6 +19,9 @@ import { answerTitle, formatCost, monthLine } from './utils/recentAnswers';
 // the tab asks /api/health for ask-the-book before it offers Ask or Brief,
 // and for ai-answers (WP4) before it shows Recent answers: every partner's
 // saved answers, newest first, with this month's count and estimated cost.
+// With ai-stream (WP5) an answer shows as it is written, "Thinking… n s"
+// until its first words; without it the tab asks for JSON as before. The
+// store owns the request either way (askStream), so a tab switch keeps it.
 
 const NOT_UPDATED = 'The API has not been updated yet; try again in a few minutes.';
 const count = (n) => Number(n || 0).toLocaleString('en-US');
@@ -49,6 +52,59 @@ const AIAnswer = ({ text, truncated, refused, refusalCategory }) => (
 );
 
 const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+// Seconds since `startedAt`, ticking once a second while `active`
+const useSeconds = (startedAt, active) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active, startedAt]);
+  return Math.max(0, Math.floor((now - startedAt) / 1000));
+};
+
+// An answer being written (WP5): the question, then "Thinking… n s" until the
+// first words, then the words so far. The store updates `text` about ten
+// times a second, so this re-renders no faster. When the answer is done, the
+// card gives way to the answer as saved (AnswerCard): a refusal's notice
+// replaces whatever had streamed.
+const LiveAnswer = ({ title, icon: Icon, live, testId }) => {
+  const thinking = live.firstTextAt === null;
+  const seconds = useSeconds(live.startedAt, thinking);
+  return (
+    <Card data-testid={`${testId}-live`}>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          <Icon className="h-5 w-5" />
+          {title}
+          <Badge variant="outline" className="text-xs font-normal">
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            Writing…
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {live.question && (
+          <p className="whitespace-pre-wrap rounded-md border-l-4 border-muted bg-muted/30 px-3 py-2 text-sm">
+            {live.question}
+          </p>
+        )}
+        {thinking ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid={`${testId}-thinking`}>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Thinking… {seconds} s
+          </div>
+        ) : (
+          <div className="ai-markdown text-sm" data-testid={`${testId}-live-text`}>
+            <Markdown>{live.text}</Markdown>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
 
 const AnswerCard = ({ title, icon: Icon, result, testId }) => (
   <Card data-testid={testId}>
@@ -195,8 +251,8 @@ const AIAdvisor = () => {
     clients,
     aiResults: results,
     aiError: error,
-    setAiResult,
-    setAiError,
+    aiStreaming: inFlight,
+    askStream,
     setCurrentView,
     fetchAiAnswers,
   } = usePortfolioStore();
@@ -204,8 +260,10 @@ const AIAdvisor = () => {
   const [api, setApi] = useState('checking');
   // Whether this API saves answers and lists them (ai-answers, WP4)
   const [answersApi, setAnswersApi] = useState(false);
+  // Whether this API streams answers (ai-stream, WP5); JSON otherwise
+  const [streamApi, setStreamApi] = useState(false);
   const [question, setQuestion] = useState('');
-  const [pending, setPending] = useState({ ask: false, brief: false });
+  const pending = { ask: Boolean(inFlight.ask), brief: Boolean(inFlight.brief) };
 
   const hasData = Array.isArray(clients) && clients.length > 0;
   const rated = ratedForStickiness(clients);
@@ -218,6 +276,7 @@ const AIAdvisor = () => {
         const features = Array.isArray(health?.features) ? health.features : [];
         setApi(features.includes('ask-the-book') ? 'ready' : 'unavailable');
         setAnswersApi(features.includes('ai-answers'));
+        setStreamApi(features.includes('ai-stream'));
       })
       .catch(() => { if (current) setApi('unavailable'); });
     return () => { current = false; };
@@ -228,27 +287,18 @@ const AIAdvisor = () => {
     if (answersApi) fetchAiAnswers();
   }, [answersApi, fetchAiAnswers]);
 
-  const run = async (kind) => {
+  // When an answer arrives, clear the box only if it still holds the question just answered
+  const answeredQuestion = results.ask?.question;
+  useEffect(() => {
+    if (answeredQuestion) setQuestion((text) => (text.trim() === answeredQuestion ? '' : text));
+  }, [answeredQuestion, results.ask]);
+
+  // The store runs the request (askStream), so it outlives this tab; the
+  // answer lands in the store and the saved list reloads there
+  const run = (kind) => {
     const asked = question.trim();
     if (kind === 'ask' && !asked) return;
-    setPending((p) => ({ ...p, [kind]: true }));
-    setAiError(null);
-    try {
-      const data = kind === 'ask'
-        ? await apiClient.post('/ai/ask', { question: asked })
-        : await apiClient.post('/ai/brief', {});
-      if (!data.success) throw new Error(data.error || 'The AI request failed.');
-      setAiResult(kind, data);
-      // Clear the box only if it still holds the question just answered
-      if (kind === 'ask') setQuestion((text) => (text.trim() === asked ? '' : text));
-      // The answer just given heads the saved list, with this month's new total
-      if (answersApi) fetchAiAnswers();
-    } catch (err) {
-      console.error(`AI ${kind} error:`, err);
-      setAiError(apiErrorMessage(err));
-    } finally {
-      setPending((p) => ({ ...p, [kind]: false }));
-    }
+    askStream(kind, kind === 'ask' ? asked : null, { stream: streamApi });
   };
 
   if (!hasData) {
@@ -396,8 +446,12 @@ const AIAdvisor = () => {
         </Card>
       )}
 
-      {results.ask && <AnswerCard title="Answer" icon={MessageSquare} result={results.ask} testId="ask-answer" />}
-      {results.brief && <AnswerCard title="Brief" icon={FileText} result={results.brief} testId="brief-answer" />}
+      {inFlight.ask?.streamed
+        ? <LiveAnswer title="Answer" icon={MessageSquare} live={inFlight.ask} testId="ask-answer" />
+        : results.ask && <AnswerCard title="Answer" icon={MessageSquare} result={results.ask} testId="ask-answer" />}
+      {inFlight.brief?.streamed
+        ? <LiveAnswer title="Brief" icon={FileText} live={inFlight.brief} testId="brief-answer" />
+        : results.brief && <AnswerCard title="Brief" icon={FileText} result={results.brief} testId="brief-answer" />}
 
       {/* Every partner's saved answers (WP4), only from an API that saves them */}
       {answersApi && <RecentAnswers />}
