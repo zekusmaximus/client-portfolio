@@ -1,0 +1,14 @@
+{
+  "status": 401,
+  "headers": {
+    "request-id": "req_fake_401"
+  },
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "authentication_error",
+      "message": "invalid x-api-key"
+    },
+    "request_id": "req_fake_401"
+  }
+}

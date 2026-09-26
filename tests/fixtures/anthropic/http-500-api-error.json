@@ -1,0 +1,15 @@
+{
+  "status": 500,
+  "headers": {
+    "request-id": "req_fake_500",
+    "retry-after-ms": "1"
+  },
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "api_error",
+      "message": "Internal server error"
+    },
+    "request_id": "req_fake_500"
+  }
+}
