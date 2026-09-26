@@ -28,6 +28,14 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import Papa from 'papaparse';
+import validator from 'validator';
+import escaping from '../utils/escaping.cjs';
+import { clientFormData } from '../src/utils/clientForm.js';
+import { sanitizeFormData } from '../src/utils/validation.js';
+import { toPersonId } from '../src/utils/people.js';
+import { departureModel } from '../src/utils/departure.js';
+import { revenueForYear } from '../src/utils/revenue.js';
+import { buildTransitionSheet } from '../src/utils/transitionPlans.js';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const template = readFileSync(new URL('../public/client-book-template.csv', import.meta.url), 'utf8');
@@ -949,5 +957,200 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     row = await clientRow(target.name);
     assert.deepEqual([row.second_chair_id, row.lobbyist_team], [null, [target.lead]]);
     assert.deepEqual(await rest(), before);
+  });
+
+  // A client saved through the client form is stored HTML-escaped by
+  // sanitizeRequestBody (review 4.9), once per save. The import matches stored
+  // names unescaped, so it updates that client instead of adding a second one
+  // with the plain name, and writes the sheet's spelling back.
+  test('a client re-saved through PUT with & and an apostrophe in its name is updated by the next import, not duplicated', async () => {
+    // The SQL the import matches with and the JavaScript that keys the rows agree
+    const samples = [
+      'Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust', 'O&amp;#x27;Brien Trust', '&amp;amp;amp;',
+      '&quot;&lt;&gt;&#x2F;&#x5C;&#96;', '&amp;lt;', 'plain & simple', '',
+      ...[0, 1, 2, 3].map((times) => Array.from({ length: times }).reduce((out) => validator.escape(out), `A&B 'C' "D" <E> F/G \\H \`I\``)),
+    ];
+    for (const text of samples) {
+      const { rows: [row] } = await db.query(`SELECT ${escaping.unescapeStoredSql('$1::text')} AS out`, [text]);
+      assert.equal(row.out, escaping.unescapeStored(text), JSON.stringify(text));
+    }
+
+    const BARNES = 'Barnes & Noble Education Fund';
+    const OBRIEN = "O'Brien Trust";
+    const sheet = [
+      'CLIENT,2026 Contracts,Lead',
+      `${BARNES},"$40,000",Paula`,
+      `${OBRIEN},"$25,000",Jeff`,
+    ].join('\n');
+    const bookSize = async () => Number((await db.query('SELECT count(*) FROM clients')).rows[0].count);
+    const storedName = async (id) => (await db.query('SELECT name FROM clients WHERE id::text = $1', [id])).rows[0].name;
+
+    let result = await importCsv(sheet);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual([result.body.summary.updatedClients, result.body.summary.newClients], [0, 2]);
+    const ids = {};
+    for (const name of [BARNES, OBRIEN]) {
+      ids[name] = (await db.query('SELECT id::text AS id FROM clients WHERE name = $1', [name])).rows[0].id;
+    }
+
+    // Saved as the client form saves: every field as the page holds it
+    const save = async (id, name) => {
+      const { body: list } = await call('GET', '/api/data/clients');
+      const c = list.clients.find((x) => String(x.id) === id);
+      const res = await call('PUT', `/api/data/clients/${id}`, {
+        name,
+        practice_area: c.practiceArea,
+        conflict_risk: c.conflict_risk,
+        notes: c.notes || '',
+        interaction_frequency: c.interaction_frequency || 'As-Needed',
+        stickiness: c.stickiness,
+        high_maintenance: c.high_maintenance === true,
+        lead_id: c.lead_id,
+        second_chair_id: c.second_chair_id,
+        originator_id: c.originator_id,
+        originator_is_firm: c.originator_is_firm === true,
+        revenues: c.revenues.map((r) => ({ year: r.year, revenue_amount: Number(r.revenue_amount) })),
+      });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      return c.name;
+    };
+    await save(ids[BARNES], BARNES);
+    await save(ids[OBRIEN], OBRIEN);
+    // A second save sending the name as it is stored, as a direct request can
+    // (the page's name pattern refuses the `;`): escaped again
+    assert.equal(await save(ids[OBRIEN], await storedName(ids[OBRIEN])), 'O&#x27;Brien Trust');
+    assert.equal(await storedName(ids[BARNES]), 'Barnes &amp; Noble Education Fund');
+    assert.equal(await storedName(ids[OBRIEN]), 'O&amp;#x27;Brien Trust');
+
+    // Check file: both matched, nothing written
+    const size = await bookSize();
+    const before = await snapshot();
+    const check = await importCsv(sheet, { dryRun: true });
+    assert.equal(check.status, 200, JSON.stringify(check.body));
+    assert.deepEqual([check.body.summary.updatedClients, check.body.summary.newClients], [2, 0]);
+    assert.deepEqual(await snapshot(), before);
+
+    // The same sheet again: both updated, none created, the sheet's spelling written back
+    result = await importCsv(sheet);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual([result.body.summary.updatedClients, result.body.summary.newClients], [2, 0]);
+    assert.equal(await bookSize(), size);
+    assert.equal(await storedName(ids[BARNES]), BARNES);
+    assert.equal(await storedName(ids[OBRIEN]), OBRIEN);
+    assert.deepEqual(await revenue(BARNES), { 2026: 40000 });
+    assert.deepEqual(await revenue(OBRIEN), { 2026: 25000 });
+    assert.equal((await clientRow(BARNES)).id.toString(), ids[BARNES]);
+    assert.equal((await clientRow(OBRIEN)).id.toString(), ids[OBRIEN]);
+
+    // Two stored clients with one name (a duplicate the old matching made):
+    // refused, nothing written, until a partner deletes one
+    const paula = (await db.query("SELECT id FROM people WHERE name = 'Paula'")).rows[0].id;
+    const posted = await call('POST', '/api/data/clients', {
+      name: BARNES,
+      practice_area: ['Education'],
+      conflict_risk: 'Medium',
+      notes: '',
+      interaction_frequency: 'Monthly',
+      stickiness: 3,
+      high_maintenance: false,
+      lead_id: paula,
+      second_chair_id: null,
+      originator_id: null,
+      originator_is_firm: false,
+      revenues: [{ year: 2026, revenue_amount: 40000 }],
+    });
+    assert.equal(posted.status, 201, JSON.stringify(posted.body));
+    assert.equal(posted.body.client.name, 'Barnes &amp; Noble Education Fund');
+    const withDuplicate = await snapshot();
+    const refused = await importCsv(sheet);
+    assert.equal(refused.status, 400, JSON.stringify(refused.body));
+    assert.deepEqual(refused.body.errors, [{
+      row: 2,
+      client: BARNES,
+      message: `The book has 2 clients named "${BARNES}", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.`,
+    }]);
+    assert.deepEqual(await snapshot(), withDuplicate);
+
+    const deleted = await fetch(`${base}/api/data/clients/${posted.body.client.id}`, { method: 'DELETE', headers: { Cookie: cookie } });
+    assert.equal(deleted.status, 204);
+    result = await importCsv(sheet);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual([result.body.summary.updatedClients, result.body.summary.newClients], [2, 0]);
+    assert.equal(await bookSize(), size);
+  });
+
+  // The page's side of the same escaping: the client form fills its fields
+  // unescaped (src/utils/clientForm.js), so saving a client again stores the
+  // same text; and Scenarios' transition sheet writes client names unescaped
+  // (src/utils/transitionPlans.js), so Check file and the import read them.
+  test('the form saves an escaped name again unchanged, and a transition sheet for it passes Check file and imports', async () => {
+    const BARNES = 'Barnes & Noble Education Fund';
+    const listed = async () => (await call('GET', '/api/data/clients')).body.clients;
+    const barnesId = String((await listed()).find((c) => escaping.unescapeStored(c.name) === BARNES).id);
+    const stored = async () => (await db.query('SELECT name, notes FROM clients WHERE id::text = $1', [barnesId])).rows[0];
+
+    // As ClientEnhancementForm's save and the store's formatClientForAPI send it
+    const formSave = async (form) => {
+      const sent = sanitizeFormData(form);
+      const res = await call('PUT', `/api/data/clients/${barnesId}`, {
+        name: sent.name,
+        practice_area: sent.practiceArea,
+        conflict_risk: sent.conflict_risk,
+        notes: sent.notes,
+        lead_id: toPersonId(form.lead_id),
+        second_chair_id: toPersonId(form.second_chair_id),
+        originator_id: toPersonId(form.originator_id),
+        originator_is_firm: form.originator_is_firm === true,
+        interaction_frequency: sent.interaction_frequency,
+        stickiness: sent.stickiness,
+        high_maintenance: sent.high_maintenance === true,
+        revenues: sent.revenues
+          .filter((r) => r.year && r.revenue_amount)
+          .map((r) => ({ year: parseInt(r.year, 10), revenue_amount: parseFloat(r.revenue_amount) })),
+      });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+    };
+    const openForm = async () => clientFormData((await listed()).find((c) => String(c.id) === barnesId));
+
+    // A partner types notes with an ampersand and a `<` (which DOMPurify escapes before the server does) and saves
+    const typedNotes = 'R&D < 5% of "budget"';
+    await formSave({ ...(await openForm()), practiceArea: ['Education'], notes: typedNotes });
+    const first = await stored();
+    assert.equal(first.name, 'Barnes &amp; Noble Education Fund');
+    // Saved twice more with only the stickiness changed: shown as typed, stored unchanged
+    for (const stickiness of [2, 4]) {
+      const form = await openForm();
+      assert.deepEqual([form.name, form.notes], [BARNES, typedNotes]);
+      await formSave({ ...form, stickiness });
+      assert.deepEqual(await stored(), first);
+    }
+
+    // Paula, who leads it, leaves; the plan for it is approved and exported as the page exports it
+    const { body: { people } } = await call('GET', '/api/people');
+    const paula = people.find((p) => p.name === 'Paula');
+    const clients = await listed();
+    const model = departureModel({ people, clients, departingIds: [paula.id], revenueOf: (c) => revenueForYear(c, 2026), choices: {} });
+    const decision = model.decisions.find((d) => String(d.client.id) === barnesId);
+    assert.ok(decision?.lead.after, 'a partner who is staying can lead it');
+    const sheet = buildTransitionSheet(model.decisions, { [barnesId]: { status: 'approved' } });
+    assert.equal(sheet.rows.length, 1);
+    assert.ok(sheet.csv.includes(`\r\n${BARNES},${decision.lead.after.name},`), sheet.csv);
+
+    const size = (await listed()).length;
+    const before = await snapshot();
+    const check = await importCsv(sheet.csv, { dryRun: true });
+    assert.equal(check.status, 200, JSON.stringify(check.body));
+    assert.deepEqual([check.body.summary.updatedClients, check.body.summary.newClients], [1, 0]);
+    assert.deepEqual(await snapshot(), before);
+
+    const result = await importCsv(sheet.csv);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.deepEqual([result.body.summary.updatedClients, result.body.summary.newClients], [1, 0]);
+    assert.equal((await listed()).length, size);
+    const row = await clientRow(BARNES);
+    assert.equal(String(row.id), barnesId);
+    assert.equal(row.lead, decision.lead.after.name);
+    assert.equal(row.second_chair, decision.secondChair.after ? decision.secondChair.after.name : null);
+    assert.equal(row.notes, first.notes, 'the sheet has no Notes column: kept');
   });
 });

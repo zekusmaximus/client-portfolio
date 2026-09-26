@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import Papa from 'papaparse';
 import { departureModel } from '../src/utils/departure.js';
 import { revenueForYear } from '../src/utils/revenue.js';
+import { validateField } from '../src/utils/validation.js';
 import {
   rosterFor,
   planRequest,
@@ -87,6 +88,25 @@ test('the accepted plan as an import sheet: CLIENT, Lead, Second Chair, approved
   assert.equal(sheetCell('=SUM(A1)'), '=SUM(A1)', 'no formula guard: the name must round-trip');
   assert.equal(sheetCell('a"b'), '"a""b"');
   assert.equal(sheetCell(null), '');
+});
+
+test('a client name the form stored escaped is written as a partner would type it, so the import reads it', () => {
+  // As the API returns names sanitizeRequestBody stored (review 4.9), one of them saved twice
+  const escaped = [
+    client(21, 'Barnes &amp; Noble Education Fund', 'Kevin', 'Anna', 2, 40000),
+    client(22, 'O&#x27;Brien Trust', 'Kevin', null, 1, 25000),
+    client(23, 'Adams &amp;amp; Co', 'Kevin', 'Ben', 1, 5000),
+  ];
+  const m = departureModel({ people: PEOPLE, clients: escaped, departingIds: [2], revenueOf, choices: {} });
+  const sheet = buildTransitionSheet(m.decisions, approved(21, 22, 23));
+  const parsed = Papa.parse(sheet.csv, { header: true, skipEmptyLines: true });
+  assert.deepEqual(parsed.data.map((r) => r.CLIENT), ['Adams & Co', 'Barnes & Noble Education Fund', "O'Brien Trust"], 'unescaped, and sorted as spelled');
+  assert.ok(!sheet.csv.includes(';'), 'no entity left for the import to refuse');
+  for (const name of parsed.data.map((r) => r.CLIENT)) {
+    assert.equal(validateField('name', name), null, `${name}: passes the CLIENT pattern the import applies`);
+  }
+  // The rows keep the client as the page holds it
+  assert.deepEqual(sheet.rows.map((r) => r.client.name), ['Adams &amp;amp; Co', 'Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust']);
 });
 
 test('the sheet leaves out an approved plan the model can no longer apply, and says why', () => {

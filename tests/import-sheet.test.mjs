@@ -16,6 +16,7 @@ const {
   readSheetRow,
   resolveSheetPeople,
   checkSheet,
+  indexStoredClients,
   importWriteColumns,
   valuesList,
   CADENCES,
@@ -376,6 +377,43 @@ describe('processCSVData and checkSheet', () => {
     assert.equal(errors.length, 1);
     assert.match(errors[0].message, /^Second Chair \(Brendan, kept/);
     assert.equal(people.get(2).values.lead_id, 1);
+  });
+
+  test('stored clients are keyed by their name unescaped, as the sheet spells it', () => {
+    // As sanitizeRequestBody stores a name saved through the form: escaped once per save
+    const barnes = { id: 1, name: 'Barnes &amp; Noble Education Fund' };
+    const obrien = { id: 2, name: 'O&amp;#x27;Brien Trust' };
+    const acme = { id: 3, name: 'Acme' };
+    const { byName, shared } = indexStoredClients([barnes, obrien, acme, { id: 4, name: '' }]);
+    assert.deepEqual([...byName], [
+      ['barnes & noble education fund', barnes],
+      ["o'brien trust", obrien],
+      ['acme', acme],
+    ]);
+    assert.equal(shared.size, 0);
+
+    const rows = [{ CLIENT: 'Barnes & Noble Education Fund', Lead: 'Brendan' }, { CLIENT: "O'Brien Trust", Lead: 'Paula' }];
+    const { errors } = checkSheet(file(rows), { roster: ROSTER, existingByName: byName, sharedNames: shared });
+    assert.deepEqual(errors, []);
+  });
+
+  test('a name two stored clients share, unescaped and in any case, refuses its row', () => {
+    const stored = indexStoredClients([
+      { id: 1, name: 'Barnes & Noble Education Fund' },
+      { id: 2, name: 'Barnes &amp; Noble Education Fund' },
+      { id: 3, name: 'ACME' },
+      { id: 4, name: 'Acme' },
+      { id: 5, name: 'acme' },
+      { id: 6, name: 'Other' },
+    ]);
+    assert.deepEqual([...stored.shared], [['barnes & noble education fund', 2], ['acme', 3]]);
+
+    const rows = [{ CLIENT: 'Other' }, { CLIENT: 'Barnes & Noble Education Fund' }, { CLIENT: 'Acme' }];
+    const { errors } = checkSheet(file(rows), { roster: ROSTER, existingByName: stored.byName, sharedNames: stored.shared });
+    assert.deepEqual(errors, [
+      { row: 3, client: 'Barnes & Noble Education Fund', message: 'The book has 2 clients named "Barnes & Noble Education Fund", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.' },
+      { row: 4, client: 'Acme', message: 'The book has 3 clients named "Acme", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.' },
+    ]);
   });
 
   test('the template and the plan\'s section 3 example import cleanly', () => {

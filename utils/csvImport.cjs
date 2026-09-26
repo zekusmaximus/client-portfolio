@@ -14,6 +14,7 @@
 
 const { EFFORT_BY_CADENCE } = require('./strategic.cjs');
 const { validateAssignment, legacyText } = require('./people.cjs');
+const { unescapeStored } = require('./escaping.cjs');
 
 const REVENUE_HEADER = /^\s*((?:19|20)\d{2})\s+contracts?\s*$/i;
 
@@ -388,11 +389,14 @@ function resolveSheetPeople(cells = {}, roster = [], existing = null) {
  * @param {string[]} [options.headerErrors] - findSheetColumns' `errors`
  * @param {Array} [options.roster] - the People list
  * @param {Map} [options.existingByName] - stored clients by lower-case name
+ *   (indexStoredClients' `byName`)
+ * @param {Map} [options.sharedNames] - lower-case names two or more stored
+ *   clients share, with how many (indexStoredClients' `shared`)
  * @returns {{ errors: Array<{row, client, message}>, people: Map }} `errors`
  *   sorted by row, header problems first as row 1; `people` maps a row
  *   number to resolveSheetPeople's result for every row that assigns people.
  */
-function checkSheet(clients = [], { headerErrors = [], roster = [], existingByName = new Map() } = {}) {
+function checkSheet(clients = [], { headerErrors = [], roster = [], existingByName = new Map(), sharedNames = new Map() } = {}) {
   const errors = headerErrors.map((message) => ({ row: HEADER_ROW, client: '', message }));
   const people = new Map();
   const firstRowByName = new Map();
@@ -409,6 +413,12 @@ function checkSheet(clients = [], { headerErrors = [], roster = [], existingByNa
       firstRowByName.set(lowerName, client.rowNumber);
     }
 
+    // The import updates the one stored client the name matches; with two it
+    // cannot tell which, and updating either leaves the other counted twice
+    if (sharedNames.has(lowerName)) {
+      add(`The book has ${sharedNames.get(lowerName)} clients named "${name}", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.`);
+    }
+
     const sheet = client.sheet || { people: {}, errors: [] };
     sheet.errors.forEach(add);
 
@@ -421,6 +431,32 @@ function checkSheet(clients = [], { headerErrors = [], roster = [], existingByNa
 
   errors.sort((a, b) => a.row - b.row);
   return { errors, people };
+}
+
+/**
+ * Index the stored clients an import may update by their name as a sheet
+ * spells it: unescapeStored (a name saved through the client form is stored
+ * HTML-escaped, once per save) and lower case, as the sheet's names are
+ * matched. data.cjs selects the rows with the same key in SQL
+ * (unescapeStoredSql), so `Barnes &amp; Noble` and `O&amp;#x27;Brien` are
+ * found by, and updated from, `Barnes & Noble` and `O'Brien`.
+ *
+ * @param {Array} rows - stored clients, each with `name`
+ * @returns {{ byName: Map, shared: Map }} `byName` maps each key to its
+ *   client; `shared` maps each key two or more clients have to their number,
+ *   for checkSheet's `sharedNames`
+ */
+function indexStoredClients(rows = []) {
+  const byName = new Map();
+  const counts = new Map();
+  for (const row of rows) {
+    if (typeof row.name !== 'string' || row.name === '') continue;
+    const key = unescapeStored(row.name).toLowerCase();
+    byName.set(key, row);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const shared = new Map([...counts].filter(([, count]) => count > 1));
+  return { byName, shared };
 }
 
 // The client columns every import writes, with their SQL types, in the order
@@ -481,6 +517,7 @@ module.exports = {
   readSheetRow,
   resolveSheetPeople,
   checkSheet,
+  indexStoredClients,
   importWriteColumns,
   valuesList,
 };
