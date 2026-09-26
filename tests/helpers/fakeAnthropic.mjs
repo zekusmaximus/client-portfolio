@@ -16,9 +16,11 @@
 // fakeFetch(queue) is a fetch for createService({ fetch }): it records each
 // request and answers from the queue. startFakeAnthropic() is an http server
 // on 127.0.0.1 that answers POST /v1/messages from its queue, or, when the
-// queue is empty, with a short answer naming what it received (a transition
-// plan request gets a plan in the six sections, recommending people from the
-// prompt's own roster). It records every request body.
+// queue is empty, with a short answer naming what it received: the system
+// blocks and where the cache marker is, the book's client rows and the
+// question, when there are any (a transition plan request gets a plan in the
+// six sections, recommending people from the prompt's own roster). It records
+// every request body.
 //
 // As a script, for driving the page end to end with server.cjs:
 //   node tests/helpers/fakeAnthropic.mjs --port 5099
@@ -165,20 +167,35 @@ function transitionPlanAnswer(prompt) {
   ].join('\n');
 }
 
+// The rows of the book's client table (utils/book.cjs, "## Clients"), or null
+// when the system prompt carries no book
+function bookClientRows(system) {
+  const at = system.indexOf('\n## Clients (');
+  if (at === -1) return null;
+  return system.slice(at).split('\n')
+    .filter((line) => line.startsWith('| ') && !line.startsWith('| ---') && !line.startsWith('| Client |'))
+    .length;
+}
+
 /** The answer when the queue is empty: what the request carried. */
 export function describeRequest(body) {
   const prompt = promptText(body);
   const system = systemText(body?.system);
   if (prompt.includes('## RECOMMENDED LEAD')) return transitionPlanAnswer(prompt);
   const firstLine = prompt.split('\n').find((line) => line.trim() !== '') || '';
+  const blocks = Array.isArray(body?.system) ? body.system : [];
+  const rows = bookClientRows(system);
+  const question = (prompt.match(/<question>\n([\s\S]*)\n<\/question>/) || [])[1];
   return [
     '**Fake Anthropic answer.** This is what the request carried:',
     '',
     `- Model: ${body?.model}`,
     `- max_tokens: ${body?.max_tokens}`,
-    `- System prompt: ${system.length} characters`,
+    `- System prompt: ${system.length} characters${blocks.length ? ` in ${blocks.length} blocks, cache marker on block ${blocks.map((b, i) => (b?.cache_control ? i + 1 : null)).filter(Boolean).join(', ') || 'none'}` : ''}`,
+    ...(rows === null ? [] : [`- Book: ${rows} client rows`]),
     `- Prompt: ${prompt.length} characters, ${prompt.split('\n').length} lines`,
     `- First line: ${firstLine.slice(0, 160)}`,
+    ...(question === undefined ? [] : [`- Question: ${question.slice(0, 300)}`]),
     `- Fallbacks: ${body?.fallbacks ?? 'none'}`,
     `- Effort: ${body?.output_config?.effort ?? 'not set'}`,
   ].join('\n');

@@ -10,7 +10,10 @@
 // their environment), adds an account with create-admin.cjs, signs in, and
 // parses each file with PapaParse as the upload page does. The last tests run
 // Phase 3's flow: Check file (dryRun), then scripts/reset-book.cjs on the
-// suite's database, then the section 3 template into the empty book.
+// suite's database, then the section 3 template into the empty book. Tier 1
+// WP3's Ask and brief run first on the empty book, and last on the whole book,
+// once without a key and once through a second server.cjs pointed at the fake
+// Anthropic server (tests/helpers/fakeAnthropic.mjs).
 //
 // The whole suite runs twice: on the tables init-db.sql creates, and on
 // production's older tables (PRODUCTION_TABLES_SQL), created before
@@ -30,6 +33,8 @@ import pg from 'pg';
 import Papa from 'papaparse';
 import validator from 'validator';
 import escaping from '../utils/escaping.cjs';
+import askPrompts from '../utils/askPrompts.cjs';
+import { startFakeAnthropic, describeRequest } from './helpers/fakeAnthropic.mjs';
 import { clientFormData } from '../src/utils/clientForm.js';
 import { sanitizeFormData } from '../src/utils/validation.js';
 import { toPersonId } from '../src/utils/people.js';
@@ -238,6 +243,18 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       { table_name: 'client_revenues', data_type: shape.idType },
       { table_name: 'clients', data_type: shape.idType },
     ]);
+  });
+
+  // Tier 1 WP3 (docs/plans/tier-1.md, section 8): before anything is
+  // imported, the book is empty, and Ask and the brief say so before they
+  // would call the model (this server has no key, which would answer 503)
+  test('WP3: on an empty book, Ask and the brief answer 400 "The book has no clients yet."', async () => {
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM clients')).rows[0].n, 0);
+    const empty = [400, 'The book has no clients yet.'];
+    let res = await call('POST', '/api/ai/ask', { question: 'Is Mike overloaded?' });
+    assert.deepEqual([res.status, res.body.error], empty);
+    res = await call('POST', '/api/ai/brief', {});
+    assert.deepEqual([res.status, res.body.error], empty);
   });
 
   test('the section 3 example imports leads, second chairs, originators and judgments', async () => {
@@ -479,7 +496,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -816,25 +833,6 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     res = await plan(undefined);
     assert.equal(res.status, 400);
     assert.match(res.body.error, /^roster must list/);
-  });
-
-  // Tier 1 WP1: the AI Advisor's three routes read the book through
-  // models/clientModel.cjs (listWithMetrics, getWithMetrics) before calling
-  // the model, so on this table shape each gets as far as the missing key.
-  // Production's older client_revenues has no contract_end_date column, and a
-  // query that read it answered 500 here before any AI call.
-  test("the AI Advisor's routes read the book on this table shape and stop at the missing key (503)", async () => {
-    const { body: list } = await call('GET', '/api/data/clients');
-    const client = list.clients.find((c) => c.name === HEALTH);
-    const notConfigured = 'AI is not configured on the server (missing API key).';
-    for (const [path, body] of [
-      ['/api/claude/analyze-portfolio', {}],
-      ['/api/claude/strategic-advice', { query: 'Who carries the most?' }],
-      ['/api/claude/client-recommendations', { clientId: client.id, includePortfolio: true }],
-    ]) {
-      const res = await call('POST', path, body);
-      assert.deepEqual([res.status, res.body.error], [503, notConfigured], `${path}: ${JSON.stringify(res.body)}`);
-    }
   });
 
   test('Phase 5: a transition sheet (CLIENT, Lead, Second Chair) changes the two seats and nothing else; the partner who left can then be deactivated', async () => {
@@ -1224,5 +1222,153 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     res = await importCsv(again.sheet.csv);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepEqual(await book(), after);
+  });
+
+  // Tier 1 WP3 (docs/plans/tier-1.md, section 8): Ask the book and the brief,
+  // on the whole book as the tests above left it. Without a key, each route
+  // reads the book on this table shape and stops at the missing key; the
+  // question's check, sign-in and the deleted AI Advisor routes answer first.
+  test('WP3: without a key, Ask and the brief read the book on this table shape and stop at the missing key (503); the question is checked first; 401 without sign-in; /api/claude is gone', async () => {
+    const health = await (await fetch(`${base}/api/health`)).json();
+    assert.ok(health.features.includes('ask-the-book'));
+    const notConfigured = [503, 'AI is not configured on the server (missing API key).'];
+    const empty = [400, 'Type a question to ask.'];
+
+    let res = await call('POST', '/api/ai/ask', { question: 'Who carries the most?' });
+    assert.deepEqual([res.status, res.body.error], notConfigured, JSON.stringify(res.body));
+    res = await call('POST', '/api/ai/brief', {});
+    assert.deepEqual([res.status, res.body.error], notConfigured, JSON.stringify(res.body));
+    res = await call('POST', '/api/ai/ask', { question: 'x'.repeat(2000) });
+    assert.deepEqual([res.status, res.body.error], notConfigured, '2,000 characters pass the check');
+
+    for (const body of [{ question: '' }, { question: '   \n' }, {}, { question: 42 }]) {
+      res = await call('POST', '/api/ai/ask', body);
+      assert.deepEqual([res.status, res.body.error], empty, JSON.stringify(body));
+    }
+    res = await call('POST', '/api/ai/ask', { question: 'x'.repeat(2001) });
+    assert.deepEqual([res.status, res.body.error], [400, 'The question is too long: at most 2,000 characters.']);
+
+    for (const path of ['/api/ai/ask', '/api/ai/brief']) {
+      const anonymous = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: 'Is Mike overloaded?' }),
+      });
+      assert.equal(anonymous.status, 401, path);
+    }
+
+    // The AI rate limiters (T16) are on the POST routes only: opening the book spends no AI budget
+    const post = await fetch(`${base}/api/ai/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ question: 'Who carries the most?' }),
+    });
+    assert.ok(post.headers.get('ratelimit-policy'), 'the AI limiters answer on POST /api/ai/ask');
+    const get = await fetch(`${base}/api/ai/book`, { headers: { Cookie: cookie } });
+    assert.equal(get.status, 200);
+    assert.equal(get.headers.get('ratelimit-policy'), null, 'no AI limiter on GET /api/ai/book');
+
+    // The AI Advisor's three consulting-deck routes are deleted
+    for (const path of ['/api/claude/analyze-portfolio', '/api/claude/strategic-advice', '/api/claude/client-recommendations']) {
+      const gone = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: '{}',
+      });
+      assert.equal(gone.status, 404, path);
+    }
+  });
+
+  // Then through a second server.cjs on the same database, pointed at the fake
+  // Anthropic server (docs/plans/tier-1.md, section 4 item 2): the answers,
+  // and exactly what reached the model
+  test('WP3: through the fake Anthropic server, Ask and the brief send the instructions and the book as two system blocks, the cache marker on the book, every client in it and the question only in the user turn', async () => {
+    const fake = await startFakeAnthropic();
+    const aiEnv = { ...env, PORT: String(await freePort()), ANTHROPIC_API_KEY: 'test', ANTHROPIC_BASE_URL: fake.url };
+    const aiServer = startServer(aiEnv);
+    try {
+      await aiServer.ready;
+      const aiBase = `http://127.0.0.1:${aiEnv.PORT}`;
+      const post = async (path, body) => {
+        const res = await fetch(`${aiBase}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: cookie },
+          body: JSON.stringify(body),
+        });
+        return { status: res.status, body: await res.json() };
+      };
+      const { body: bookAnswer } = await call('GET', '/api/ai/book');
+      const { body: list } = await call('GET', '/api/data/clients');
+      assert.ok(list.clients.length > 2, 'the whole book, not only the template');
+
+      // A question with an ampersand, an apostrophe and a "<": no request
+      // sanitizer, so it reaches the model as the partner typed it
+      const question = "Is Smith & O'Brien's lead book <1.0× the partners' average?";
+      const asked = await post('/api/ai/ask', { question: `  ${question}\n` });
+      assert.equal(asked.status, 200, JSON.stringify(asked.body));
+      assert.equal(fake.requests.length, 1);
+      const askRequest = fake.requests[0].body;
+      assert.deepEqual(Object.keys(asked.body).sort(), [
+        'answer', 'costUsd', 'kind', 'model', 'question', 'refusalCategory', 'refused',
+        'reportingYear', 'servedBy', 'success', 'timestamp', 'truncated', 'usage',
+      ]);
+      assert.equal(asked.body.success, true);
+      assert.equal(asked.body.kind, 'ask');
+      assert.equal(asked.body.question, question);
+      assert.equal(asked.body.answer, describeRequest(askRequest));
+      assert.deepEqual([asked.body.truncated, asked.body.refused, asked.body.refusalCategory], [false, false, null]);
+      assert.deepEqual([asked.body.model, asked.body.servedBy], ['claude-opus-5', 'claude-opus-5']);
+      assert.ok(asked.body.costUsd > 0, `costUsd ${asked.body.costUsd}`);
+      assert.equal(asked.body.reportingYear, bookAnswer.reportingYear);
+
+      // The request: two system blocks, the instructions then the book the
+      // panel shows, byte for byte; the one cache marker on the book
+      assert.equal(askRequest.max_tokens, 32000);
+      assert.deepEqual(askRequest.system, [
+        { type: 'text', text: askPrompts.ASK_INSTRUCTIONS },
+        { type: 'text', text: bookAnswer.text, cache_control: { type: 'ephemeral' } },
+      ]);
+      // Every client once in the book's client table
+      const bookText = askRequest.system[1].text;
+      const rows = bookText.slice(bookText.indexOf('\n## Clients (')).split('\n')
+        .filter((line) => line.startsWith('| ') && !line.startsWith('| ---') && !line.startsWith('| Client |'))
+        .map((line) => line.slice(2, -2).split(' | ')[0]);
+      assert.deepEqual(rows.sort(), list.clients.map((c) => escaping.unescapeText(c.name)).sort());
+      // The question and the date only in the one user turn
+      assert.equal(askRequest.messages.length, 1);
+      assert.equal(askRequest.messages[0].role, 'user');
+      const turn = askRequest.messages[0].content;
+      assert.match(turn, /^Today is \d{4}-\d{2}-\d{2}\.\n\n<question>\n/);
+      assert.ok(turn.endsWith(`<question>\n${question}\n</question>`), turn);
+      assert.ok(!JSON.stringify(askRequest.system).includes(question));
+      assert.ok(!JSON.stringify(askRequest.system).includes(turn.slice(9, 19)), 'no date in the system blocks');
+
+      // The brief: the same system blocks, byte for byte, so the book is read
+      // from the cache; its request under the five headings
+      const brief = await post('/api/ai/brief', {});
+      assert.equal(brief.status, 200, JSON.stringify(brief.body));
+      const briefRequest = fake.requests[1].body;
+      assert.equal(brief.body.kind, 'brief');
+      assert.equal(brief.body.question, null);
+      assert.equal(brief.body.answer, describeRequest(briefRequest));
+      assert.equal(JSON.stringify(briefRequest.system), JSON.stringify(askRequest.system));
+      const briefTurn = briefRequest.messages[0].content;
+      for (const heading of askPrompts.BRIEF_HEADINGS) assert.ok(briefTurn.includes(`## ${heading}\n`), heading);
+      assert.ok(!briefTurn.includes('<question>'));
+
+      // A second question: the same prefix again
+      const again = await post('/api/ai/ask', { question: 'Where is our biggest retention risk?' });
+      assert.equal(again.status, 200, JSON.stringify(again.body));
+      assert.equal(JSON.stringify(fake.requests[2].body.system), JSON.stringify(askRequest.system));
+
+      // A refusal nothing rescued: no text, the flag and the category (T10)
+      fake.enqueue('refusal-before-output.sse');
+      const refused = await post('/api/ai/ask', { question: 'Is Mike overloaded?' });
+      assert.equal(refused.status, 200, JSON.stringify(refused.body));
+      assert.deepEqual([refused.body.refused, refused.body.answer, refused.body.refusalCategory], [true, '', 'cyber']);
+    } finally {
+      aiServer.child.kill();
+      await fake.close();
+    }
   });
 });
