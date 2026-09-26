@@ -103,6 +103,8 @@ app.use('/api/scenarios', scenariosRouter);
 app.use('/api/claude', require('./claude.cjs').router);
 app.use('/api/data', require('./data.cjs'));
 app.use('/api/people', require('./routes/people.cjs'));
+// The book as the AI sees it (docs/plans/tier-1.md, WP2); auth inside the router
+app.use('/api/ai', require('./routes/ai.cjs'));
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {
@@ -116,8 +118,10 @@ app.get('/api/health', async (req, res) => {
     // before Stage 2's AI plans (transition-plan-roster): an API without it
     // ignores the roster and answers with no recommendation from it. And
     // before the associate split's Accept (second-chair-assign): an API
-    // without it has no PUT /api/data/clients/:id/second-chair.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign'],
+    // without it has no PUT /api/data/clients/:id/second-chair. And before
+    // the AI tab's "What the AI is given" panel (ai-book): an API without it
+    // has no GET /api/ai/book.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book'],
     services: {}
   };
 

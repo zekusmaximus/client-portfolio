@@ -49,21 +49,31 @@ export function ratio(value, average, members = 2) {
   return value / average;
 }
 
+/**
+ * A sum of floats to 12 significant digits, before it is rounded for display.
+ * The same efforts or amounts summed in another order can differ in the last
+ * bits (5.449999999999999 against 5.45), and rounding to one decimal then
+ * shows 5.4 on one side and 5.5 on the other. The server's book
+ * (utils/book.cjs) sums its clients in name order and settles the same way,
+ * so the two show the same figures (tests/book.test.mjs).
+ */
+const settle = (n) => Number((Number(n) || 0).toPrecision(12));
+
 /** "1.3×"; "<0.1×" for a load too small to show as 0.1× but not nothing; "—" when there is no comparison. */
 export function formatRatio(r) {
   if (r === null || r === undefined || !Number.isFinite(r)) return '—';
   if (r > 0 && r < 0.05) return '<0.1×';
-  return `${r.toFixed(1)}×`;
+  return `${settle(r).toFixed(1)}×`;
 }
 
 /** "$1,234,567", whole dollars. */
 export function formatMoney(n) {
-  return `$${Math.round(n || 0).toLocaleString('en-US')}`;
+  return `$${Math.round(settle(n)).toLocaleString('en-US')}`;
 }
 
 /** Effort to one decimal: "7.5". */
 export function formatEffort(n) {
-  return (Math.round((n || 0) * 10) / 10).toString();
+  return (Math.round(settle(n) * 10) / 10).toString();
 }
 
 /** A client's practice areas, whichever name the object carries them under. */

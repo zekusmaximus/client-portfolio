@@ -17,34 +17,10 @@ import { revenueForYear } from '../src/utils/revenue.js';
 import { resolveEffort } from '../src/utils/clientMetrics.js';
 import strategic from '../utils/strategic.cjs';
 
-const person = (id, name, role, active = true) => ({ id, name, role, active });
-const PEOPLE = [
-  person(1, 'Brendan', 'partner'), person(2, 'Jeff', 'partner'), person(3, 'Joe', 'partner'),
-  person(4, 'Kevin', 'partner'), person(5, 'Mike', 'partner'), person(6, 'Paula', 'partner'),
-  person(7, 'Jay', 'emeritus'), person(8, 'Anna', 'associate'), person(9, 'Ben', 'associate'),
-  person(10, 'Steve', 'partner', false),
-];
-const byId = new Map(PEOPLE.map((p) => [p.id, p]));
+// The fixture book: ten people, six clients (also held against the server's
+// port in tests/book.test.mjs)
+import { PEOPLE, CLIENTS, client } from './fixtures/books.mjs';
 
-// A client as the API sends it: lead and secondChair nested, effort computed
-let nextId = 1;
-const client = (leadId, secondId, amounts, effort = 2) => ({
-  id: nextId++,
-  name: `Client ${nextId}`,
-  lead: leadId ? byId.get(leadId) : null,
-  secondChair: secondId ? byId.get(secondId) : null,
-  effort,
-  revenues: Object.entries(amounts).map(([year, amount]) => ({ year: Number(year), revenue_amount: String(amount) })),
-});
-
-const CLIENTS = [
-  client(4, 7, { 2025: 50000, 2026: 60000 }, 3),     // Kevin lead, Jay second
-  client(4, 8, { 2026: 40000 }, 4.5),                 // Kevin lead, Anna second
-  client(6, 8, { 2025: 20000, 2026: 30000 }, 2),     // Paula lead, Anna second
-  client(6, null, { 2026: 10000 }, 1),                // Paula lead, no second chair
-  client(1, 4, { 2026: 20000 }, 2),                   // Brendan lead, Kevin second
-  client(null, null, { 2026: 5000 }, 1),              // no lead (saved before the People list)
-];
 const revenueOf = (c) => revenueForYear(c, 2026);
 
 test('each person\'s lead book and second-chair load: clients, reporting-year revenue, effort', () => {

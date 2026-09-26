@@ -225,8 +225,8 @@ Output, including thinking, dominates; caching saves a few cents a question at t
 
 **Acceptance**
 
-- [ ] Gates and both database suites green.
-- [ ] End to end in the container on production's table shape with a 24-client book: in headless Chromium, the panel's text shows every client once and each person's figures equal the Partnership tab's; an API answering an older feature list shows the message.
+- [x] Gates and both database suites green.
+- [x] End to end in the container on production's table shape with a 24-client book: in headless Chromium, the panel's text shows every client once and each person's figures equal the Partnership tab's; an API answering an older feature list shows the message. Done 2026-09-26: 24 client rows, each once; "&" decoded (one name stored as `&amp;` by the client form); a Notes cell's text nowhere on the page; Kevin's, Paula's and Mike's lead and second-chair clients, revenue and effort equal to the Partnership tab's; `/api/health` routed without `ai-book` shows "The API has not been updated yet." and requests no book; no console error after sign-in. That book: 10,232 characters, about 2,558 tokens (the estimate at 4 characters per token), so about 100 clients would be roughly 30,000 characters and 7,500 tokens, below section 5's assumed 12,000.
 - [ ] Jeff, after deploy: `/api/health` lists `ai-book`; on the AI tab, "What the AI is given" lists every client once, no client's notes appear, and two partners' lead counts, revenue and effort equal the Partnership tab's. Record the character count and estimated tokens here: they replace section 5's assumed book size.
 
 ---
