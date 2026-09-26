@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,7 @@ import { Upload, FileText, FileCheck, CheckCircle, AlertCircle, Download } from 
 import { apiClient, apiErrorBody, apiErrorMessage } from './api';
 import usePortfolioStore from './portfolioStore';
 import Papa from 'papaparse';
+import { buildBookSheet, exportBookSheet } from './utils/bookSheet';
 
 // The import sheet (docs/plans/people-and-second-chair.md, section 3). The
 // server's rules are in utils/csvImport.cjs; this is the help text.
@@ -83,7 +84,9 @@ const DataUploadManager = () => {
   // The server refused the file: { message, errors: [{ row, client, message }] }
   const [refusal, setRefusal] = useState(null);
   
-  const { fetchClients } = usePortfolioStore();
+  const { fetchClients, clients, people } = usePortfolioStore();
+  // The book as an import sheet, and the clients whose rows Check file would refuse
+  const bookSheet = useMemo(() => buildBookSheet(clients || [], people || []), [clients, people]);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -372,6 +375,33 @@ const handleUpload = async (dryRun = false) => {
               The template's two example rows show the format; replace them with your clients before importing, or
               they are added to the book.
             </p>
+            <div className="space-y-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => exportBookSheet(bookSheet.csv)}
+                disabled={!clients || clients.length === 0}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download the book as a sheet
+              </Button>
+              <p className="text-sm text-muted-foreground">
+                {!clients || clients.length === 0
+                  ? 'The book has no clients yet.'
+                  : `The file holds the book as it is now: all ${count(clients.length, 'client')}, with revenue for ` +
+                    `${bookSheet.years.length > 0 ? bookSheet.years.join(', ') : 'no year'}, their people and their judgments. ` +
+                    'Importing it back unchanged changes nothing; add a year column or correct a cell, then check and ' +
+                    'import it to update the book.'}
+              </p>
+              {bookSheet.attention.length > 0 && (
+                <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="book-sheet-attention">
+                  {`Check file will refuse ${count(bookSheet.attention.length, 'row')} of this file until each client ` +
+                    'has an active partner as lead and an active second chair or none: ' +
+                    `${bookSheet.attention.map((a) => `${a.client} (${a.reason})`).join('; ')}. ` +
+                    'Fix them in the file, or on Client Details before downloading.'}
+                </p>
+              )}
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>

@@ -36,6 +36,7 @@ import { toPersonId } from '../src/utils/people.js';
 import { departureModel } from '../src/utils/departure.js';
 import { revenueForYear } from '../src/utils/revenue.js';
 import { buildTransitionSheet } from '../src/utils/transitionPlans.js';
+import { buildBookSheet } from '../src/utils/bookSheet.js';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const template = readFileSync(new URL('../public/client-book-template.csv', import.meta.url), 'utf8');
@@ -1114,7 +1115,10 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
 
     // A partner types notes with an ampersand and a `<` (which DOMPurify escapes before the server does) and saves
     const typedNotes = 'R&D < 5% of "budget"';
+    const unrated = async () => (await db.query('SELECT stickiness FROM clients WHERE id::text = $1', [barnesId])).rows[0].stickiness;
+    assert.equal(await unrated(), null, 'nobody has rated it');
     await formSave({ ...(await openForm()), practiceArea: ['Education'], notes: typedNotes });
+    assert.equal(await unrated(), null, 'saved for another reason, it is still not rated');
     const first = await stored();
     assert.equal(first.name, 'Barnes &amp; Noble Education Fund');
     // Saved twice more with only the stickiness changed: shown as typed, stored unchanged
@@ -1152,5 +1156,73 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.equal(row.lead, decision.lead.after.name);
     assert.equal(row.second_chair, decision.secondChair.after ? decision.secondChair.after.name : null);
     assert.equal(row.notes, first.notes, 'the sheet has no Notes column: kept');
+  });
+
+  // Data Upload's "Download the book as a sheet" (src/utils/bookSheet.js): the
+  // whole book as an import sheet, built from what the page holds (the API's
+  // clients and the People list), which imports back with nothing changed
+  test('the book downloaded as a sheet passes Check file and imports back with nothing changed', async () => {
+    const bookSheet = async () => {
+      const { body: { clients } } = await call('GET', '/api/data/clients');
+      const { body: { people } } = await call('GET', '/api/people');
+      return { sheet: buildBookSheet(clients, people), clientCount: clients.length };
+    };
+    // Every client but its updated_at; every revenue row by client, year and
+    // amount (the import deletes and re-inserts the years a file names, so a
+    // row's id and timestamps are new); every person
+    const book = async () => ({
+      clients: (await db.query("SELECT to_jsonb(c) - 'updated_at' AS row FROM clients c ORDER BY c.id::text")).rows.map((r) => r.row),
+      revenues: (await db.query('SELECT client_id::text AS client_id, year, revenue_amount::text AS amount FROM client_revenues ORDER BY client_id::text, year')).rows,
+      people: (await db.query('SELECT * FROM people ORDER BY id')).rows,
+    });
+
+    // The clients the P13 file added have no lead: written with a blank Lead,
+    // listed by the page, and refused by Check file, which writes nothing
+    let { sheet } = await bookSheet();
+    const unled = sheet.attention.map((a) => a.client);
+    assert.ok(unled.length > 0);
+    assert.ok(sheet.attention.every((a) => a.reason === 'no lead'), JSON.stringify(sheet.attention));
+    let before = await snapshot();
+    let res = await importCsv(sheet.csv, { dryRun: true });
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.deepEqual([...new Set(res.body.errors.map((e) => e.client))].sort(), [...unled].sort());
+    assert.deepEqual(await snapshot(), before);
+
+    // A partner gives each a lead
+    res = await importCsv(['CLIENT,Lead', ...unled.map((name) => `${name},Paula`)].join('\n'));
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+
+    // The whole book: Check file writes nothing, then Upload updates every client and creates none
+    let clientCount;
+    ({ sheet, clientCount } = await bookSheet());
+    assert.deepEqual(sheet.attention, []);
+    assert.ok(sheet.years.length >= 2, 'several revenue years on file');
+    const stored = await book();
+    before = await snapshot();
+    res = await importCsv(sheet.csv, { dryRun: true });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual([res.body.summary.updatedClients, res.body.summary.newClients], [clientCount, 0]);
+    assert.deepEqual(await snapshot(), before);
+
+    res = await importCsv(sheet.csv);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual([res.body.summary.updatedClients, res.body.summary.newClients], [clientCount, 0]);
+    const after = await book();
+    assert.deepEqual(after.revenues, stored.revenues);
+    assert.deepEqual(after.people, stored.people);
+    // Byte for byte, except text the request sanitizer stored escaped, which
+    // comes back as it was typed (the client form's own save stored the notes
+    // of the test above two levels deep)
+    const unescaped = (row) => ({ ...row, name: escaping.unescapeStored(row.name), notes: escaping.unescapeStored(row.notes) });
+    assert.deepEqual(after.clients, stored.clients.map(unescaped));
+    const repaired = stored.clients.filter((row, i) => JSON.stringify(row) !== JSON.stringify(after.clients[i]));
+    assert.deepEqual(repaired.map((row) => row.notes), ['R&amp;amp;D &amp;lt; 5% of &quot;budget&quot;']);
+
+    // Downloaded again, the same text; imported again, every byte the same
+    const again = await bookSheet();
+    assert.equal(again.sheet.csv, sheet.csv);
+    res = await importCsv(again.sheet.csv);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(await book(), after);
   });
 });

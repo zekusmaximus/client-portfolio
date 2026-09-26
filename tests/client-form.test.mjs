@@ -50,7 +50,7 @@ test('a stored client fills the form with its name and notes unescaped, and ever
   // The defaults, and one empty revenue row in `now`'s year
   assert.deepEqual(clientFormData({ id: 1, name: 'Plain' }, new Date('2027-01-15T12:00:00Z')), {
     name: 'Plain', practiceArea: [], conflict_risk: 'Medium', lead_id: '', second_chair_id: '', originator_id: '',
-    originator_is_firm: false, interaction_frequency: 'As-Needed', stickiness: 3, high_maintenance: false, notes: '',
+    originator_is_firm: false, interaction_frequency: 'As-Needed', stickiness: null, high_maintenance: false, notes: '',
     revenues: [{ year: 2027, revenue_amount: '' }],
   });
 });
@@ -86,4 +86,14 @@ test('saving a client again stores the same text: the name and notes no longer g
   const form = clientFormData(deep);
   assert.equal(form.notes, 'A&B');
   assert.equal(stored(form).notes, 'A&amp;B');
+});
+
+test('a client nobody has rated opens as Not rated, so saving it for another reason keeps it unrated; a rating stays', () => {
+  // The store sends `stickiness ?? null`, and the server stores what it is sent
+  for (const stickiness of [null, undefined]) {
+    assert.equal(clientFormData({ name: 'Unrated', stickiness }).stickiness, null, String(stickiness));
+  }
+  for (const stickiness of [1, 2, 3, 4, 5]) {
+    assert.equal(clientFormData({ name: 'Rated', stickiness }).stickiness, stickiness);
+  }
 });
