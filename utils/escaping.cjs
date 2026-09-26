@@ -28,9 +28,10 @@ function unescapeText(text) {
 }
 
 // Text sent back as it is stored is escaped again: `&amp;amp;` where it had
-// `&`, `&amp;#x27;` where it had `'`. The client form shows a stored name that
-// way, though its name pattern refuses the `;` until the partner retypes it; a
-// direct request, or a field without that pattern, has no such check. Every
+// `&`, `&amp;#x27;` where it had `'`. The client form did that to notes until
+// it filled its fields unescaped (src/utils/clientForm.js), a direct request
+// still can, and the form's DOMPurify pass escapes any text holding a `<`
+// before the server escapes it again. Every
 // escape after the first only adds `amp;` after an `&`, so collapsing an `&`
 // and every `amp;` after it to `&` undoes those (and the first escape of an
 // `&`); unescapeText then undoes the first escape of everything else.

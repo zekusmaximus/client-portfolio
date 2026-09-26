@@ -10,6 +10,7 @@
 // later pick on another client cannot move them.
 
 import { personLabel } from './people.js';
+import { unescapeStored } from './escaping.js';
 
 const key = (id) => String(id);
 
@@ -69,6 +70,9 @@ export function sheetCell(text) {
  * applies them. A blank Second Chair clears the seat, so a kept second chair
  * is written out. An approved plan the model can no longer apply (no lead, or
  * a pinned pick that someone now leaving holds) is left out, with the reason.
+ * A client's name is written unescaped: the API returns a name the client form
+ * saved as sanitizeRequestBody stored it (`Barnes &amp; Noble`), and the import
+ * refuses a CLIENT holding a `;`, so the sheet spells it as a partner would.
  * @returns {{ csv: string, rows: Array<{ client, lead, secondChair }>, skipped: Array<{ client, reason }> }}
  */
 export function buildTransitionSheet(decisions = [], plans = {}) {
@@ -83,10 +87,11 @@ export function buildTransitionSheet(decisions = [], plans = {}) {
     }
     rows.push({ client: d.client, lead: d.lead.after, secondChair: d.secondChair.after });
   }
-  rows.sort((a, b) => String(a.client.name).localeCompare(String(b.client.name), undefined, { sensitivity: 'base' }));
+  const clientName = (r) => unescapeStored(String(r.client.name ?? ''));
+  rows.sort((a, b) => clientName(a).localeCompare(clientName(b), undefined, { sensitivity: 'base' }));
   const lines = [
     'CLIENT,Lead,Second Chair',
-    ...rows.map((r) => [r.client.name, r.lead.name, r.secondChair ? r.secondChair.name : ''].map(sheetCell).join(',')),
+    ...rows.map((r) => [clientName(r), r.lead.name, r.secondChair ? r.secondChair.name : ''].map(sheetCell).join(',')),
   ];
   return { csv: `${lines.join('\r\n')}\r\n`, rows, skipped };
 }

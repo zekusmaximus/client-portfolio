@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
+import { clientFormData } from './utils/clientForm';
 import { enhanceClientWithSuccessionMetrics, getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 
 const ClientEnhancementForm = ({ onClose }) => {
@@ -94,26 +95,7 @@ const ClientEnhancementForm = ({ onClose }) => {
   // Initialize form data when client changes
   useEffect(() => {
     if (client) {
-      const clientRevenues = client.revenues || [];
-      // If no revenue data exists, add an empty row with the next logical year
-      const revenuesWithDefault = clientRevenues.length === 0 
-        ? [{ year: new Date().getFullYear(), revenue_amount: '' }]
-        : clientRevenues;
-
-      setFormData({
-        name: client.name || '',
-        practiceArea: client.practiceArea || [],
-        conflict_risk: client.conflict_risk || 'Medium',
-        lead_id: client.lead_id ? String(client.lead_id) : '',
-        second_chair_id: client.second_chair_id ? String(client.second_chair_id) : '',
-        originator_id: client.originator_id ? String(client.originator_id) : '',
-        originator_is_firm: client.originator_is_firm === true,
-        interaction_frequency: client.interaction_frequency || 'As-Needed',
-        stickiness: client.stickiness || 3,
-        high_maintenance: client.high_maintenance === true,
-        notes: client.notes || '',
-        revenues: revenuesWithDefault
-      });
+      setFormData(clientFormData(client));
     } else {
       // Reset form for new client with an empty revenue row for current year
       setFormData({

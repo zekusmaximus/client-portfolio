@@ -2,11 +2,13 @@
 // (unescapeText) or however many times a stored text was escaped
 // (unescapeStored), and the same as a PostgreSQL expression
 // (unescapeStoredSql; tests/import-db.test.mjs runs it against a real server).
+// The page's copy, src/utils/escaping.js, is held equal to the server's.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import validator from 'validator';
 import escaping from '../utils/escaping.cjs';
 import transitionPlan from '../utils/transitionPlan.cjs';
+import * as page from '../src/utils/escaping.js';
 
 const { ESCAPES, unescapeText, unescapeStored, unescapeStoredSql } = escaping;
 
@@ -67,4 +69,21 @@ test('unescapeStoredSql applies the same replacements in the same order, with no
   const steps = [...sql.matchAll(/, '([^']+)', chr\((\d+)\)\)/g)].map(([, entity, code]) => [entity, String.fromCharCode(Number(code))]);
   assert.deepEqual(steps, ESCAPES);
   assert.equal((sql.match(/'/g) || []).length % 2, 0);
+});
+
+test('the page\'s unescapeStored (src/utils/escaping.js) equals the server\'s, on any text', () => {
+  assert.deepEqual(page.ESCAPES, ESCAPES);
+  const fixed = [
+    'Barnes &amp; Noble Education Fund', 'O&amp;#x27;Brien Trust', '&amp;amp;lt;', 'R&D; Q&A;', '&;&amp&amp;;',
+    '&#x27&#x27;', 'plain', '', null, undefined, 42,
+  ];
+  for (const text of fixed) assert.equal(page.unescapeStored(text), unescapeStored(text), JSON.stringify(text));
+  // With semicolons too: the two must agree whatever is stored, not only on round trips
+  const alphabet = `a Z&;'"<>/\\\`#x27amplgtquot`;
+  const next = random(9);
+  for (let i = 0; i < 3000; i += 1) {
+    const length = Math.floor(next() * 30);
+    const text = Array.from({ length }, () => alphabet[Math.floor(next() * alphabet.length)]).join('');
+    assert.equal(page.unescapeStored(text), unescapeStored(text), JSON.stringify(text));
+  }
 });
