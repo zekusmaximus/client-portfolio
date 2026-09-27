@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "clsx": "^2.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

@@ -84,7 +84,7 @@ the build log names the Node version it used.
 |---|---|
 | Instance type (Free or paid) | confirm in the dashboard; it decides sections 7, 11 and the Shell |
 | Region | confirm in the dashboard; the database should be in the same one |
-| Node version | 22.16.0 (confirmed by Jeff on 2026-09-26). Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22, and `@anthropic-ai/sdk` 0.128.0 supports Node 20 or later |
+| Node version | 22.16.0 (confirmed by Jeff on 2026-09-26). Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22, `@anthropic-ai/sdk` 0.128.0 supports Node 20 or later, and `bcrypt` 6 Node 18 or later |
 | Root directory | confirm in the dashboard (the repository root is what the code needs) |
 | Build command | confirm in the dashboard (`npm ci` is what the code needs) |
 | Start command | confirm in the dashboard (`node server.cjs` or `npm start`) |
@@ -825,17 +825,25 @@ What that means here:
 
 ## 12. Dependency advisories that remain
 
-After WP5's non-breaking `npm audit fix` (never `--force`), on 2026-09-25,
-`npm audit` reports 5 (1 critical, 3 high, 1 moderate) and
-`npm audit --omit=dev` reports 3. Every one needs a major version to fix.
+After Tier 2 WP3's upgrade to `bcrypt` 6, on 2026-09-27, `npm audit`
+reports 2 (1 high, 1 moderate) and `npm audit --omit=dev` reports 0: no
+dependency the API or the built page runs has a known advisory. Both that
+remain are dev dependencies and need Vite 8, a major version.
 
 | Package | Severity | Comes from | Where it runs | Fix | When |
 |---|---|---|---|---|---|
-| `tar` 6.2.1 | critical (path traversal, hardlink and symlink escapes, parser DoS) | `bcrypt` 5.1.1 > `@mapbox/node-pre-gyp` 1.0.11 > `tar` | `npm ci` on Render: node-pre-gyp downloads bcrypt's prebuilt binary and unpacks it with `tar`. At run time bcrypt only uses node-pre-gyp to find the binary | `bcrypt` 6 (semver major; it drops node-pre-gyp) | its own PR, verified with a Render deploy, because it replaces a native module |
-| `@mapbox/node-pre-gyp` 1.0.11 | high | `bcrypt` 5.1.1 | as above | as above | as above |
-| `bcrypt` 5.1.1 | high | direct dependency | as above | as above | as above |
-| `vite` 4.5.14 | high (dev-server file serving, `server.fs.deny` bypasses on Windows, optimized-deps path traversal) | direct dev dependency | `npm run dev` only. Production is static files Vite built; the dev server never runs on Netlify | Vite 8 | not in Tier 0 (plan 0.2 bars a Vite major). Until then do not run `npm run dev -- --host` on an untrusted network |
+| `vite` 4.5.14 | high (dev-server file serving: `server.fs.deny` bypasses on Windows, optimized-deps path traversal, `server.fs` not applied to HTML files, files whose names start with the public directory's served; and, on Windows, the dev server's open-in-editor endpoint, `launch-editor`: command injection from a crafted request and NTLMv2 hash disclosure through a UNC path) | direct dev dependency | `npm run dev` only. Production is static files Vite built; the dev server never runs on Netlify | Vite 8 | not in Tier 2 (plan S13 bars a Vite major). Until then run `npm run dev` only while working on the page and stop it afterwards, and never `npm run dev -- --host` on an untrusted network |
 | `esbuild` 0.18.20 | moderate (dev server answers any website) | `vite` 4 | `npm run dev` only | Vite 8 | with Vite |
+
+Until WP3 the table also listed `tar` 6.2.1 (critical), `@mapbox/node-pre-gyp`
+1.0.11 and `bcrypt` 5.1.1 (high): bcrypt 5's install script, run by `npm ci`
+on Render, downloaded its binary from GitHub and unpacked it with `tar`.
+bcrypt 6 ships its binaries inside the npm package (`prebuilds/`, loaded by
+`node-gyp-build`), so `npm ci` fetches nothing outside the npm registry and
+the lockfile's integrity hash covers the binary. On Render (Linux x64, glibc) it loads
+`prebuilds/linux-x64/bcrypt.glibc.node`; only where no prebuild matches does
+the install compile bcrypt from source, which needs Python, `make` and a C++
+compiler and downloads Node's headers from nodejs.org.
 
 Re-check with `npm audit` and `npm audit --omit=dev`. Do not run
 `npm audit fix --force`: it installs these majors unreviewed.
