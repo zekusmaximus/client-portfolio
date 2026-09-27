@@ -1,0 +1,211 @@
+{
+  "about": "Made-up test passwords, never a partner's, hashed by utils/hash.cjs on bcrypt 5 before Tier 2 WP3 upgraded to bcrypt 6. \"verified\" is what bcrypt 5's compare() answered for each probe. Made by tests/fixtures/make-bcrypt5-hashes.mjs; read by tests/password-hash.test.mjs.",
+  "madeBy": {
+    "bcrypt": "5.1.1",
+    "node": "v22.22.2",
+    "platform": "linux-x64",
+    "commit": "d2e49e7",
+    "date": "2026-09-27"
+  },
+  "hashes": [
+    {
+      "label": "ascii",
+      "cost": 12,
+      "plain": "Tr1dent-Lantern-Ochre!",
+      "hash": "$2b$12$STZ.zKCd/KiqJTUWRN8lT.jLDhGSXLQPfOaDf5M7r624VMMs3jZnC",
+      "probes": [
+        {
+          "plain": "Tr1dent-Lantern-Ochre!",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "Tr1dent-Lantern-Ochre?",
+          "note": "last character changed",
+          "verified": false
+        },
+        {
+          "plain": "tr1dent-lantern-ochre!",
+          "note": "lower case",
+          "verified": false
+        },
+        {
+          "plain": "",
+          "note": "empty",
+          "verified": false
+        }
+      ]
+    },
+    {
+      "label": "ascii at a lower cost",
+      "cost": 10,
+      "plain": "Low-Cost-Harbor-42?",
+      "hash": "$2b$10$69qJbDMnqHZ78a0M0RHLAutZXMm9ui6T5BKP22qWkSyITWr1qDT.O",
+      "probes": [
+        {
+          "plain": "Low-Cost-Harbor-42?",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "Low-Cost-Harbor-42",
+          "note": "last character dropped",
+          "verified": false
+        }
+      ]
+    },
+    {
+      "label": "UTF-8, two-byte characters",
+      "cost": 12,
+      "plain": "Pässwörd-Ünïcødé-9!",
+      "hash": "$2b$12$zyrxUixZN1YAju36nQB/Y.8xjCj81KL0tB3OyktHdcGZS7cbNsBme",
+      "probes": [
+        {
+          "plain": "Pässwörd-Ünïcødé-9!",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "Pässwörd-Ünïcødé-9!",
+          "note": "the same text decomposed (NFD): other bytes",
+          "verified": false
+        },
+        {
+          "plain": "Password-Unicode-9!",
+          "note": "accents dropped",
+          "verified": false
+        }
+      ]
+    },
+    {
+      "label": "UTF-8, three- and four-byte characters",
+      "cost": 12,
+      "plain": "密码-Kestrel-🔐-2026",
+      "hash": "$2b$12$OXCrJP9ejSm2ad9.ATW4Qur.IPBxT7I.olvVA2n/fVgkAPTu1OLSC",
+      "probes": [
+        {
+          "plain": "密码-Kestrel-🔐-2026",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "密码-Kestrel-🔒-2026",
+          "note": "another emoji",
+          "verified": false
+        }
+      ]
+    },
+    {
+      "label": "longer than 72 bytes",
+      "cost": 12,
+      "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Windo",
+      "hash": "$2b$12$pNFO7iqobLJylGZrQX28Zu0iyE9x.Lvx0Kk1DuxIgtl6vjOW3SCmi",
+      "probes": [
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Windo",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Win",
+          "note": "the first 72 bytes",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wi",
+          "note": "the first 71 bytes",
+          "verified": false
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Winanything after byte 72",
+          "note": "the first 72 bytes, then other text",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wi#dow-9!Seventy-Two-Byte-Windo",
+          "note": "byte 72 changed",
+          "verified": false
+        }
+      ]
+    },
+    {
+      "label": "a two-byte character across byte 72",
+      "cost": 12,
+      "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wié-tail",
+      "hash": "$2b$12$9DI9.x1FuyLBxFL49kc8EuqBT2XvZy6trt9VpP97oG/Zamn6TMcoq",
+      "probes": [
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wié-tail",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wié",
+          "note": "71 bytes and the é",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wiê",
+          "note": "71 bytes and ê, whose first byte (0xC3) is é's",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wia",
+          "note": "71 bytes and a",
+          "verified": false
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Wi",
+          "note": "the first 71 bytes",
+          "verified": false
+        }
+      ]
+    },
+    {
+      "label": "longer than 255 bytes",
+      "cost": 12,
+      "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-By",
+      "hash": "$2b$12$1qVQNrEGJKIb1lpXTNbctuvC4XjDiUFlDm7eNCIiAI1LwrHfkLyRi",
+      "probes": [
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-By",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Window-9!Seventy-Two-Byte-Win",
+          "note": "the first 72 bytes",
+          "verified": true
+        },
+        {
+          "plain": "Seventy-Two-Byte-Window-9!Seventy-Two-Byte-W",
+          "note": "the first 44 bytes (300 - 256; bcrypt 5.0.0 fixed a wrap-around at 255 bytes and more)",
+          "verified": false
+        }
+      ]
+    },
+    {
+      "label": "a NUL byte inside",
+      "cost": 12,
+      "plain": "Before\u0000After-7!",
+      "hash": "$2b$12$YfFaDcFJ0Ppfu0UIbKWgm.M5jYeH8MqvuCrifBABGV/W2i5pnTtGK",
+      "probes": [
+        {
+          "plain": "Before\u0000After-7!",
+          "note": "the password",
+          "verified": true
+        },
+        {
+          "plain": "Before",
+          "note": "the text before the NUL (bcrypt 5.0.0 fixed a NUL bug)",
+          "verified": false
+        },
+        {
+          "plain": "Before\u0000After-8!",
+          "note": "last character after the NUL changed",
+          "verified": false
+        }
+      ]
+    }
+  ]
+}
