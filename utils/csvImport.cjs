@@ -12,11 +12,12 @@
  * code change, and neither will `2027 Contracts`.
  */
 
-const { EFFORT_BY_CADENCE } = require('./strategic.cjs');
 const { validateAssignment, legacyText } = require('./people.cjs');
 const { unescapeStored } = require('./escaping.cjs');
+const { PRACTICE_AREAS, CADENCES, CONFLICT_RISKS, STICKINESS, REVENUE_YEAR } = require('./clientRules.cjs');
 
-const REVENUE_HEADER = /^\s*((?:19|20)\d{2})\s+contracts?\s*$/i;
+// `YYYY Contracts`, its year the client form's rule too (utils/clientRules.cjs)
+const REVENUE_HEADER = new RegExp(`^\\s*(${REVENUE_YEAR})\\s+contracts?\\s*$`, 'i');
 
 /**
  * The year named by a `YYYY Contracts` header, or null when the header is not
@@ -166,14 +167,8 @@ const SHEET_COLUMNS = [
 const PEOPLE_KEYS = ['lead', 'secondChair', 'originator', 'creditToFirm'];
 const HEADER_OF = Object.fromEntries(SHEET_COLUMNS.map(({ key, header }) => [key, header]));
 
-// The vocabularies. Cadence is the scorer's own list; the practice areas are
-// the client form's.
-const CADENCES = Object.keys(EFFORT_BY_CADENCE);
-const CONFLICT_RISKS = ['Low', 'Medium', 'High'];
-const PRACTICE_AREAS = [
-  'Healthcare', 'Municipal', 'Corporate', 'Energy', 'Financial', 'Education',
-  'Transportation', 'Environmental', 'Technology', 'Real Estate', 'Non-Profit', 'Other',
-];
+// The vocabularies (CADENCES, CONFLICT_RISKS, PRACTICE_AREAS, STICKINESS) are
+// utils/clientRules.cjs's, which POST and PUT /api/data/clients apply too.
 const FIRM = 'firm';
 
 // The first row of data is row 2: the header is row 1, as in a spreadsheet.
@@ -259,7 +254,7 @@ function readSheetRow(row, columns = {}) {
   if (present('stickiness')) {
     const v = text('stickiness');
     if (v === '') values.stickiness = null;
-    else if (/^[1-5]$/.test(v)) values.stickiness = Number(v);
+    else if (/^\d$/.test(v) && STICKINESS.includes(Number(v))) values.stickiness = Number(v);
     else errors.push(`Stickiness "${v}" must be a whole number from 1 to 5, or blank.`);
   }
 

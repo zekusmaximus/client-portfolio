@@ -23,6 +23,7 @@ const {
   valuesList
 } = require('./utils/csvImport.cjs');
 const { unescapeStoredSql } = require('./utils/escaping.cjs');
+const { NAME_MAX, NAME_PATTERN, isObjectBody, checkClient } = require('./utils/clientRules.cjs');
 const { revenueObjectFromRows } = require('./utils/strategic.cjs');
 const {
   parseId,
@@ -73,15 +74,16 @@ const csvValidationRules = [
           throw new Error(`Row ${rowNumberOf(i)}: CLIENT is required and must be a non-empty string`);
         }
         
-        // Validate CLIENT length and pattern
-        if (row.CLIENT.trim().length > 255) {
+        // Validate CLIENT length and pattern: the client form's
+        // (utils/clientRules.cjs)
+        if (row.CLIENT.trim().length > NAME_MAX) {
           throw new Error(`Row ${rowNumberOf(i)}: CLIENT must not exceed 255 characters`);
         }
         
         // Decode HTML entities for validation
         const decodedClient = decodeHTMLEntities(row.CLIENT.trim());
         
-        if (!/^[a-zA-Z0-9\s\-.,&'()/]+$/.test(decodedClient)) {
+        if (!NAME_PATTERN.test(decodedClient)) {
           throw new Error(`Row ${rowNumberOf(i)}: CLIENT contains invalid characters`);
         }
       }
@@ -484,10 +486,13 @@ async function resolveAssignment(conn, body) {
   };
 }
 
-const assignmentRejected = (errors) => ({
+// The 400 of every client write: the fields' details (checkClient,
+// utils/clientRules.cjs) and the people's (validateAssignment), each
+// { field, message }
+const validationFailed = (details) => ({
   success: false,
   error: 'Validation failed',
-  details: errors
+  details
 });
 
 // GET /api/data/clients - Get all clients with aggregated revenue data
@@ -512,7 +517,14 @@ router.get('/clients', async (req, res) => {
 });
 
 // POST /api/data/clients - Create new client with revenues
+// The fields are checked (checkClient, utils/clientRules.cjs), then the
+// people; any problem answers 400 validationFailed with both lists' details,
+// the fields' first, and writes nothing. A body that is not an object answers
+// its one detail before anything is read.
 router.post('/clients', async (req, res) => {
+  const fieldErrors = checkClient(req.body);
+  if (!isObjectBody(req.body)) return res.status(400).json(validationFailed(fieldErrors));
+
   const conn = await db.pool.connect();
   
   try {
@@ -539,9 +551,10 @@ router.post('/clients', async (req, res) => {
     } = req.body;
 
     const assignment = await resolveAssignment(conn, req.body);
-    if (assignment.errors.length > 0) {
+    const details = [...fieldErrors, ...assignment.errors];
+    if (details.length > 0) {
       await conn.query('ROLLBACK');
-      return res.status(400).json(assignmentRejected(assignment.errors));
+      return res.status(400).json(validationFailed(details));
     }
     const people = assignment.value;
     const legacy = assignment.legacy;
@@ -605,7 +618,14 @@ router.post('/clients', async (req, res) => {
 });
 
 // PUT /api/data/clients/:id - Update client with revenues
+// Checked as POST is, before the client is looked up: a body the rules refuse
+// answers 400 whatever the id. `revenues` is the client's whole revenue, as
+// before; a body without it leaves the stored revenue as it is, and
+// `revenues: []` clears it.
 router.put('/clients/:id', async (req, res) => {
+  const fieldErrors = checkClient(req.body);
+  if (!isObjectBody(req.body)) return res.status(400).json(validationFailed(fieldErrors));
+
   const conn = await db.pool.connect();
   
   try {
@@ -629,13 +649,14 @@ router.put('/clients/:id', async (req, res) => {
       interaction_frequency,
       stickiness = null,
       high_maintenance = false,
-      revenues = []
+      revenues
     } = req.body;
 
     const assignment = await resolveAssignment(conn, req.body);
-    if (assignment.errors.length > 0) {
+    const details = [...fieldErrors, ...assignment.errors];
+    if (details.length > 0) {
       await conn.query('ROLLBACK');
-      return res.status(400).json(assignmentRejected(assignment.errors));
+      return res.status(400).json(validationFailed(details));
     }
     const people = assignment.value;
     const legacy = assignment.legacy;
@@ -667,12 +688,15 @@ router.put('/clients/:id', async (req, res) => {
       return res.status(404).json({ error: 'Client not found' });
     }
 
-    // Delete existing revenues. From here on the client's id is the stored
-    // one, in untyped placeholders that take the column's type, uuid or integer
-    await conn.query('DELETE FROM client_revenues WHERE client_id = $1', [updatedClient.id]);
+    // Replace the revenue with the body's, when it has any. From here on the
+    // client's id is the stored one, in untyped placeholders that take the
+    // column's type, uuid or integer
+    if (revenues !== undefined) {
+      await conn.query('DELETE FROM client_revenues WHERE client_id = $1', [updatedClient.id]);
+    }
 
     // Insert new revenues in bulk
-    if (revenues.length > 0) {
+    if (revenues !== undefined && revenues.length > 0) {
       const params = [];
       const valuePlaceholders = [];
       let paramIndex = 1;
@@ -769,7 +793,7 @@ router.put('/clients/:id/second-chair', async (req, res) => {
     });
     if (assignment.errors.length > 0) {
       await conn.query('ROLLBACK');
-      return res.status(400).json(assignmentRejected(assignment.errors));
+      return res.status(400).json(validationFailed(assignment.errors));
     }
 
     await conn.query(`
