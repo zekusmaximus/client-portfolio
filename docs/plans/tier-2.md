@@ -72,9 +72,9 @@ service postgresql start   # then the ALTER USER in CLAUDE.md's Testing section
 
 | WP | Title | Size | Status | Branch / PR | Notes |
 |---|---|---|---|---|---|
-| WP0 | Close out Tier 1 | 0.5 session | not started | | Docs now; the prompt tuning waits for Jeff's first answers |
+| WP0 | Close out Tier 1 | 0.5 session | in progress (2026-09-27) | `claude/busy-ritchie-csogzc` | Docs part: the runbook's 9.3 lists every log line the source writes; `README.md` names every table; Tier 1's WP3 to WP6 status and Jeff's figures. Jeff's checks recorded as they come in. The prompt tuning waits for Jeff's first answers |
 | WP1 | Contract tests per route | 1 session | not started | | |
-| WP2 | Dead code and small defects | 0.5 to 1 session | not started | | |
+| WP2 | Dead code and small defects | 0.5 to 1 session | not started | | S4's count done: Jeff's read-only query on production on 2026-09-27 found one row, `relationship_intensity` 5, `relationship_strength` 5, `renewal_probability` 0.70, for all 84 clients, so the constant changes no score |
 | WP3 | bcrypt 6 | 0.5 session | not started | | May run any time after WP1 |
 | WP4 | Validation on the live write path | 1 session | not started | | |
 | WP5 | Stop escaping; repair stored text | 1 to 1.5 sessions | not started | | Jeff runs the repair between WP5 and its follow-up |
