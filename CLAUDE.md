@@ -10,9 +10,12 @@ Partnership and Scenarios rebuilds). Phases 1 to 6 have merged; its remaining
 items are Jeff's checks on the live site. Read it before making changes and
 update its status table when you finish a phase. `docs/plans/tier-0.md`
 (stabilisation) is done in code; its remaining items are Jeff's checks on the
-live site. Next: `docs/plans/tier-1.md` (the AI rebuild), approved by Jeff on
-2026-09-26; read it before any AI change, run its work packages in order and
-update its status table when you finish one.
+live site. `docs/plans/tier-1.md` (the AI rebuild), approved by Jeff on
+2026-09-26: its six work packages have merged; its remaining items are Jeff's
+checks on the live site. Read it before any AI change. Next:
+`docs/plans/tier-2.md` (a shared six-partner tool), approved by Jeff on
+2026-09-27: no Tier 2 code before its gate (S1) is met; then run its work
+packages in order and update its status table when you finish one.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
 `PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
 data scoping by design; an emeritus and associates appear in the book as
