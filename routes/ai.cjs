@@ -147,8 +147,10 @@ async function answer(req, res, { kind, question }) {
     return res.json({ success: true, id, saved, kind, question, ...answered });
   } catch (error) {
     stopPing();
-    // A missing key or an API error is already described by the ai_error log
-    // line; keep the stack trace for unexpected failures only.
+    // An API error is already described by the ai_error log line. A missing
+    // key writes no line (complete() refuses it before any call; /api/health
+    // shows it) and needs no stack trace. Keep the stack trace for unexpected
+    // failures only.
     const expected = error?.code === 'AI_NOT_CONFIGURED' || typeof error?.status === 'number';
     if (!expected) console.error(`ai_${kind} failed:`, error);
     const { status, message } = describeError(error);

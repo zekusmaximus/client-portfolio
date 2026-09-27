@@ -116,8 +116,10 @@ router.post('/transition-plan', handleValidationErrors, async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    // A missing key or an API status error is already described by the ai_error
-    // log line; keep the stack trace for unexpected failures only.
+    // An API status error is already described by the ai_error log line. A
+    // missing key writes no line (complete() refuses it before any call;
+    // /api/health shows it) and needs no stack trace. Keep the stack trace for
+    // unexpected failures only.
     const expected = error?.code === 'AI_NOT_CONFIGURED' || typeof error?.status === 'number';
     console.error(`Error generating transition plan for client ${client.id}:`, expected ? error.message : error);
     const { status, message } = describeError(error);
