@@ -457,4 +457,4 @@ As `docs/plans/tier-0.md` section 9: merging to `main` deploys; Netlify publishe
 - Already Tier 2 (`docs/plans/tier-0.md` section 11): `updated_by` and a change log on clients; removing `sanitizeRequestBody`; deleting the second scoring formula and the three dead `/api/data` endpoints; validation on the live write path; contract tests per route.
 - Not planned: reconciling costs with Anthropic's usage and cost reports, which need an admin key and raw HTTP.
 
-`docs/plans/tier-2.md` (a draft for Jeff's approval) takes up these items and Tier 0's Tier 2 preview.
+`docs/plans/tier-2.md` (approved by Jeff on 2026-09-27) takes up these items and Tier 0's Tier 2 preview.
