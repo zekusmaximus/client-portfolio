@@ -1,0 +1,1509 @@
+// Contract tests per route (docs/plans/tier-2.md, S2 and WP1): for every route
+// server.cjs registers, its success status and top-level keys, the keys the
+// page reads (each named, in a comment, with the page file that reads it), its
+// 401 without sign-in, and its documented refusals (400, 404, 409), so that a
+// change to a route's shape cannot ship without a test saying so.
+//
+// The inventory test needs no database and always runs: it reads the route
+// files (routes/*.cjs, data.cjs, server.cjs) for router.METHOD( and app.METHOD(
+// and fails when a route is registered without an entry in CONTRACTS, when an
+// entry names a route that is no longer registered, when an entry has no
+// route('...') block of tests below, or when a route in REMOVED is back.
+//
+// The database tests need SCHEMA_TEST_SERVER_URL, the superuser URL of a
+// THROWAWAY PostgreSQL server (as tests/import-db.test.mjs; CI's schema job
+// sets it), and are skipped without it. They run twice, on the tables
+// init-db.sql creates and on production's older tables (integer ids), each
+// shape with its own routes_test_* database and its own server.cjs processes
+// (tests/helpers/server.mjs): one pointed at the fake Anthropic server
+// (tests/helpers/fakeAnthropic.mjs) for everything a signed-in partner does,
+// one without a key for the 503s and the sign-in routes, and, for each login
+// limiter, a server of its own, because the limiters count in memory per
+// process. Every test creates the clients, people, accounts and saved answers
+// it needs, so none depends on another's order or on import-db's. The seed
+// people (init-db.sql) are read, never changed; people a test changes are its
+// own.
+//
+// Where a contract pins behaviour the plan calls a defect, a comment says so
+// and names the work package that changes it; that package changes the test.
+import { test, describe, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import jwt from 'jsonwebtoken';
+import aiAnswers from '../utils/aiAnswers.cjs';
+import { startFakeAnthropic } from './helpers/fakeAnthropic.mjs';
+import {
+  repo, serverUrl, generatedPassword, urlFor, freePort, startServer, SHAPES, addAccount, cookieOf, signIn,
+} from './helpers/server.mjs';
+import { createSseParser, eventJson } from '../src/utils/sse.js';
+
+// Every route server.cjs registers, as METHOD and the full path, with whether
+// it needs a signed-in partner and the page files that call it. The three
+// routes S3 deletes are here until WP2 deletes them and moves them to REMOVED.
+const CONTRACTS = {
+  'POST /api/auth/login': { signIn: false, page: 'src/portfolioStore.js (login), src/LoginPage.jsx' },
+  'POST /api/auth/logout': { signIn: false, page: 'src/portfolioStore.js (logout)' },
+  'GET /api/auth/me': { signIn: true, page: 'src/portfolioStore.js (checkAuth)' },
+  'POST /api/auth/change-password': { signIn: true, page: 'src/ChangePasswordDialog.jsx' },
+  'POST /api/data/process-csv': { signIn: true, page: 'src/DataUploadManager.jsx' },
+  'POST /api/data/update-client': { signIn: true, page: null },
+  'POST /api/data/optimize-portfolio': { signIn: true, page: null },
+  'POST /api/data/analytics': { signIn: true, page: null },
+  'GET /api/data/clients': { signIn: true, page: 'src/portfolioStore.js (fetchClients)' },
+  'POST /api/data/clients': { signIn: true, page: 'src/portfolioStore.js (addClient), src/ClientEnhancementForm.jsx' },
+  'PUT /api/data/clients/:id': { signIn: true, page: 'src/portfolioStore.js (updateClient), src/ClientEnhancementForm.jsx' },
+  'PUT /api/data/clients/:id/second-chair': { signIn: true, page: 'src/portfolioStore.js (assignSecondChair), src/components/AssociateSplit.jsx' },
+  'DELETE /api/data/clients/:id': { signIn: true, page: 'src/portfolioStore.js (deleteClient)' },
+  'GET /api/people': { signIn: true, page: 'src/portfolioStore.js (fetchPeople), src/PeopleDialog.jsx' },
+  'POST /api/people': { signIn: true, page: 'src/portfolioStore.js (addPerson), src/PeopleDialog.jsx' },
+  'PUT /api/people/:id': { signIn: true, page: 'src/portfolioStore.js (updatePerson), src/PeopleDialog.jsx' },
+  'GET /api/ai/book': { signIn: true, page: 'src/components/AIBookPanel.jsx' },
+  'POST /api/ai/ask': { signIn: true, page: 'src/portfolioStore.js (askStream), src/AIAdvisor.jsx' },
+  'POST /api/ai/brief': { signIn: true, page: 'src/portfolioStore.js (askStream), src/AIAdvisor.jsx' },
+  'GET /api/ai/answers': { signIn: true, page: 'src/portfolioStore.js (fetchAiAnswers, fetchOlderAiAnswers), src/AIAdvisor.jsx' },
+  'GET /api/ai/answers/summary': { signIn: true, page: 'src/portfolioStore.js (fetchAiAnswers), src/utils/recentAnswers.js' },
+  'GET /api/ai/answers/:id': { signIn: true, page: 'src/portfolioStore.js (toggleAiAnswer), src/AIAdvisor.jsx' },
+  'POST /api/scenarios/transition-plan': { signIn: true, page: 'src/components/succession/ClientReviewInterface.jsx' },
+  'GET /api/health': { signIn: false, page: 'src/DataUploadManager.jsx, src/components/AIBookPanel.jsx, src/AIAdvisor.jsx, src/components/AssociateSplit.jsx, src/components/succession/ClientReviewInterface.jsx' },
+};
+
+// Routes deleted in earlier packages: none may be registered again, and each
+// answers 404 (Tier 1 WP3 deleted claude.cjs). WP2 adds S3's three here.
+const REMOVED = [
+  'POST /api/claude/analyze-portfolio',
+  'POST /api/claude/strategic-advice',
+  'POST /api/claude/client-recommendations',
+];
+
+/* -------------------------------------------------------------------------- */
+/*                                 INVENTORY                                  */
+/* -------------------------------------------------------------------------- */
+
+const readSource = (file) => readFileSync(join(repo, file), 'utf8');
+const ROUTE_FILES = ['server.cjs', 'data.cjs', ...readdirSync(join(repo, 'routes')).filter((f) => f.endsWith('.cjs')).sort().map((f) => `routes/${f}`)];
+
+// Where server.cjs mounts each router file: app.use('<prefix>', require('./<file>'))
+// or app.use('<prefix>', <name>) after const <name> = require('./<file>')
+function mountsOf(serverSource) {
+  const required = new Map([...serverSource.matchAll(/const (\w+) = require\('\.\/([^']+)'\)/g)].map((m) => [m[1], m[2]]));
+  const mounts = new Map();
+  for (const m of serverSource.matchAll(/app\.use\(\s*'([^']+)'\s*,\s*(?:require\('\.\/([^']+)'\)|(\w+))\s*\)/g)) {
+    const file = m[2] || required.get(m[3]);
+    if (file) mounts.set(file, m[1]);
+  }
+  return mounts;
+}
+
+// Every METHOD path the route files register, with the mount prefix
+function registeredRoutes() {
+  const mounts = mountsOf(readSource('server.cjs'));
+  const routes = [];
+  const unmounted = [];
+  for (const file of ROUTE_FILES) {
+    const source = readSource(file);
+    const owner = file === 'server.cjs' ? 'app' : 'router';
+    const calls = [...source.matchAll(new RegExp(`\\b${owner}\\.(get|post|put|patch|delete|all)\\(\\s*(['"\`])([^'"\`]*)\\2`, 'g'))];
+    if (file !== 'server.cjs' && calls.length > 0 && !mounts.has(file)) unmounted.push(file);
+    const prefix = file === 'server.cjs' ? '' : mounts.get(file) || `(${file} is not mounted)`;
+    for (const [, method, , path] of calls) routes.push(`${method.toUpperCase()} ${prefix}${path === '/' ? '' : path}`);
+  }
+  return { routes, unmounted };
+}
+
+// The route('...') blocks in this file
+const routeBlocks = () => [...readFileSync(fileURLToPath(import.meta.url), 'utf8').matchAll(/\broute\('([A-Z]+ \/[^']*)'/g)].map((m) => m[1]);
+
+test('inventory: every registered route has a contract with tests, every contract a registered route, and no removed route is back', () => {
+  const { routes, unmounted } = registeredRoutes();
+  assert.deepEqual(unmounted, [], 'a router file with routes that server.cjs does not mount');
+  // The inventory reads router.METHOD(path) and app.METHOD(path) only
+  const chained = ROUTE_FILES.filter((file) => /\b(router|app)\.route\(/.test(readSource(file)));
+  assert.deepEqual(chained, [], 'router.route() chains are not read by the inventory; register each METHOD on its own');
+
+  const contracts = Object.keys(CONTRACTS);
+  assert.equal(new Set(routes).size, routes.length, `a route registered twice: ${routes}`);
+  assert.deepEqual(routes.filter((r) => !contracts.includes(r)), [], 'registered without a contract in CONTRACTS');
+  assert.deepEqual(contracts.filter((r) => !routes.includes(r)), [], 'a contract for a route that is not registered');
+  assert.deepEqual(routes.filter((r) => REMOVED.includes(r)), [], 'a removed route is registered again');
+
+  const blocks = routeBlocks();
+  assert.deepEqual(contracts.filter((r) => !blocks.includes(r)), [], 'a contract without a route() block of tests');
+  assert.deepEqual(blocks.filter((r) => !contracts.includes(r)), [], 'a route() block without a contract');
+  assert.equal(new Set(blocks).size, blocks.length, 'a route() block written twice');
+  // The plan's count (docs/plans/tier-2.md, section 6): 21 live routes and S3's three
+  assert.equal(routes.length, 24);
+});
+
+/* -------------------------------------------------------------------------- */
+/*                         THE CONTRACTS, PER SHAPE                           */
+/* -------------------------------------------------------------------------- */
+
+const keysOf = (object) => Object.keys(object).sort();
+const letters = (n) => Array.from(randomBytes(n), (b) => String.fromCharCode(97 + (b % 26))).join('');
+// A name no other test uses; letters only, as the People list requires
+const uniqueName = (prefix) => `${prefix} ${letters(1).toUpperCase()}${letters(7)}`;
+const TOO_MANY = { success: false, error: 'Too many requests. Try again later.' };
+const MISSING_TOKEN = { error: 'Missing token' };
+const INVALID_TOKEN = { error: 'Invalid token' };
+const NOT_CONFIGURED = { success: false, error: 'AI is not configured on the server (missing API key).' };
+const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream'];
+// The seed people init-db.sql adds to a new database (docs/plans/people-and-second-chair.md, P1)
+const SEED = { Brendan: 'partner', Jeff: 'partner', Joe: 'partner', Kevin: 'partner', Mike: 'partner', Paula: 'partner', Jay: 'emeritus' };
+const PERSON_KEYS = ['active', 'id', 'lead_count', 'name', 'originator_count', 'role', 'second_chair_count'];
+const NESTED_PERSON_KEYS = ['active', 'id', 'name', 'role'];
+
+// The client fields the page reads from every client response (GET, POST and
+// PUT /api/data/clients and the second-chair route), and where:
+//   id, name, notes, practiceArea, conflict_risk, interaction_frequency,
+//   stickiness, high_maintenance, lead_id, second_chair_id, originator_id,
+//   originator_is_firm, revenues: src/utils/clientForm.js (the client form)
+//   lead, secondChair, originator, practice_area: src/utils/bookSheet.js
+//   revenues: src/utils/revenue.js (the reporting year, each year's revenue)
+//   effort, stickinessScore: src/utils/clientMetrics.js (resolveEffort,
+//   getStickiness), which src/utils/load.js and src/utils/departure.js use
+//   lead, secondChair: src/utils/load.js, src/utils/departure.js
+//   primary_lobbyist, lobbyist_team, client_originator: src/utils/successionUtils.js
+//   (the store's succession metrics, src/portfolioStore.js)
+//   strategicValue: src/ClientListView.jsx, src/DashboardView.jsx
+const CLIENT_KEYS_THE_PAGE_READS = [
+  'id', 'name', 'notes', 'practiceArea', 'practice_area', 'conflict_risk', 'interaction_frequency', 'stickiness',
+  'high_maintenance', 'lead_id', 'second_chair_id', 'originator_id', 'originator_is_firm', 'revenues', 'lead',
+  'secondChair', 'originator', 'effort', 'stickinessScore', 'primary_lobbyist', 'lobbyist_team', 'client_originator',
+  'strategicValue',
+];
+
+// A saved answer's columns, as GET /api/ai/answers/:id returns them
+// (ONE_ANSWER_SQL in utils/aiAnswers.cjs)
+const ANSWER_KEYS = [
+  'answer', 'asked_by', 'asked_by_username', 'book_sha256', 'cache_read_tokens', 'cache_write_tokens', 'client_id',
+  'client_name', 'cost_usd', 'created_at', 'duration_ms', 'fell_back', 'id', 'input_tokens', 'kind', 'model',
+  'output_tokens', 'prices_read_on', 'question', 'refusal_category', 'refused', 'reporting_year', 'served_by',
+  'stop_reason', 'truncated',
+];
+const LIST_ANSWER_KEYS = [
+  'asked_by_username', 'client_name', 'cost_usd', 'created_at', 'id', 'kind', 'preview', 'question', 'refused',
+  'served_by', 'truncated',
+];
+// Ask's and the brief's JSON answer (routes/ai.cjs); `done` carries the same but
+// success, kind and question, with answerId for id
+const AI_ANSWER_KEYS = [
+  'answer', 'costUsd', 'id', 'kind', 'model', 'question', 'refusalCategory', 'refused', 'reportingYear', 'saved',
+  'servedBy', 'success', 'timestamp', 'truncated', 'usage',
+];
+
+for (const shape of SHAPES)
+describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  const dbName = `routes_test_${randomBytes(6).toString('hex')}`;
+  // A well-formed id no client has, in this shape's id type; and one in the other shape's
+  const missingId = shape.idType === 'integer' ? '2147483000' : '00000000-0000-4000-8000-000000000000';
+  const otherShapeId = shape.idType === 'integer' ? '00000000-0000-4000-8000-000000000000' : '2147483000';
+  let admin;
+  let db;
+  let env;
+  let fake;
+  // api: pointed at the fake Anthropic server; everything a signed-in partner does.
+  // keyless: no key, for the 503s and /api/health's DEGRADED, and the sign-in
+  // routes (login, logout, me, change-password), whose per-IP limiter (20 per
+  // 15 minutes, in memory) the tests below spend 14 of on it.
+  let api;
+  let keyless;
+  let account;
+  let cookie;
+  const servers = [];
+
+  // A server.cjs on this shape's database, with `extra` over the suite's environment
+  const launch = async (extra = {}, options) => {
+    const port = await freePort();
+    const server = startServer({ ...env, ...extra, PORT: String(port) }, options);
+    servers.push(server);
+    await server.ready;
+    server.base = `http://127.0.0.1:${port}`;
+    return server;
+  };
+  const stop = (server) => {
+    server.child.kill();
+    servers.splice(servers.indexOf(server), 1);
+  };
+
+  before(async () => {
+    admin = new pg.Client({ connectionString: urlFor('postgres') });
+    await admin.connect();
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    if (shape.tables) {
+      const setup = new pg.Client({ connectionString: urlFor(dbName) });
+      await setup.connect();
+      await setup.query(shape.tables);
+      await setup.end();
+    }
+    env = {
+      ...process.env,
+      NODE_ENV: 'development',
+      DATABASE_URL: urlFor(dbName),
+      DATABASE_SSL: 'false',
+      JWT_SECRET: randomBytes(32).toString('hex'),
+      SESSION_TTL: '7d',
+      TRUST_PROXY_HOPS: '0',
+      FRONTEND_URL: '',
+      ANTHROPIC_API_KEY: '',
+      CLAUDE_API_KEY: '',
+      ANTHROPIC_BASE_URL: '',
+      AI_MODEL: '',
+      AI_EFFORT: '',
+      AI_STREAM_PING_MS: '',
+    };
+    fake = await startFakeAnthropic();
+    // One after the other: each applies init-db.sql at start
+    keyless = await launch();
+    api = await launch({ ANTHROPIC_API_KEY: 'test', ANTHROPIC_BASE_URL: fake.url });
+
+    db = new pg.Client({ connectionString: urlFor(dbName) });
+    await db.connect();
+    account = { username: 'contracts', password: generatedPassword() };
+    await addAccount(env, account);
+    cookie = await signIn(api.base, account);
+  });
+
+  after(async () => {
+    for (const server of [...servers]) server.child.kill();
+    await fake?.close();
+    await db?.end().catch(() => {});
+    await admin?.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+    await admin?.end();
+  });
+
+  // One request: { status, headers, body (parsed JSON, or null), text }.
+  // `as` is the Cookie header ('' for none); the signed-in partner's by default.
+  const request = async (base, method, path, { body, as = cookie, headers = {} } = {}) => {
+    const res = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(as ? { Cookie: as } : {}),
+        ...headers,
+      },
+      body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    return { status: res.status, headers: res.headers, body: json, text };
+  };
+  const call = (method, path, body, options = {}) => request(api.base, method, path, { ...options, body });
+  const logLines = (server, event) => server.output.split('\n')
+    .filter((line) => line.includes(`"event":"${event}"`))
+    .map((line) => JSON.parse(line.slice(line.indexOf('{'))));
+
+  // Fixtures, written straight to the tables so that each test depends only
+  // on the route it is about
+  const seed = async (name) => (await db.query('SELECT id, name, role, active FROM people WHERE name = $1', [name])).rows[0];
+  const addPerson = async (role = 'partner', prefix = 'Contract Person') => (await db.query(
+    'INSERT INTO people (name, role) VALUES ($1, $2) RETURNING id, name, role, active', [uniqueName(prefix), role])).rows[0];
+  // A client as the client form writes one: people ids, the legacy text they
+  // imply (P6), and one revenue row per year
+  const addClient = async ({ name = uniqueName('Contract Client'), lead = null, second = null, originator = null, firm = false, revenues = { 2026: 100000 } } = {}) => {
+    const { rows: [row] } = await db.query(`
+      INSERT INTO clients (name, practice_area, conflict_risk, notes, interaction_frequency, stickiness, high_maintenance,
+                           lead_id, second_chair_id, originator_id, originator_is_firm,
+                           primary_lobbyist, lobbyist_team, client_originator)
+      VALUES ($1, $2, 'Low', '', 'Monthly', 3, false, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id, name`,
+    [name, ['Healthcare'], lead?.id ?? null, second?.id ?? null, originator?.id ?? null, firm,
+      lead?.name ?? '', [lead, second].filter(Boolean).map((p) => p.name), firm ? 'Firm' : originator?.name ?? '']);
+    for (const [year, amount] of Object.entries(revenues)) {
+      await db.query('INSERT INTO client_revenues (client_id, year, revenue_amount) VALUES ($1, $2, $3)', [row.id, Number(year), amount]);
+    }
+    return row;
+  };
+  const storedClient = async (id) => (await db.query('SELECT * FROM clients WHERE id::text = $1', [String(id)])).rows[0];
+  const revenueRows = async (id) => (await db.query(
+    'SELECT year, revenue_amount::float AS amount FROM client_revenues WHERE client_id::text = $1 ORDER BY year', [String(id)])).rows;
+  const clientCount = async () => (await db.query('SELECT count(*)::int AS n FROM clients')).rows[0].n;
+  // The body the client form sends (formatClientForAPI in src/portfolioStore.js)
+  const formBody = (overrides = {}) => ({
+    name: uniqueName('Form Client'),
+    practice_area: ['Healthcare'],
+    conflict_risk: 'Low',
+    notes: 'A note',
+    lead_id: null,
+    second_chair_id: null,
+    originator_id: null,
+    originator_is_firm: false,
+    interaction_frequency: 'Weekly',
+    stickiness: 4,
+    high_maintenance: false,
+    revenues: [{ year: 2025, revenue_amount: 50000 }, { year: 2026, revenue_amount: 60000 }],
+    ...overrides,
+  });
+  // A saved answer, written as saveAnswer writes one
+  const addAnswer = async ({ kind = 'ask', question = 'A saved question?', cost = '0.1234', createdAt = null } = {}) => (await db.query(`
+    INSERT INTO ai_answers (kind, question, answer, client_id, client_name, asked_by_username, model, served_by,
+                            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, prices_read_on,
+                            book_sha256, reporting_year, duration_ms, created_at)
+    VALUES ($1, $2, $3, $4, $5, 'contracts', 'claude-opus-5', 'claude-opus-5', 10, 20, 30, 40, $6, '2026-09-01',
+            $7, 2026, 1234, COALESCE($8::timestamptz, now()))
+    RETURNING id`,
+  [kind, kind === 'ask' ? question : null, `The answer. ${'x'.repeat(250)}`, kind === 'transition-plan' ? '42' : null,
+    kind === 'transition-plan' ? 'A client' : null, cost, 'a'.repeat(64), createdAt])).rows[0].id;
+
+  // Every contract's block: its 401 without sign-in, then the route's own tests
+  const route = (key, tests) => describe(key, () => {
+    if (CONTRACTS[key].signIn) {
+      test(`${key}: 401 { error: 'Missing token' } without sign-in`, async () => {
+        const [method, path] = key.split(' ');
+        const res = await request(api.base, method, path.replace(':id', '1'), {
+          as: '',
+          body: method === 'GET' || method === 'DELETE' ? undefined : {},
+        });
+        assert.deepEqual([res.status, res.body], [401, MISSING_TOKEN]);
+      });
+    }
+    tests();
+  });
+
+  test('the tables have this run\'s id type', async () => {
+    const { rows } = await db.query(`
+      SELECT table_name, data_type FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND ((table_name = 'clients' AND column_name = 'id')
+           OR (table_name = 'client_revenues' AND column_name = 'client_id'))
+       ORDER BY table_name`);
+    assert.deepEqual(rows, [
+      { table_name: 'client_revenues', data_type: shape.idType },
+      { table_name: 'clients', data_type: shape.idType },
+    ]);
+  });
+
+  /* ------------------------------- /api/auth ------------------------------- */
+
+  route('POST /api/auth/login', () => {
+    // The page reads success and user (src/portfolioStore.js, login); a
+    // refusal's error is shown as it is (src/LoginPage.jsx, apiErrorMessage)
+    test('200 { success, user: { id, username } } and the session cookie: HttpOnly, Path=/, SameSite=Lax outside production, Max-Age the session\'s 7 days', async () => {
+      const partner = { username: `login-${letters(6)}`, password: generatedPassword() };
+      await addAccount(env, partner);
+      const res = await request(keyless.base, 'POST', '/api/auth/login', { as: '', body: partner });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['success', 'user']);
+      assert.equal(res.body.success, true);
+      assert.deepEqual(keysOf(res.body.user), ['id', 'username']);
+      assert.equal(res.body.user.username, partner.username);
+      const [setCookie] = res.headers.getSetCookie();
+      assert.match(setCookie, /^authToken=[^;]+; Max-Age=604800; Path=\/; Expires=[^;]+; HttpOnly; SameSite=Lax$/);
+      const me = await request(keyless.base, 'GET', '/api/auth/me', { as: cookieOf(res) });
+      assert.deepEqual([me.status, me.body.user.username], [200, partner.username]);
+    });
+
+    test('400 { error } without a username or a password', async () => {
+      for (const body of [{ username: account.username }, { password: account.password }]) {
+        const res = await request(keyless.base, 'POST', '/api/auth/login', { as: '', body });
+        assert.deepEqual([res.status, res.body], [400, { error: 'Username and password required' }], JSON.stringify(body));
+        assert.deepEqual(res.headers.getSetCookie(), []);
+      }
+    });
+
+    test('401 { error: "Invalid credentials" } for an unknown username and for a wrong password alike', async () => {
+      for (const body of [{ username: `nobody-${letters(6)}`, password: account.password }, { username: account.username, password: 'Wrong-password-1' }]) {
+        const res = await request(keyless.base, 'POST', '/api/auth/login', { as: '', body });
+        assert.deepEqual([res.status, res.body], [401, { error: 'Invalid credentials' }], body.username);
+        assert.deepEqual(res.headers.getSetCookie(), []);
+      }
+    });
+
+    // D11: five failed sign-ins per username per 15 minutes, the username
+    // case-folded; a successful one does not count. On a server of its own:
+    // the limiters count in memory per process.
+    test('429 after five failed sign-ins for one username in any case, even with the right password; successful ones do not count; another username still signs in', async () => {
+      const server = await launch();
+      try {
+        const partner = { username: `limited-${letters(6)}`, password: generatedPassword() };
+        const other = { username: `other-${letters(6)}`, password: generatedPassword() };
+        await addAccount(env, partner);
+        await addAccount(env, other);
+        const login = (body) => request(server.base, 'POST', '/api/auth/login', { as: '', body });
+        const wrong = (username) => login({ username, password: 'Wrong-password-1' });
+        const upper = partner.username.toUpperCase();
+
+        for (const username of [partner.username, upper]) assert.equal((await wrong(username)).status, 401);
+        assert.equal((await login(partner)).status, 200, 'a success in between is not counted');
+        assert.equal((await login(partner)).status, 200);
+        for (const username of [upper, partner.username, upper]) assert.equal((await wrong(username)).status, 401);
+        const refused = await login(partner);
+        assert.deepEqual([refused.status, refused.body], [429, TOO_MANY], 'the sixth, with the right password');
+        assert.deepEqual(refused.headers.getSetCookie(), []);
+        assert.equal((await login(other)).status, 200, 'another username is not locked');
+        assert.deepEqual(logLines(server, 'rate_limited').map((l) => [l.limiter, l.key, l.path]),
+          [['login_user', `user:${partner.username}`, '/api/auth/login']]);
+      } finally {
+        stop(server);
+      }
+    });
+
+    // D11: twenty requests per 15 minutes per address, sign-ins and password
+    // changes together. On a server of its own.
+    test('429 on the 21st request from one address in 15 minutes, sign-ins and password changes counted together; then for both', async () => {
+      const server = await launch();
+      try {
+        for (let i = 0; i < 19; i += 1) {
+          const res = await request(server.base, 'POST', '/api/auth/login', { as: '', body: { username: `nobody-${letters(8)}`, password: 'x' } });
+          assert.equal(res.status, 401, `request ${i + 1}`);
+        }
+        const change = await request(server.base, 'POST', '/api/auth/change-password', { as: '', body: {} });
+        assert.equal(change.status, 401, 'the 20th: counted before the sign-in check');
+        const login = await request(server.base, 'POST', '/api/auth/login', { as: '', body: account });
+        assert.deepEqual([login.status, login.body], [429, TOO_MANY], 'the 21st, with the right password');
+        const changeSignedIn = await request(server.base, 'POST', '/api/auth/change-password', {
+          body: { currentPassword: account.password, newPassword: generatedPassword() },
+        });
+        assert.deepEqual([changeSignedIn.status, changeSignedIn.body], [429, TOO_MANY]);
+        assert.deepEqual([...new Set(logLines(server, 'rate_limited').map((l) => l.limiter))], ['login_ip']);
+      } finally {
+        stop(server);
+      }
+    });
+  });
+
+  route('POST /api/auth/logout', () => {
+    // The page reads nothing from it (src/portfolioStore.js, logout)
+    test('200 { success, message } without sign-in, clearing the cookie with the attributes it was set with', async () => {
+      const res = await request(keyless.base, 'POST', '/api/auth/logout', { as: '' });
+      assert.deepEqual([res.status, res.body], [200, { success: true, message: 'Logged out successfully' }]);
+      const [setCookie] = res.headers.getSetCookie();
+      assert.match(setCookie, /^authToken=; Path=\/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax$/);
+    });
+
+    // Pinned, not a new finding: the session is a stateless JWT (CLAUDE.md,
+    // "Passwords"), so logout clears the browser's cookie and revokes nothing
+    test('the session\'s token still signs in after logout: logout revokes nothing', async () => {
+      const res = await request(keyless.base, 'POST', '/api/auth/logout');
+      assert.equal(res.status, 200);
+      const me = await request(keyless.base, 'GET', '/api/auth/me');
+      assert.deepEqual([me.status, me.body.user.username], [200, account.username]);
+    });
+  });
+
+  route('GET /api/auth/me', () => {
+    // The page reads user (src/portfolioStore.js, checkAuth); no success key
+    test('200 { user: { id, username } } for the signed-in partner', async () => {
+      const res = await request(keyless.base, 'GET', '/api/auth/me');
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['user']);
+      assert.deepEqual(keysOf(res.body.user), ['id', 'username']);
+      assert.equal(res.body.user.username, account.username);
+    });
+
+    test('401 { error: "Invalid token" } for a token this server did not sign, and for an expired one', async () => {
+      const { user } = (await request(keyless.base, 'GET', '/api/auth/me')).body;
+      const claims = { userId: user.id, username: user.username };
+      const tokens = {
+        garbage: 'not-a-token',
+        otherSecret: jwt.sign(claims, randomBytes(32).toString('hex'), { expiresIn: '1h' }),
+        expired: jwt.sign({ ...claims, exp: Math.floor(Date.now() / 1000) - 60 }, env.JWT_SECRET),
+      };
+      for (const [what, token] of Object.entries(tokens)) {
+        const res = await request(keyless.base, 'GET', '/api/auth/me', { as: `authToken=${token}` });
+        assert.deepEqual([res.status, res.body], [401, INVALID_TOKEN], what);
+      }
+      // The header the middleware still accepts (middleware/auth.cjs)
+      const bearer = await request(keyless.base, 'GET', '/api/auth/me', { as: '', headers: { Authorization: `Bearer ${tokens.expired}` } });
+      assert.deepEqual([bearer.status, bearer.body], [401, INVALID_TOKEN]);
+    });
+
+    test('404 { error: "User not found" } for a session whose account no longer exists', async () => {
+      const ghost = jwt.sign({ userId: 2147483000, username: 'ghost' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const res = await request(keyless.base, 'GET', '/api/auth/me', { as: `authToken=${ghost}` });
+      assert.deepEqual([res.status, res.body], [404, { error: 'User not found' }]);
+    });
+  });
+
+  route('POST /api/auth/change-password', () => {
+    // The page reads error on a refusal (src/ChangePasswordDialog.jsx, apiErrorMessage)
+    test('200 { success: true }; the new password signs in and the old one no longer does', async () => {
+      const partner = { username: `change-${letters(6)}`, password: generatedPassword() };
+      await addAccount(env, partner);
+      const session = await signIn(keyless.base, partner);
+      const newPassword = generatedPassword();
+      const res = await request(keyless.base, 'POST', '/api/auth/change-password', {
+        as: session, body: { currentPassword: partner.password, newPassword },
+      });
+      assert.deepEqual([res.status, res.body], [200, { success: true }]);
+      const login = (password) => request(keyless.base, 'POST', '/api/auth/login', { as: '', body: { username: partner.username, password } });
+      assert.equal((await login(newPassword)).status, 200);
+      assert.equal((await login(partner.password)).status, 401);
+    });
+
+    test('400 without the current password, and with the policy\'s errors for a weak new one', async () => {
+      const passwordHash = async () => (await db.query('SELECT password_hash FROM users WHERE username = $1', [account.username])).rows[0].password_hash;
+      const stored = await passwordHash();
+      let res = await request(keyless.base, 'POST', '/api/auth/change-password', { body: { newPassword: generatedPassword() } });
+      assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Current password is required' }]);
+      res = await request(keyless.base, 'POST', '/api/auth/change-password', { body: { currentPassword: account.password, newPassword: 'short' } });
+      assert.equal(res.status, 400);
+      assert.deepEqual(keysOf(res.body), ['error', 'errors', 'success']);
+      assert.deepEqual(res.body.errors, [
+        'Password must be at least 8 characters long',
+        'Password must contain at least one uppercase letter',
+        'Password must contain at least one number',
+        'Password must contain at least one special character',
+      ]);
+      assert.equal(res.body.error, `${res.body.errors.join('. ')}.`);
+      assert.equal(await passwordHash(), stored, 'nothing changed');
+    });
+
+    test('401 { success: false, error } when the current password is wrong; the password is unchanged', async () => {
+      const passwordHash = async () => (await db.query('SELECT password_hash FROM users WHERE username = $1', [account.username])).rows[0].password_hash;
+      const stored = await passwordHash();
+      const res = await request(keyless.base, 'POST', '/api/auth/change-password', {
+        body: { currentPassword: 'Wrong-password-1', newPassword: generatedPassword() },
+      });
+      assert.deepEqual([res.status, res.body], [401, { success: false, error: 'Current password is incorrect' }]);
+      assert.equal(await passwordHash(), stored);
+    });
+
+    test('404 { success: false, error: "User not found" } for a session whose account no longer exists', async () => {
+      const ghost = jwt.sign({ userId: 2147483000, username: 'ghost' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const res = await request(keyless.base, 'POST', '/api/auth/change-password', {
+        as: `authToken=${ghost}`, body: { currentPassword: 'Anything-1', newPassword: generatedPassword() },
+      });
+      assert.deepEqual([res.status, res.body], [404, { success: false, error: 'User not found' }]);
+    });
+  });
+
+  /* ------------------------------- /api/data ------------------------------- */
+
+  route('POST /api/data/process-csv', () => {
+    // The page reads (src/DataUploadManager.jsx): success, clients.length,
+    // summary.totalRevenue, summary.revenueYears, summary.revenueTotals,
+    // summary.sheetColumns, validation.issues and validation.warnings; for
+    // Check file, dryRun and summary.totalClients
+    test('200 { success, clients, validation, summary } with the summary the upload page reads', async () => {
+      const name = uniqueName('Sheet Client');
+      const res = await call('POST', '/api/data/process-csv', {
+        csvData: [{ CLIENT: name, '2025 Contracts': '$1,000', '2026 Contracts': '$2,500', Lead: 'Kevin' }],
+      });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['clients', 'success', 'summary', 'validation']);
+      assert.equal(res.body.success, true);
+      assert.equal(res.body.clients.length, 1);
+      assert.deepEqual(keysOf(res.body.summary), [
+        'newClients', 'revenueTotals', 'revenueYears', 'sheetColumns', 'totalClients', 'totalRevenue', 'updatedClients',
+      ]);
+      assert.deepEqual(res.body.summary.revenueYears, [2025, 2026]);
+      assert.deepEqual(res.body.summary.revenueTotals, { 2025: 1000, 2026: 2500 });
+      assert.deepEqual(res.body.summary.sheetColumns, ['Lead']);
+      assert.equal(typeof res.body.summary.totalRevenue, 'number');
+      assert.deepEqual([res.body.summary.newClients, res.body.summary.updatedClients, res.body.summary.totalClients], [1, 0, 1]);
+      assert.deepEqual(keysOf(res.body.validation), ['clientCount', 'isValid', 'issues', 'validClients', 'warnings']);
+      assert.deepEqual([res.body.validation.issues, res.body.validation.warnings], [[], []]);
+      const { rows } = await db.query('SELECT id FROM clients WHERE name = $1', [name]);
+      assert.equal(rows.length, 1);
+      assert.deepEqual(await revenueRows(rows[0].id), [{ year: 2025, amount: 1000 }, { year: 2026, amount: 2500 }]);
+    });
+
+    test('Check file (dryRun: true): 200 { success, dryRun, validation, summary }, no clients, nothing written', async () => {
+      const name = uniqueName('Checked Client');
+      const before = await clientCount();
+      const res = await call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: name, '2026 Contracts': '$9,000' }], dryRun: true });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['dryRun', 'success', 'summary', 'validation']);
+      assert.deepEqual([res.body.success, res.body.dryRun, res.body.summary.totalClients, res.body.summary.newClients], [true, true, 1, 1]);
+      assert.equal(await clientCount(), before);
+    });
+
+    // The request check (csvValidationRules). Pinned defect: `field` is
+    // missing from each detail because handleCSVValidationErrors reads
+    // error.param, which express-validator 7 renamed error.path
+    // (docs/plans/tier-2.md, section 3 item 6); WP2 fixes it and adds `field` here.
+    test('400 { error, details: [{ message, value }] } from the request check: no rows, a row without CLIENT, dryRun not a boolean; nothing written', async () => {
+      const before = await clientCount();
+      const refusals = [
+        [{ csvData: [] }, 'CSV data must be a non-empty array'],
+        [{ csvData: 'CLIENT\nx' }, 'CSV data must be a non-empty array'],
+        [{ csvData: [{ '2026 Contracts': '$1' }] }, 'Row 2: CLIENT is required and must be a non-empty string'],
+        [{ csvData: [{ CLIENT: 'Fine Client' }], dryRun: 'true' }, 'dryRun must be true or false'],
+      ];
+      for (const [body, message] of refusals) {
+        const res = await call('POST', '/api/data/process-csv', body);
+        assert.equal(res.status, 400, JSON.stringify(body));
+        assert.deepEqual(keysOf(res.body), ['details', 'error']);
+        assert.equal(res.body.error, 'CSV validation failed');
+        assert.ok(res.body.details.some((d) => d.message === message), `${JSON.stringify(body)}: ${JSON.stringify(res.body.details)}`);
+        for (const detail of res.body.details) assert.deepEqual(keysOf(detail), ['message', 'value'], 'no field (error.param; WP2)');
+      }
+      assert.equal(await clientCount(), before);
+    });
+
+    // The page lists errors by row (src/DataUploadManager.jsx)
+    test('400 { success: false, error, errors: [{ row, client, message }] } for a sheet with a problem; nothing written', async () => {
+      const name = uniqueName('Refused Client');
+      const before = await clientCount();
+      const res = await call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: name, '2026 Contracts': '$1', Lead: 'Nobody Here' }] });
+      assert.deepEqual([res.status, res.body], [400, {
+        success: false,
+        error: 'Nothing was imported: the file has 1 problem. Fix the rows below and upload it again.',
+        errors: [{ row: 2, client: name, message: 'Lead "Nobody Here" is not on the People list.' }],
+      }]);
+      assert.equal(await clientCount(), before);
+    });
+  });
+
+  // S3 deletes the next three in WP2: nothing on the page calls them, and
+  // update-client scores with a second, retired formula. WP2 moves each to
+  // REMOVED, where it answers 404.
+  route('POST /api/data/update-client', () => {
+    test('200 { success, clients } with the updated client merged in and scored; 400 { error } without clients and updatedClient', async () => {
+      const res = await call('POST', '/api/data/update-client', {
+        clients: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }],
+        updatedClient: { id: 2, name: 'Two, edited', conflictRisk: 'Low' },
+      });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['clients', 'success']);
+      assert.deepEqual(res.body.clients.map((c) => c.name), ['One', 'Two, edited']);
+      assert.equal(typeof res.body.clients[1].strategicValue, 'number');
+      for (const body of [{}, { clients: [] }, { updatedClient: {} }]) {
+        const bad = await call('POST', '/api/data/update-client', body);
+        assert.deepEqual([bad.status, bad.body], [400, { error: 'Invalid request. Expected clients array and updatedClient object.' }], JSON.stringify(body));
+      }
+    });
+  });
+
+  route('POST /api/data/optimize-portfolio', () => {
+    test('200 { success, optimization, parameters }; 400 { error } without a clients array', async () => {
+      const res = await call('POST', '/api/data/optimize-portfolio', {
+        clients: [{ id: 1, name: 'One', revenues: [{ year: 2026, revenue_amount: 100000 }] }],
+      });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['optimization', 'parameters', 'success']);
+      assert.deepEqual(keysOf(res.body.optimization), ['averageStrategicValue', 'clientCount', 'clients', 'excludedClients', 'totalRevenue']);
+      assert.deepEqual(res.body.parameters, { maxCapacity: 2000, totalEligibleClients: 0 });
+      const bad = await call('POST', '/api/data/optimize-portfolio', {});
+      assert.deepEqual([bad.status, bad.body], [400, { error: 'Invalid request. Expected clients array.' }]);
+    });
+  });
+
+  route('POST /api/data/analytics', () => {
+    test('200 { success, analytics }; 400 { error } without a clients array', async () => {
+      const res = await call('POST', '/api/data/analytics', {
+        clients: [{ id: 1, name: 'One', practiceArea: ['Energy'], revenues: [{ year: 2026, revenue_amount: 100000 }] }],
+      });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['analytics', 'success']);
+      assert.deepEqual(keysOf(res.body.analytics), ['averageStrategicValue', 'practiceAreas', 'topClients', 'totalRevenue']);
+      assert.deepEqual(res.body.analytics.practiceAreas, { Energy: { count: 1, revenue: 100000 } });
+      const bad = await call('POST', '/api/data/analytics', { clients: 'none' });
+      assert.deepEqual([bad.status, bad.body], [400, { error: 'Invalid request. Expected clients array.' }]);
+    });
+  });
+
+  route('GET /api/data/clients', () => {
+    // The page reads clients (src/portfolioStore.js, fetchClients), and on
+    // each client the keys in CLIENT_KEYS_THE_PAGE_READS
+    test('200 { success, clients }: each client with the fields the page reads, its people nested, revenue by year, no status', async () => {
+      const kevin = await seed('Kevin');
+      const jay = await seed('Jay');
+      const created = await addClient({ lead: kevin, second: jay, originator: jay, firm: true, revenues: { 2025: 40000, 2026: 55000 } });
+      const res = await call('GET', '/api/data/clients');
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['clients', 'success']);
+      assert.ok(res.body.clients.length >= 1);
+      for (const client of res.body.clients) {
+        for (const key of CLIENT_KEYS_THE_PAGE_READS) assert.ok(key in client, `${client.name}: ${key}`);
+        for (const person of [client.lead, client.secondChair, client.originator]) {
+          if (person !== null) assert.deepEqual(keysOf(person), NESTED_PERSON_KEYS, client.name);
+        }
+        assert.equal('status' in client, false, 'contract status is retired (P13)');
+      }
+      const client = res.body.clients.find((c) => String(c.id) === String(created.id));
+      assert.equal(typeof client.id, shape.idType === 'integer' ? 'number' : 'string');
+      assert.deepEqual(client.lead, { id: kevin.id, name: 'Kevin', role: 'partner', active: true });
+      assert.deepEqual(client.secondChair, { id: jay.id, name: 'Jay', role: 'emeritus', active: true });
+      assert.deepEqual(client.originator, { id: jay.id, name: 'Jay', role: 'emeritus', active: true });
+      assert.deepEqual([client.lead_id, client.second_chair_id, client.originator_id, client.originator_is_firm], [kevin.id, jay.id, jay.id, true]);
+      assert.deepEqual([client.primary_lobbyist, client.lobbyist_team, client.client_originator], ['Kevin', ['Kevin', 'Jay'], 'Firm']);
+      assert.deepEqual(client.revenues.map((r) => [r.year, Number(r.revenue_amount)]), [[2025, 40000], [2026, 55000]]);
+      assert.deepEqual(client.revenue, { 2025: 40000, 2026: 55000 });
+      assert.deepEqual([client.practiceArea, client.practice_area], [['Healthcare'], ['Healthcare']]);
+      assert.equal(client.effort, 2, 'Monthly');
+      for (const key of ['strategicValue', 'stickinessScore']) assert.equal(typeof client[key], 'number', key);
+    });
+
+    test('a client without a lead has null people and its stored legacy text', async () => {
+      const created = await addClient();
+      await db.query("UPDATE clients SET primary_lobbyist = 'Old Text', lobbyist_team = ARRAY['Old Text'] WHERE id::text = $1", [String(created.id)]);
+      const { body } = await call('GET', '/api/data/clients');
+      const client = body.clients.find((c) => String(c.id) === String(created.id));
+      assert.deepEqual([client.lead, client.secondChair, client.originator], [null, null, null]);
+      assert.deepEqual([client.primary_lobbyist, client.lobbyist_team], ['Old Text', ['Old Text']]);
+    });
+  });
+
+  route('POST /api/data/clients', () => {
+    // The page reads client (src/portfolioStore.js, addClient) and, on a 400,
+    // details[].field and details[].message (src/ClientEnhancementForm.jsx)
+    test('201 { success, client }: the client as GET lists it, its people from the ids and the legacy text written from them', async () => {
+      const paula = await seed('Paula');
+      const jay = await seed('Jay');
+      const body = formBody({ lead_id: paula.id, second_chair_id: jay.id, originator_id: paula.id, status: 'Former' });
+      const res = await call('POST', '/api/data/clients', body);
+      assert.equal(res.status, 201, res.text);
+      assert.deepEqual(keysOf(res.body), ['client', 'success']);
+      const { client } = res.body;
+      assert.equal(client.name, body.name);
+      assert.deepEqual([client.lead.name, client.secondChair.name, client.originator.name], ['Paula', 'Jay', 'Paula']);
+      assert.deepEqual(client.revenue, { 2025: 50000, 2026: 60000 });
+      assert.equal('status' in client, false);
+      const listed = (await call('GET', '/api/data/clients')).body.clients.find((c) => String(c.id) === String(client.id));
+      assert.deepEqual(keysOf(client), keysOf(listed), 'the same fields as GET');
+      const stored = await storedClient(client.id);
+      assert.deepEqual([stored.primary_lobbyist, stored.lobbyist_team, stored.client_originator], ['Paula', ['Paula', 'Jay'], 'Paula']);
+    });
+
+    test('400 { success: false, error: "Validation failed", details: [{ field, message }] } for each rule on the people; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const associate = await addPerson('associate', 'Contract Associate');
+      const inactive = await addPerson('associate', 'Contract Inactive');
+      await db.query('UPDATE people SET active = false WHERE id = $1', [inactive.id]);
+      const before = await clientCount();
+      const refusals = [
+        [{}, [{ field: 'lead_id', message: 'Choose a lead partner.' }]],
+        [{ lead_id: associate.id }, [{ field: 'lead_id', message: 'The lead must be an active partner.' }]],
+        [{ lead_id: 2147483000 }, [{ field: 'lead_id', message: 'The lead must be an active partner.' }]],
+        [{ lead_id: kevin.id, second_chair_id: kevin.id }, [{ field: 'second_chair_id', message: 'The second chair cannot be the lead.' }]],
+        [{ lead_id: kevin.id, second_chair_id: inactive.id }, [{ field: 'second_chair_id', message: 'The second chair must be an active person on the People list.' }]],
+        [{ lead_id: kevin.id, originator_id: 2147483000 }, [{ field: 'originator_id', message: 'The originator must be on the People list.' }]],
+      ];
+      for (const [people, details] of refusals) {
+        const res = await call('POST', '/api/data/clients', formBody(people));
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Validation failed', details }], JSON.stringify(people));
+      }
+      assert.equal(await clientCount(), before);
+    });
+
+    // Pinned: only the people are checked (docs/plans/tier-2.md, section 3
+    // item 6), so a body without a name reaches the INSERT and fails there.
+    // WP4 (S7) makes this a 400 with details.
+    test('a body without a name answers 500 { error: "Failed to create client" } (WP4 makes it 400); nothing written', async () => {
+      const before = await clientCount();
+      const res = await call('POST', '/api/data/clients', formBody({ name: undefined, lead_id: (await seed('Kevin')).id }));
+      assert.deepEqual([res.status, res.body.error], [500, 'Failed to create client']);
+      assert.equal(await clientCount(), before);
+    });
+
+    // Pinned defect (a WP2 candidate, found by this suite): parseId
+    // (utils/people.cjs) takes any positive integer as a person id, and one
+    // above PostgreSQL's integer range fails in the people query (500) instead
+    // of matching nobody (400 "Validation failed"). PUT shares the check
+    // (resolveAssignment, data.cjs); readAnswerId (utils/aiAnswers.cjs) bounds
+    // its ids and answers 404.
+    test('a person id above PostgreSQL\'s integer range answers 500, not 400; nothing written', async () => {
+      const before = await clientCount();
+      const res = await call('POST', '/api/data/clients', formBody({ lead_id: 99999999999 }));
+      assert.deepEqual([res.status, res.body.error], [500, 'Failed to create client']);
+      assert.equal(await clientCount(), before);
+    });
+  });
+
+  route('PUT /api/data/clients/:id', () => {
+    // The page reads client (src/portfolioStore.js, updateClient) and, on a
+    // 400, details[].field and details[].message (src/ClientEnhancementForm.jsx)
+    test('200 { success, client }: the edited fields and exactly the revenue rows sent', async () => {
+      const kevin = await seed('Kevin');
+      const joe = await seed('Joe');
+      const created = await addClient({ lead: kevin, revenues: { 2024: 1000, 2025: 2000 } });
+      const body = formBody({ name: created.name, lead_id: joe.id, second_chair_id: kevin.id, notes: 'Edited', revenues: [{ year: 2026, revenue_amount: 7000 }] });
+      const res = await call('PUT', `/api/data/clients/${created.id}`, body);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['client', 'success']);
+      const { client } = res.body;
+      assert.equal(String(client.id), String(created.id));
+      assert.deepEqual([client.lead.name, client.secondChair.name, client.notes], ['Joe', 'Kevin', 'Edited']);
+      assert.deepEqual(client.revenue, { 2026: 7000 });
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 7000 }]);
+      const listed = (await call('GET', '/api/data/clients')).body.clients.find((c) => String(c.id) === String(created.id));
+      assert.deepEqual(keysOf(client), keysOf(listed), 'the same fields as GET');
+      const stored = await storedClient(created.id);
+      assert.deepEqual([stored.primary_lobbyist, stored.lobbyist_team], ['Joe', ['Joe', 'Kevin']]);
+    });
+
+    test('400 { success: false, error: "Validation failed", details } for the people; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      for (const [people, details] of [
+        [{}, [{ field: 'lead_id', message: 'Choose a lead partner.' }]],
+        [{ lead_id: kevin.id, second_chair_id: kevin.id }, [{ field: 'second_chair_id', message: 'The second chair cannot be the lead.' }]],
+      ]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, ...people }));
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Validation failed', details }], JSON.stringify(people));
+      }
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
+    });
+
+    test('404 { error: "Client not found" } for a well-formed id no client has', async () => {
+      const res = await call('PUT', `/api/data/clients/${missingId}`, formBody({ lead_id: (await seed('Kevin')).id }));
+      assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
+    });
+
+    // Pinned defect (a WP2 candidate): the id is compared in its column's type
+    // (WHERE id = $1), so an id that is not this shape's type fails in
+    // PostgreSQL and answers 500, where the second-chair route, which compares
+    // id::text, answers 404 (CLAUDE.md: "Never cast a client id to a type")
+    test('a malformed id, or one of the other shape\'s type, answers 500 { error: "Failed to update client" }, not 404', async () => {
+      const lead = await seed('Kevin');
+      for (const id of [otherShapeId, 'not-an-id']) {
+        const res = await call('PUT', `/api/data/clients/${id}`, formBody({ lead_id: lead.id }));
+        assert.deepEqual([res.status, res.body.error], [500, 'Failed to update client'], id);
+      }
+    });
+
+    // Pinned defect: a PUT is a full overwrite, and one without `revenues`
+    // deletes every revenue row the client has (docs/plans/tier-2.md, S7).
+    // WP4 makes it leave revenue as it is.
+    test('a PUT without revenues deletes the client\'s revenue rows (WP4 keeps them)', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin, revenues: { 2025: 3000, 2026: 4000 } });
+      const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, revenues: undefined }));
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(await revenueRows(created.id), []);
+    });
+  });
+
+  route('PUT /api/data/clients/:id/second-chair', () => {
+    // The page reads client (src/portfolioStore.js, assignSecondChair); on a
+    // refusal, details[].message for "Validation failed" and error otherwise,
+    // and a 409 by its status (src/components/AssociateSplit.jsx)
+    test('200 { success, client }: the seat and its legacy text change, nothing else', async () => {
+      const kevin = await seed('Kevin');
+      const associate = await addPerson('associate', 'Seat Associate');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: associate.id, expected_second_chair_id: null });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['client', 'success']);
+      assert.deepEqual(res.body.client.secondChair, { ...associate });
+      const listed = (await call('GET', '/api/data/clients')).body.clients.find((c) => String(c.id) === String(created.id));
+      assert.deepEqual(keysOf(res.body.client), keysOf(listed), 'the same fields as GET');
+      const after = await storedClient(created.id);
+      const rest = ({ second_chair_id: _s, lobbyist_team: _t, updated_at: _u, ...other }) => other;
+      assert.deepEqual(rest(after), rest(before));
+      assert.deepEqual([after.second_chair_id, after.lobbyist_team], [associate.id, ['Kevin', associate.name]]);
+    });
+
+    test('409 { success: false, error } when the seat changed since the page loaded, or the client has no lead; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const jay = await seed('Jay');
+      const seated = await addClient({ lead: kevin, second: jay });
+      let res = await call('PUT', `/api/data/clients/${seated.id}/second-chair`, { second_chair_id: null, expected_second_chair_id: null });
+      assert.deepEqual([res.status, res.body], [409, {
+        success: false, error: "This client's second chair changed since the page loaded. Reload the page and try again.",
+      }]);
+      assert.equal((await storedClient(seated.id)).second_chair_id, jay.id);
+      const leadless = await addClient();
+      res = await call('PUT', `/api/data/clients/${leadless.id}/second-chair`, { second_chair_id: jay.id, expected_second_chair_id: null });
+      assert.deepEqual([res.status, res.body], [409, {
+        success: false, error: 'This client has no lead yet. Give it a lead in Client Details first.',
+      }]);
+      assert.equal((await storedClient(leadless.id)).second_chair_id, null);
+    });
+
+    test('400: a body without both ids, and "Validation failed" with details for the lead, an inactive or an unknown person; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const inactive = await addPerson('associate', 'Seat Inactive');
+      await db.query('UPDATE people SET active = false WHERE id = $1', [inactive.id]);
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const malformed = 'second_chair_id and expected_second_chair_id (a person id, or null for none) are required';
+      for (const body of [{ second_chair_id: 1 }, { expected_second_chair_id: null }, { second_chair_id: 1, expected_second_chair_id: 'abc' }]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, body);
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: malformed }], JSON.stringify(body));
+      }
+      const notActive = 'The second chair must be an active person on the People list.';
+      for (const [id, message] of [[kevin.id, 'The second chair cannot be the lead.'], [inactive.id, notActive], [2147483000, notActive]]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: id, expected_second_chair_id: null });
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Validation failed', details: [{ field: 'second_chair_id', message }] }], String(id));
+      }
+      assert.deepEqual(await storedClient(created.id), before);
+    });
+
+    test('404 { success: false, error: "Client not found" } for an id no client has, of either type or none', async () => {
+      for (const id of [missingId, otherShapeId, 'not-an-id']) {
+        const res = await call('PUT', `/api/data/clients/${id}/second-chair`, { second_chair_id: null, expected_second_chair_id: null });
+        assert.deepEqual([res.status, res.body], [404, { success: false, error: 'Client not found' }], id);
+      }
+    });
+
+    // Pinned defect (a WP2 candidate), as POST /api/data/clients': a person id
+    // above PostgreSQL's integer range fails in the people query
+    test('a second chair id above PostgreSQL\'s integer range answers 500, not 400; nothing written', async () => {
+      const created = await addClient({ lead: await seed('Kevin') });
+      const before = await storedClient(created.id);
+      const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: 99999999999, expected_second_chair_id: null });
+      assert.deepEqual([res.status, res.body], [500, { success: false, error: 'Failed to assign the second chair' }]);
+      assert.deepEqual(await storedClient(created.id), before);
+    });
+  });
+
+  route('DELETE /api/data/clients/:id', () => {
+    // The page reads nothing from a success (src/portfolioStore.js, deleteClient)
+    test('204 with no body; the client and its revenue rows are gone', async () => {
+      const created = await addClient({ lead: await seed('Kevin'), revenues: { 2025: 1, 2026: 2 } });
+      const res = await call('DELETE', `/api/data/clients/${created.id}`);
+      assert.deepEqual([res.status, res.text], [204, '']);
+      assert.equal(await storedClient(created.id), undefined);
+      assert.deepEqual(await revenueRows(created.id), []);
+    });
+
+    test('404 { error: "Client not found" } for a well-formed id no client has', async () => {
+      const res = await call('DELETE', `/api/data/clients/${missingId}`);
+      assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
+    });
+
+    // Pinned defect (a WP2 candidate), as PUT's: compared in the column's type
+    test('a malformed id, or one of the other shape\'s type, answers 500 { error: "Failed to delete client" }, not 404', async () => {
+      for (const id of [otherShapeId, 'not-an-id']) {
+        const res = await call('DELETE', `/api/data/clients/${id}`);
+        assert.deepEqual([res.status, res.body.error], [500, 'Failed to delete client'], id);
+      }
+    });
+  });
+
+  /* ------------------------------ /api/people ------------------------------ */
+
+  route('GET /api/people', () => {
+    // The page reads people[].id, name, role, active, lead_count,
+    // second_chair_count and originator_count (src/PeopleDialog.jsx,
+    // src/utils/people.js through src/portfolioStore.js, fetchPeople)
+    test('200 { success, people }: every person with their counts, active first, then partners, emeritus, associates, by name', async () => {
+      const person = await addPerson('partner', 'Counted Partner');
+      const kevin = await seed('Kevin');
+      await addClient({ lead: person, originator: person });
+      await addClient({ lead: person });
+      await addClient({ lead: kevin, second: person });
+      const res = await call('GET', '/api/people');
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['people', 'success']);
+      for (const p of res.body.people) assert.deepEqual(keysOf(p), PERSON_KEYS);
+      const found = res.body.people.find((p) => p.id === person.id);
+      assert.deepEqual([found.lead_count, found.second_chair_count, found.originator_count], [2, 1, 1]);
+      for (const [name, role] of Object.entries(SEED)) {
+        assert.ok(res.body.people.some((p) => p.name === name && p.role === role), name);
+      }
+      const rank = { partner: 0, emeritus: 1, associate: 2 };
+      const order = res.body.people.map((p) => (p.active ? 0 : 3) + rank[p.role]);
+      assert.deepEqual(order, [...order].sort((a, b) => a - b), 'active first, then partners, emeritus, associates');
+      // By name within each group: checked on the seed partners' one-word
+      // names, which every collation sorts alike (CI's database need not use C)
+      const partners = res.body.people.map((p) => p.name).filter((name) => SEED[name] === 'partner');
+      assert.deepEqual(partners, ['Brendan', 'Jeff', 'Joe', 'Kevin', 'Mike', 'Paula']);
+    });
+  });
+
+  route('POST /api/people', () => {
+    // The page reads person (src/portfolioStore.js, addPerson) and error on a
+    // refusal (src/PeopleDialog.jsx)
+    test('201 { success, person }: active, with zero counts; a name with an apostrophe stored as typed', async () => {
+      const name = `${uniqueName('Mary')} O'Brien`;
+      const res = await call('POST', '/api/people', { name: `  ${name.replace(' ', '   ')} `, role: 'associate' });
+      assert.equal(res.status, 201, res.text);
+      assert.deepEqual(keysOf(res.body), ['person', 'success']);
+      assert.deepEqual(keysOf(res.body.person), PERSON_KEYS);
+      assert.deepEqual({ ...res.body.person, id: 0 }, { id: 0, name, role: 'associate', active: true, lead_count: 0, second_chair_count: 0, originator_count: 0 });
+      assert.equal((await db.query('SELECT name FROM people WHERE id = $1', [res.body.person.id])).rows[0].name, name);
+    });
+
+    test('400 { success: false, error, details: [{ field, message }] } for a missing, malformed, reserved or overlong name or an unknown role; nothing written', async () => {
+      const count = async () => (await db.query('SELECT count(*)::int AS n FROM people')).rows[0].n;
+      const before = await count();
+      const refusals = [
+        [{}, [{ field: 'name', message: 'Enter a name.' }, { field: 'role', message: 'Role must be partner, emeritus or associate.' }]],
+        [{ name: 'R2 D2', role: 'partner' }, [{ field: 'name', message: 'Use letters, spaces, hyphens, apostrophes and periods only.' }]],
+        [{ name: 'Firm', role: 'partner' }, [{ field: 'name', message: '"Firm" is reserved and cannot be a person\'s name.' }]],
+        [{ name: 'A'.repeat(101), role: 'partner' }, [{ field: 'name', message: 'Names are at most 100 characters.' }]],
+        [{ name: 'Some One', role: 'boss' }, [{ field: 'role', message: 'Role must be partner, emeritus or associate.' }]],
+        [{ name: 'Some One', role: 'partner', active: 'yes' }, [{ field: 'active', message: 'Active must be true or false.' }]],
+      ];
+      for (const [body, details] of refusals) {
+        const res = await call('POST', '/api/people', body);
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: details.map((d) => d.message).join(' '), details }], JSON.stringify(body).slice(0, 80));
+      }
+      assert.equal(await count(), before);
+    });
+
+    test('409 { success: false, error } for a name already on the list, in any case', async () => {
+      const res = await call('POST', '/api/people', { name: 'KEVIN', role: 'associate' });
+      assert.deepEqual([res.status, res.body], [409, { success: false, error: 'Someone named KEVIN is already on the People list.' }]);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM people WHERE lower(name) = 'kevin'")).rows[0].n, 1);
+    });
+  });
+
+  route('PUT /api/people/:id', () => {
+    // The page reads person (src/portfolioStore.js, updatePerson) and error on
+    // a refusal, a 409's reason included (src/PeopleDialog.jsx)
+    test('200 { success, person }: a role change, a deactivation and a reactivation of someone with no seat', async () => {
+      const person = await addPerson('partner', 'Changing Partner');
+      let res = await call('PUT', `/api/people/${person.id}`, { role: 'associate' });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['person', 'success']);
+      assert.deepEqual(keysOf(res.body.person), PERSON_KEYS);
+      assert.equal(res.body.person.role, 'associate');
+      res = await call('PUT', `/api/people/${person.id}`, { active: false });
+      assert.deepEqual([res.status, res.body.person.active], [200, false]);
+      res = await call('PUT', `/api/people/${person.id}`, { active: true });
+      assert.deepEqual([res.status, res.body.person.active], [200, true]);
+    });
+
+    test('a rename rewrites the legacy text that names the person: primary_lobbyist, lobbyist_team, and client_originator unless the credit is the firm\'s', async () => {
+      const person = await addPerson('partner', 'Renamed Partner');
+      const kevin = await seed('Kevin');
+      const jay = await seed('Jay');
+      const leads = await addClient({ lead: person, second: jay });
+      const seconds = await addClient({ lead: kevin, second: person });
+      const originated = await addClient({ lead: kevin, originator: person });
+      const firmCredit = await addClient({ lead: kevin, originator: person, firm: true });
+      const bystander = await addClient({ lead: kevin, second: jay, originator: kevin });
+      const bystanderBefore = await storedClient(bystander.id);
+
+      const renamed = uniqueName('Newly Named');
+      const res = await call('PUT', `/api/people/${person.id}`, { name: renamed });
+      assert.equal(res.status, 200, res.text);
+      assert.equal(res.body.person.name, renamed);
+      assert.deepEqual([res.body.person.lead_count, res.body.person.second_chair_count, res.body.person.originator_count], [1, 1, 2]);
+
+      const legacy = async (id) => {
+        const row = await storedClient(id);
+        return [row.primary_lobbyist, row.lobbyist_team, row.client_originator];
+      };
+      assert.deepEqual(await legacy(leads.id), [renamed, [renamed, 'Jay'], '']);
+      assert.deepEqual(await legacy(seconds.id), ['Kevin', ['Kevin', renamed], '']);
+      assert.deepEqual(await legacy(originated.id), ['Kevin', ['Kevin'], renamed]);
+      assert.deepEqual(await legacy(firmCredit.id), ['Kevin', ['Kevin'], 'Firm']);
+      assert.deepEqual(await storedClient(bystander.id), bystanderBefore);
+      // The API's nested people carry the new name too
+      const { body } = await call('GET', '/api/data/clients');
+      assert.equal(body.clients.find((c) => String(c.id) === String(leads.id)).lead.name, renamed);
+    });
+
+    test('a role change and a (de)activation leave the legacy text as it is', async () => {
+      const person = await addPerson('partner', 'Retitled Partner');
+      const kevin = await seed('Kevin');
+      const originated = await addClient({ lead: kevin, originator: person });
+      const before = await storedClient(originated.id);
+      assert.equal((await call('PUT', `/api/people/${person.id}`, { role: 'emeritus', active: false })).status, 200);
+      assert.deepEqual(await storedClient(originated.id), before);
+    });
+
+    test('404 { success: false, error: "No such person." } for an id that is not a positive integer or not on the list', async () => {
+      for (const id of ['abc', '0', '-1', '1.5', '2147483000']) {
+        const res = await call('PUT', `/api/people/${id}`, { active: true });
+        assert.deepEqual([res.status, res.body], [404, { success: false, error: 'No such person.' }], id);
+      }
+    });
+
+    // Pinned defect (a WP2 candidate), as POST /api/data/clients': parseId
+    // takes an id above PostgreSQL's integer range, and the query fails
+    test('an id above PostgreSQL\'s integer range answers 500 { success: false, error }, not 404', async () => {
+      const res = await call('PUT', '/api/people/99999999999', { active: true });
+      assert.deepEqual([res.status, res.body], [500, { success: false, error: 'Failed to update the person.' }]);
+    });
+
+    test('400 { success: false, error } for a malformed change or none', async () => {
+      const person = await addPerson('associate', 'Unchanged Associate');
+      let res = await call('PUT', `/api/people/${person.id}`, {});
+      assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Nothing to change.' }]);
+      for (const [body, details] of [
+        [{ name: '' }, [{ field: 'name', message: 'Enter a name.' }]],
+        [{ role: 'boss' }, [{ field: 'role', message: 'Role must be partner, emeritus or associate.' }]],
+        [{ active: 'no' }, [{ field: 'active', message: 'Active must be true or false.' }]],
+      ]) {
+        res = await call('PUT', `/api/people/${person.id}`, body);
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: details.map((d) => d.message).join(' '), details }], JSON.stringify(body));
+      }
+      assert.deepEqual((await db.query('SELECT name, role, active FROM people WHERE id = $1', [person.id])).rows[0],
+        { name: person.name, role: 'associate', active: true });
+    });
+
+    // P5 (docs/plans/people-and-second-chair.md): the reasons, as the People dialog shows them
+    test('409 { success: false, error } for what P5 forbids, and for a rename to a name already on the list; nothing written', async () => {
+      const lead = await addPerson('partner', 'Leading Partner');
+      const second = await addPerson('associate', 'Seated Associate');
+      await addClient({ lead });
+      await addClient({ lead, second });
+      const refusals = [
+        [lead, { role: 'associate' }, `${lead.name} leads 2 clients. Give them a new lead partner first.`],
+        [lead, { active: false }, `${lead.name} leads 2 clients. Give them a new lead partner first.`],
+        [second, { active: false }, `${second.name} is second chair on 1 client. Change it first.`],
+        [lead, { name: 'kevin' }, 'Someone named kevin is already on the People list.'],
+      ];
+      for (const [person, change, error] of refusals) {
+        const res = await call('PUT', `/api/people/${person.id}`, change);
+        assert.deepEqual([res.status, res.body], [409, { success: false, error }], JSON.stringify(change));
+      }
+      const stored = (await db.query('SELECT id, name, role, active FROM people WHERE id = ANY($1) ORDER BY id', [[lead.id, second.id]])).rows;
+      assert.deepEqual(stored, [lead, second]);
+    });
+  });
+
+  /* -------------------------------- /api/ai -------------------------------- */
+
+  route('GET /api/ai/book', () => {
+    // The page reads reportingYear, clientCount, chars, estimatedTokens and
+    // text (src/components/AIBookPanel.jsx)
+    test('200 { success, reportingYear, clientCount, peopleCount, chars, estimatedTokens, text }; no AI rate limiter', async () => {
+      const created = await addClient({ lead: await seed('Kevin') });
+      const res = await call('GET', '/api/ai/book');
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['chars', 'clientCount', 'estimatedTokens', 'peopleCount', 'reportingYear', 'success', 'text']);
+      assert.equal(res.body.clientCount, await clientCount());
+      assert.equal(res.body.chars, res.body.text.length);
+      assert.equal(res.body.estimatedTokens, Math.round(res.body.text.length / 4));
+      assert.ok(Number.isInteger(res.body.reportingYear) && Number.isInteger(res.body.peopleCount));
+      assert.ok(res.body.text.includes(created.name));
+      assert.equal(res.headers.get('ratelimit-policy'), null, 'T16: opening the book spends no AI budget');
+    });
+  });
+
+  // One streamed request, read as the page reads it (src/utils/sse.js)
+  const streamPost = async (path, body) => {
+    const res = await fetch(`${api.base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Cookie: cookie },
+      body: JSON.stringify(body),
+    });
+    const events = [];
+    const parser = createSseParser((event) => events.push({ type: event.type, data: eventJson(event) }));
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.push(value);
+    }
+    parser.end();
+    return { status: res.status, headers: res.headers, events };
+  };
+
+  route('POST /api/ai/ask', () => {
+    // The page reads (src/portfolioStore.js, askStream; src/AIAdvisor.jsx):
+    // success, id, saved, kind, question, answer, truncated, refused and
+    // refusalCategory; error on a refusal
+    test('200 { success, id, saved, kind, question, answer, ... } through the fake Anthropic server, saved; behind the AI rate limiters', async () => {
+      await addClient({ lead: await seed('Kevin') });
+      const res = await call('POST', '/api/ai/ask', { question: '  Who carries the most?  ' });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), AI_ANSWER_KEYS);
+      assert.deepEqual([res.body.success, res.body.saved, res.body.kind, res.body.question], [true, true, 'ask', 'Who carries the most?']);
+      assert.deepEqual([res.body.truncated, res.body.refused, res.body.refusalCategory], [false, false, null]);
+      assert.ok(res.body.answer.length > 0);
+      assert.equal((await db.query('SELECT kind, question FROM ai_answers WHERE id = $1', [res.body.id])).rows[0].question, 'Who carries the most?');
+      assert.ok(res.headers.get('ratelimit-policy'), 'T16: the AI limiters answer on POST /api/ai/ask');
+    });
+
+    // Tier 1 WP5: the page reads text events' text, and done's answerId,
+    // saved, answer, truncated, refused and refusalCategory, and error events'
+    // error (src/portfolioStore.js, askStream)
+    test('streamed (Accept: text/event-stream): start { model }, text { text } events, then done with the JSON answer\'s fields and answerId', async () => {
+      await addClient({ lead: await seed('Kevin') });
+      const res = await streamPost('/api/ai/ask', { question: 'Who carries the most?' });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'text/event-stream; charset=utf-8');
+      assert.equal(res.headers.get('cache-control'), 'no-cache, no-transform');
+      assert.equal(res.headers.get('x-accel-buffering'), 'no');
+      const types = res.events.map((e) => e.type);
+      assert.equal(types[0], 'start');
+      assert.equal(types.at(-1), 'done');
+      assert.ok(types.slice(1, -1).length > 0 && types.slice(1, -1).every((t) => t === 'text'), types.join());
+      assert.deepEqual(keysOf(res.events[0].data), ['model']);
+      for (const e of res.events.filter((ev) => ev.type === 'text')) assert.deepEqual(keysOf(e.data), ['text']);
+      const done = res.events.at(-1).data;
+      const doneKeys = [...AI_ANSWER_KEYS.filter((k) => !['success', 'kind', 'question', 'id'].includes(k)), 'answerId'].sort();
+      assert.deepEqual(keysOf(done), doneKeys);
+      assert.equal(done.saved, true);
+      assert.ok(Number.isInteger(done.answerId));
+    });
+
+    test('400 { success: false, error } for an empty, blank, missing or non-string question, and one over 2,000 characters', async () => {
+      await addClient({ lead: await seed('Kevin') });
+      for (const body of [{ question: '' }, { question: '  \n' }, {}, { question: 42 }]) {
+        const res = await call('POST', '/api/ai/ask', body);
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Type a question to ask.' }], JSON.stringify(body));
+      }
+      const res = await call('POST', '/api/ai/ask', { question: 'x'.repeat(2001) });
+      assert.deepEqual([res.status, res.body], [400, { success: false, error: 'The question is too long: at most 2,000 characters.' }]);
+    });
+
+    // The book is emptied here, so this test needs nothing from any other
+    test('400 { success: false, error: "The book has no clients yet." } on an empty book', async () => {
+      await db.query('DELETE FROM clients');
+      const res = await call('POST', '/api/ai/ask', { question: 'Who carries the most?' });
+      assert.deepEqual([res.status, res.body], [400, { success: false, error: 'The book has no clients yet.' }]);
+    });
+
+    test('503 { success: false, error } without a key', async () => {
+      await addClient({ lead: await seed('Kevin') });
+      const res = await request(keyless.base, 'POST', '/api/ai/ask', { body: { question: 'Who carries the most?' } });
+      assert.deepEqual([res.status, res.body], [503, NOT_CONFIGURED]);
+    });
+  });
+
+  route('POST /api/ai/brief', () => {
+    // The page reads what it reads from Ask's answer (src/portfolioStore.js,
+    // askStream; src/AIAdvisor.jsx); question is null
+    test('200 { success, id, saved, kind: "brief", question: null, answer, ... } through the fake Anthropic server', async () => {
+      await addClient({ lead: await seed('Kevin') });
+      const res = await call('POST', '/api/ai/brief', {});
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), AI_ANSWER_KEYS);
+      assert.deepEqual([res.body.success, res.body.saved, res.body.kind, res.body.question], [true, true, 'brief', null]);
+      assert.ok(res.headers.get('ratelimit-policy'), 'T16: behind the AI limiters');
+    });
+
+    test('400 { success: false, error: "The book has no clients yet." } on an empty book', async () => {
+      await db.query('DELETE FROM clients');
+      const res = await call('POST', '/api/ai/brief', {});
+      assert.deepEqual([res.status, res.body], [400, { success: false, error: 'The book has no clients yet.' }]);
+    });
+
+    test('503 { success: false, error } without a key', async () => {
+      await addClient({ lead: await seed('Kevin') });
+      const res = await request(keyless.base, 'POST', '/api/ai/brief', { body: {} });
+      assert.deepEqual([res.status, res.body], [503, NOT_CONFIGURED]);
+    });
+  });
+
+  route('GET /api/ai/answers', () => {
+    // The page reads answers[].id, kind, question, client_name,
+    // asked_by_username, created_at, refused, truncated and cost_usd, and
+    // hasMore (src/portfolioStore.js, fetchAiAnswers and fetchOlderAiAnswers;
+    // src/AIAdvisor.jsx; src/utils/recentAnswers.js, answerTitle)
+    test('200 { success, answers, hasMore }: newest first, a page of `limit` then the next with `before`; no AI rate limiter', async () => {
+      for (let i = 0; i < 3; i += 1) await addAnswer({ kind: i === 1 ? 'transition-plan' : 'ask' });
+      const newest = (await db.query('SELECT id FROM ai_answers ORDER BY created_at DESC, id DESC LIMIT 4')).rows.map((r) => r.id);
+      const res = await call('GET', '/api/ai/answers?limit=2');
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['answers', 'hasMore', 'success']);
+      for (const answer of res.body.answers) assert.deepEqual(keysOf(answer), LIST_ANSWER_KEYS);
+      assert.deepEqual([res.body.answers.map((a) => a.id), res.body.hasMore], [newest.slice(0, 2), true]);
+      assert.equal(res.body.answers[0].preview.length, 200);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
+      const older = await call('GET', `/api/ai/answers?limit=2&before=${newest[1]}`);
+      assert.deepEqual(older.body.answers.map((a) => a.id), newest.slice(2, 4));
+      assert.equal((await call('GET', '/api/ai/answers')).body.answers.length <= 20, true, 'twenty by default');
+    });
+
+    test('400 { success: false, error } for a limit outside 1 to 50 or a before that is not an answer id', async () => {
+      const limit = 'limit must be a whole number from 1 to 50.';
+      const before = 'before must be the id of an answer.';
+      for (const [query, error] of [['limit=0', limit], ['limit=51', limit], ['limit=x', limit], ['before=abc', before], ['before=0', before]]) {
+        const res = await call('GET', `/api/ai/answers?${query}`);
+        assert.deepEqual([res.status, res.body], [400, { success: false, error }], query);
+      }
+    });
+  });
+
+  route('GET /api/ai/answers/summary', () => {
+    // The page reads answers, costUsd and unpriced (src/utils/recentAnswers.js,
+    // monthLine, through src/portfolioStore.js, fetchAiAnswers)
+    test('200 { success, timeZone, month, from, to, answers, costUsd, unpriced }: this month in America/New_York, as the table has it', async () => {
+      await addAnswer({ cost: '0.5000' });
+      await addAnswer({ cost: null });
+      const month = aiAnswers.firmMonth(new Date());
+      const res = await call('GET', '/api/ai/answers/summary');
+      assert.equal(res.status, 200, res.text);
+      const { rows: [sums] } = await db.query(`
+        SELECT count(*)::int AS n, COALESCE(sum(cost_usd), 0)::text AS usd, (count(*) FILTER (WHERE cost_usd IS NULL))::int AS unpriced
+          FROM ai_answers WHERE created_at >= $1 AND created_at < $2`, [month.from, month.to]);
+      assert.deepEqual(res.body, {
+        success: true, timeZone: 'America/New_York', month: month.month, from: month.from, to: month.to,
+        answers: sums.n, costUsd: sums.usd, unpriced: sums.unpriced,
+      });
+      assert.ok(sums.unpriced >= 1);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
+    });
+  });
+
+  route('GET /api/ai/answers/:id', () => {
+    // The page reads kind, question, answer, truncated, refused,
+    // refusal_category, asked_by_username, created_at, served_by, model,
+    // fell_back, input_tokens, output_tokens, cache_read_tokens,
+    // cache_write_tokens, cost_usd and prices_read_on (src/AIAdvisor.jsx,
+    // SavedAnswer, through src/portfolioStore.js, toggleAiAnswer)
+    test('200 { success, answer }: the saved row whole, prices_read_on as YYYY-MM-DD and cost_usd as text', async () => {
+      const id = await addAnswer({ kind: 'transition-plan', cost: '1.2345' });
+      const res = await call('GET', `/api/ai/answers/${id}`);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['answer', 'success']);
+      assert.deepEqual(keysOf(res.body.answer), ANSWER_KEYS);
+      const a = res.body.answer;
+      assert.deepEqual([a.id, a.kind, a.client_id, a.client_name, a.cost_usd, a.prices_read_on], [id, 'transition-plan', '42', 'A client', '1.2345', '2026-09-01']);
+      assert.deepEqual([a.input_tokens, a.output_tokens, a.cache_read_tokens, a.cache_write_tokens], [10, 20, 30, 40]);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
+    });
+
+    test('404 { success: false, error: "No such answer." } for an id that is not a positive integer or not found', async () => {
+      const { rows: [{ max }] } = await db.query('SELECT COALESCE(max(id), 0) AS max FROM ai_answers');
+      for (const id of ['abc', '0', '-1', '1.5', '99999999999', String(max + 1000)]) {
+        const res = await call('GET', `/api/ai/answers/${id}`);
+        assert.deepEqual([res.status, res.body], [404, { success: false, error: 'No such answer.' }], id);
+      }
+    });
+  });
+
+  /* ---------------------------- /api/scenarios ----------------------------- */
+
+  route('POST /api/scenarios/transition-plan', () => {
+    // A request as Stage 2 sends one (planRequest, src/utils/transitionPlans.js):
+    // one client, the partner leaving, and the roster of people staying
+    const planBody = async () => {
+      const mike = await seed('Mike');
+      const created = await addClient({ lead: mike });
+      const { rows: [row] } = await db.query('SELECT id, name FROM clients WHERE id::text = $1', [String(created.id)]);
+      const zero = { count: 0, revenue: 0, effort: 0 };
+      const roster = Object.entries(SEED).filter(([name]) => name !== 'Mike').map(([name, role]) => ({ name, role, lead: zero, second: zero }));
+      return {
+        client: { id: row.id, name: row.name },
+        stage1Data: { departing: [{ name: 'Mike', role: 'partner' }], impactData: { totalRevenueAtRisk: 100000 }, reportingYear: 2026 },
+        roster,
+      };
+    };
+
+    // The page reads success, plan (stored whole: strategy, recommendedLead
+    // and recommendedSecondChair with person, none and problem, timelineDays,
+    // risks, tasks, communicationTemplate, priority, truncated) and error
+    // (src/components/succession/ClientReviewInterface.jsx)
+    test('200 { success, plan, answerId, saved, timestamp } through the fake Anthropic server; the recommendations resolved against the roster; behind the AI rate limiters', async () => {
+      const body = await planBody();
+      const res = await call('POST', '/api/scenarios/transition-plan', body);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['answerId', 'plan', 'saved', 'success', 'timestamp']);
+      assert.deepEqual(keysOf(res.body.plan), [
+        'clientId', 'clientName', 'communicationTemplate', 'createdAt', 'priority', 'recommendedLead',
+        'recommendedSecondChair', 'refused', 'risks', 'status', 'strategy', 'tasks', 'timelineDays', 'truncated',
+      ]);
+      assert.deepEqual([res.body.success, res.body.saved, res.body.plan.clientId], [true, true, body.client.id]);
+      for (const side of ['recommendedLead', 'recommendedSecondChair']) {
+        assert.deepEqual(keysOf(res.body.plan[side]), ['none', 'person', 'problem', 'text'], side);
+        assert.ok(body.roster.some((p) => p.name === res.body.plan[side].person?.name), `${side} from the roster`);
+      }
+      const saved = (await db.query('SELECT kind, client_id FROM ai_answers WHERE id = $1', [res.body.answerId])).rows[0];
+      assert.deepEqual(saved, { kind: 'transition-plan', client_id: String(body.client.id) });
+      assert.ok(res.headers.get('ratelimit-policy'), 'T16: behind the AI limiters');
+    });
+
+    test('400 { success: false, error } for a request without a client or stage1Data, or with a roster the People list refuses; none reaches the model', async () => {
+      const body = await planBody();
+      const reached = fake.requests.length;
+      const zero = { count: 0, revenue: 0, effort: 0 };
+      const refusals = [
+        [{ ...body, client: undefined }, 'client.id (a string or a positive integer) and client.name (a string) are required'],
+        [{ ...body, client: { ...body.client, id: -1 } }, 'client.id (a string or a positive integer) and client.name (a string) are required'],
+        [{ ...body, stage1Data: [] }, 'stage1Data (object) is required'],
+        [{ ...body, roster: undefined }, 'roster must list the 1 to 50 people who are staying'],
+        [{ ...body, roster: [...body.roster, { name: 'Nobody', role: 'partner', lead: zero, second: zero }] }, 'Not on the People list: Nobody.'],
+        [{ ...body, roster: [...body.roster, { name: 'Mike', role: 'partner', lead: zero, second: zero }] }, 'Leaving, so not on the roster: Mike.'],
+      ];
+      for (const [request, error] of refusals) {
+        const res = await call('POST', '/api/scenarios/transition-plan', request);
+        assert.equal(res.status, 400, error);
+        assert.equal(res.body.success, false);
+        assert.equal(res.body.error, error);
+      }
+      assert.equal(fake.requests.length, reached);
+    });
+
+    test('404 { success: false, error: "Client not found." } for a client not in the book, before the model', async () => {
+      const body = await planBody();
+      const reached = fake.requests.length;
+      const res = await call('POST', '/api/scenarios/transition-plan', {
+        ...body, client: { ...body.client, id: shape.idType === 'integer' ? Number(missingId) : missingId },
+      });
+      assert.deepEqual([res.status, res.body], [404, { success: false, error: 'Client not found.' }]);
+      assert.equal(fake.requests.length, reached);
+    });
+
+    test('503 { success: false, error } without a key', async () => {
+      const res = await request(keyless.base, 'POST', '/api/scenarios/transition-plan', { body: await planBody() });
+      assert.deepEqual([res.status, res.body], [503, NOT_CONFIGURED]);
+    });
+  });
+
+  /* ------------------------------ /api/health ------------------------------ */
+
+  route('GET /api/health', () => {
+    // The page reads features (src/DataUploadManager.jsx, src/components/AIBookPanel.jsx,
+    // src/AIAdvisor.jsx, src/components/AssociateSplit.jsx,
+    // src/components/succession/ClientReviewInterface.jsx); the uptime
+    // monitor reads status (deploy/README.md, section 11)
+    const HEALTH_KEYS = ['environment', 'features', 'services', 'status', 'timestamp', 'uptimeSeconds'];
+
+    test('200 without sign-in: status OK with the database connected and a key; the features the page asks for', async () => {
+      const res = await request(api.base, 'GET', '/api/health', { as: '' });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), HEALTH_KEYS);
+      assert.equal(res.body.status, 'OK');
+      assert.deepEqual(res.body.services, { database: 'connected', anthropic: 'configured', model: 'claude-opus-5' });
+      assert.deepEqual(res.body.features, FEATURES);
+      assert.equal(res.body.environment, 'development');
+      assert.ok(Number.isInteger(res.body.uptimeSeconds) && !Number.isNaN(Date.parse(res.body.timestamp)));
+    });
+
+    test('200 with status DEGRADED and anthropic "not configured" without a key', async () => {
+      const res = await request(keyless.base, 'GET', '/api/health', { as: '' });
+      assert.equal(res.status, 200);
+      assert.deepEqual([res.body.status, res.body.services], ['DEGRADED', { database: 'connected', anthropic: 'not configured', model: 'claude-opus-5' }]);
+    });
+
+    test('200 with status DEGRADED and database "disconnected" when the database cannot be reached', async () => {
+      const server = await launch({ DATABASE_URL: urlFor(`${dbName}_missing`), ANTHROPIC_API_KEY: 'test' }, { database: false });
+      try {
+        const res = await request(server.base, 'GET', '/api/health', { as: '' });
+        assert.equal(res.status, 200);
+        assert.deepEqual(keysOf(res.body), HEALTH_KEYS);
+        assert.deepEqual([res.body.status, res.body.services.database, res.body.services.anthropic], ['DEGRADED', 'disconnected', 'configured']);
+      } finally {
+        stop(server);
+      }
+    });
+  });
+
+  /* --------------------------- Before every route -------------------------- */
+
+  // server.cjs's own middleware, ahead of every route (CLAUDE.md, "Auth,
+  // sessions and rate limits"), and the routes deleted earlier
+  describe('before any route', () => {
+    test('a write from a foreign browser origin answers 403 and changes nothing; an allowed origin passes', async () => {
+      const name = uniqueName('Origin Person');
+      const refused = await call('POST', '/api/people', { name, role: 'associate' }, { headers: { Origin: 'https://example.com' } });
+      assert.deepEqual([refused.status, refused.body], [403, { success: false, error: 'Cross-origin request refused' }]);
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM people WHERE name = $1', [name])).rows[0].n, 0);
+      assert.ok(logLines(api, 'origin_refused').some((l) => l.origin === 'https://example.com' && l.path === '/api/people'));
+      const allowed = await call('POST', '/api/people', { name, role: 'associate' }, { headers: { Origin: 'http://localhost:5173' } });
+      assert.equal(allowed.status, 201, allowed.text);
+    });
+
+    test('malformed JSON answers 400 and a body over 5 MB answers 413, each { error, message }', async () => {
+      const malformed = await call('POST', '/api/people', '{"name": ');
+      assert.equal(malformed.status, 400);
+      assert.deepEqual(keysOf(malformed.body), ['error', 'message']);
+      assert.equal(malformed.body.error, 'Bad request');
+      const large = await call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: 'x'.repeat(5 * 1024 * 1024) }] });
+      assert.equal(large.status, 413);
+      assert.deepEqual(keysOf(large.body), ['error', 'message']);
+      assert.equal(large.body.error, 'Request body too large (5 MB limit)');
+    });
+
+    test('the routes deleted earlier answer 404', async () => {
+      for (const key of REMOVED) {
+        const [method, path] = key.split(' ');
+        const res = await call(method, path, {});
+        assert.equal(res.status, 404, key);
+      }
+    });
+  });
+});

@@ -15,10 +15,12 @@ jobs:
       - run: npm test
       - run: VITE_API_BASE_URL=https://gbacpod.com npm run build:prod
 
-  # tests/schema.test.mjs and tests/import-db.test.mjs against a real server:
-  # init-db.sql on a new and on an existing database, deleting a user keeps its
-  # clients, and the CSV import on server.cjs. The check job skips those tests
-  # (no database). PostgreSQL 18, as production.
+  # tests/schema.test.mjs, tests/import-db.test.mjs and tests/routes.test.mjs
+  # against a real server: init-db.sql on a new and on an existing database,
+  # deleting a user keeps its clients, the CSV import on server.cjs, and every
+  # route's contract (docs/plans/tier-2.md, WP1). The check job skips those
+  # tests (no database) but runs the routes inventory. PostgreSQL 18, as
+  # production.
   schema:
     runs-on: ubuntu-latest
     services:
@@ -38,6 +40,6 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
       - run: npm ci
-      - run: node --test tests/schema.test.mjs tests/import-db.test.mjs
+      - run: node --test tests/schema.test.mjs tests/import-db.test.mjs tests/routes.test.mjs
         env:
           SCHEMA_TEST_SERVER_URL: postgresql://postgres@127.0.0.1:5432
