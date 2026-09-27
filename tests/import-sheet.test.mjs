@@ -276,10 +276,9 @@ describe('processCSVData and checkSheet', () => {
     assert.deepEqual(client.practiceArea, []);
     assert.equal(client.conflictRisk, 'Medium');
     assert.equal(client.notes, '');
-    assert.equal(client.relationshipStrength, 5);
-    assert.equal(client.renewalProbability, 0.7);
-    assert.equal(client.strategicFitScore, 5);
-    for (const key of ['stickiness', 'interaction_frequency', 'high_maintenance', 'lead_id']) {
+    // The retired columns' defaults are no longer set (Tier 2 WP2, S4)
+    for (const key of ['stickiness', 'interaction_frequency', 'high_maintenance', 'lead_id',
+      'relationshipStrength', 'renewalProbability', 'strategicFitScore', 'relationshipIntensity']) {
       assert.equal(key in client, false, key);
     }
     assert.deepEqual(client.sheet, { values: {}, people: {}, errors: [] });
@@ -289,12 +288,15 @@ describe('processCSVData and checkSheet', () => {
     assert.equal(people.size, 0);
   });
 
-  test('a file without the new columns writes exactly the columns it always has', () => {
+  test('a file without the new columns writes exactly the columns it always has, less the retired ones', () => {
     const base = importWriteColumns({}).map(([column]) => column);
+    // relationship_strength, renewal_probability, strategic_fit_score and
+    // relationship_intensity are retired (docs/plans/tier-2.md, S4): not
+    // written since Tier 2 WP2, so an update leaves them and a new client
+    // gets their column defaults, the values the import wrote before
     assert.deepEqual(base, [
-      'name', 'practice_area', 'relationship_strength', 'conflict_risk',
-      'renewal_probability', 'strategic_fit_score', 'notes', 'primary_lobbyist',
-      'client_originator', 'lobbyist_team', 'interaction_frequency', 'relationship_intensity',
+      'name', 'practice_area', 'conflict_risk', 'notes', 'primary_lobbyist',
+      'client_originator', 'lobbyist_team', 'interaction_frequency',
     ]);
     // Stickiness, Handful and the people columns are written only when the file has them
     assert.deepEqual(importWriteColumns(ALL_COLUMNS).map(([column]) => column).slice(base.length), [

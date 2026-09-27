@@ -1,6 +1,6 @@
 /**
  * Client Portfolio Analysis Engine
- * CSV processing and portfolio optimization.
+ * CSV processing.
  *
  * Strategic-value scoring lives in ./utils/strategic.cjs (single source of
  * truth) and is re-exported here for the data.cjs/CSV path. Do NOT reimplement
@@ -20,57 +20,6 @@ const {
   findSheetColumns,
   readSheetRow,
 } = require('./utils/csvImport.cjs');
-
-// Helper function to decode HTML entities
-function decodeHTMLEntities(text) {
-  if (!text || typeof text !== 'string') return text;
-  
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, '/')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
-    .replace(/&#x([a-fA-F0-9]+);/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
-}
-
-/**
- * Optimize portfolio based on capacity constraints
- * @param {Array} clients - Array of client objects with strategic scores
- * @param {number} _maxCapacity - Maximum available hours (deprecated but kept for compatibility)
- * @returns {Object} Optimization results
- */
-function optimizePortfolio(clients, _maxCapacity = 2000) {
-  if (!clients || clients.length === 0) {
-    return {
-      clients: [],
-      totalRevenue: 0,
-      averageStrategicValue: 0,
-      clientCount: 0
-    };
-  }
-
-  // Every client is eligible; sort by strategic value
-  const eligibleClients = [...clients]
-    .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0));
-  
-  // Since timeCommitment is removed, we'll return top clients by strategic value
-  const optimal = eligibleClients.slice(0, Math.min(eligibleClients.length, 50)); // Top 50 clients
-  
-  const totalRevenue = optimal.reduce((sum, client) => sum + (client.averageRevenue || 0), 0);
-  const averageStrategicValue = optimal.length > 0 ? 
-    optimal.reduce((sum, client) => sum + (client.strategicValue || 0), 0) / optimal.length : 0;
-  
-  return {
-    clients: optimal,
-    totalRevenue: Math.round(totalRevenue),
-    averageStrategicValue: Math.round(averageStrategicValue * 100) / 100,
-    clientCount: optimal.length,
-    excludedClients: eligibleClients.length - optimal.length
-  };
-}
 
 /**
  * Process raw CSV data into client objects.
@@ -106,7 +55,9 @@ function processCSVData(csvData) {
     .map((row, index) => ({ row, rowNumber: rowNumberOf(index) }))
     .filter(({ row }) => row.CLIENT && row.CLIENT.trim()) // Filter out empty rows
     .map(({ row, rowNumber }) => {
-      const clientName = decodeHTMLEntities(row.CLIENT.trim());
+      // As the sheet spells it: data.cjs has already decoded every cell the
+      // request sanitizer escaped
+      const clientName = row.CLIENT.trim();
       
       // Revenue for exactly the years the file covers
       const revenue = {};
@@ -129,10 +80,7 @@ function processCSVData(csvData) {
         rowNumber,
         // Default enhancement fields
         practiceArea: judged.practice_area || [],
-        relationshipStrength: 5,
         conflictRisk: judged.conflict_risk || 'Medium',
-        renewalProbability: 0.7,
-        strategicFitScore: 5,
         notes: judged.notes || '',
         ...('stickiness' in judged ? { stickiness: judged.stickiness } : {}),
         ...('interaction_frequency' in judged ? { interaction_frequency: judged.interaction_frequency } : {}),
@@ -182,7 +130,6 @@ function validateClientData(clients) {
 module.exports = {
   calculateStrategicValue,
   calculateStrategicScores,
-  optimizePortfolio,
   processCSVData,
   validateClientData
 };

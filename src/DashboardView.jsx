@@ -98,13 +98,6 @@ const DashboardView = () => {
       })
       .slice(0, 10);
 
-    // Risk analysis
-    const highRiskClients = clients.filter(c => c.conflictRisk === 'High').length;
-    const lowRenewalClients = clients.filter(c => {
-      const renewalProb = parseFloat(c.renewalProbability);
-      return !isNaN(renewalProb) && renewalProb < 0.5;
-    }).length;
-
     // Calculate totals with robust null handling
     const totalRevenue = usePortfolioStore.getState().getTotalRevenue();
 
@@ -122,8 +115,6 @@ const DashboardView = () => {
       topClients,
       totalRevenue,
       averageStrategicValue,
-      highRiskClients,
-      lowRenewalClients,
       successionAnalytics
     };
   }, [clients]);

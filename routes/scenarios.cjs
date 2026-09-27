@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth.cjs');
 const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs');
-const { handleValidationErrors, sanitizeRequestBody } = require('../middleware/validation.cjs');
+const { sanitizeRequestBody } = require('../middleware/validation.cjs');
 const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs');
 const { answerRow } = require('../utils/aiAnswers.cjs');
 const { saveAnswer } = require('../models/aiAnswerModel.cjs');
@@ -56,7 +56,7 @@ const MAX_TOKENS = 16000;
 // the book's hash and its reporting year. The response keeps its shape (T14)
 // and adds answerId and saved beside plan: a failed save returns the plan
 // with saved: false and answerId null, never an error.
-router.post('/transition-plan', handleValidationErrors, async (req, res) => {
+router.post('/transition-plan', async (req, res) => {
   const { client, stage1Data, roster } = req.body || {};
   const refusal = checkPlanRequest(req.body);
   if (refusal) {

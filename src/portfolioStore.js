@@ -271,14 +271,6 @@ const usePortfolioStore = create(
         analysisError: error 
       }),
       
-      setAnalytics: (analytics) => set({ analytics }),
-      
-      setOptimization: (optimization) => set({ optimization }),
-      
-      setOptimizationParams: (params) => set((state) => ({
-        optimizationParams: { ...state.optimizationParams, ...params }
-      })),
-      
       setSelectedClient: (client) => set({ selectedClient: client }),
 
       // Helper function to format client data for API
@@ -579,26 +571,6 @@ const usePortfolioStore = create(
           .slice(0, limit);
       },
       
-      // Reset functions
-      resetUpload: () => set({ 
-        reportingYear: null,
-        clients: [], 
-        originalClients: [],
-        uploadError: null,
-        analytics: null,
-        optimization: null,
-        currentView: 'upload'
-      }),
-      
-      resetAnalysis: () => set({ 
-        analytics: null, 
-        analysisError: null 
-      }),
-      
-      resetOptimization: () => set({ 
-        optimization: null 
-      }),
-
       // Succession planning analytics
       getSuccessionAnalytics: () => {
         const state = get();

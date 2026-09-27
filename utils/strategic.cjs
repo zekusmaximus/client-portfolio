@@ -21,11 +21,11 @@
  *
  * The helpers tolerate both snake_case (DB) and camelCase (frontend) field
  * names, and both revenue shapes (a `revenues` array or a `revenue` object), so
- * every code path produces identical numbers for the same client. They are also
- * backward-tolerant: if the explicit `stickiness` / `high_maintenance` fields
- * are absent, stickiness is derived from the legacy retention fields
- * (relationship_intensity → relationship_strength + renewal_probability) so the
- * score keeps working before/after the data migration.
+ * every code path produces identical numbers for the same client. A client
+ * with no Stickiness pick scores with a fixed stand-in (UNRATED_STICKINESS),
+ * not a rating; the retired columns (relationship_intensity,
+ * relationship_strength, renewal_probability, strategic_fit_score) are not
+ * read (docs/plans/tier-2.md, S4).
  *
  * No year is hard-coded here. The score reads each client's own latest
  * revenue year (docs/plans/tier-0.md, D6); the frontend's book-wide reporting
@@ -42,6 +42,14 @@ const EFFORT_BY_CADENCE = {
 };
 const DEFAULT_CADENCE_EFFORT = 1; // unknown / unset cadence
 const HANDFUL_MULTIPLIER = 1.5;   // "this one's a handful" flag
+
+// The stickiness (0–10) of a client nobody has rated: a stand-in, not a
+// rating. It is the value the retired relationship_intensity gave at 5, its
+// column default, ((5 - 1) / 9) × 10 = 40 / 9 ≈ 4.44, which every client on
+// production had when the scorer stopped reading it (docs/plans/tier-2.md,
+// S4, Jeff's count on 2026-09-27), so no score moved. The page's copy is in
+// src/utils/clientMetrics.js; tests/strategic.test.mjs holds them equal.
+const UNRATED_STICKINESS = 40 / 9;
 
 const REVENUE_WEIGHT = 0.5;
 const STICKINESS_WEIGHT = 0.5;
@@ -119,12 +127,8 @@ function getEffort(client) {
 
 /**
  * Stickiness (0–10): how locked-in the relationship is.
- *  - explicit `stickiness` (1–5 scale) takes precedence;
- *  - else derived from legacy `relationship_intensity` (1–10, the roommate↔cold
- *    scale this field always meant);
- *  - else blended from `relationship_strength` (1–10) and `renewal_probability`
- *    (0–1);
- *  - else neutral 5.
+ *  - the `stickiness` pick (1–5 scale), when there is one;
+ *  - else UNRATED_STICKINESS, a fixed stand-in (not a rating).
  */
 function getStickiness(client) {
   // Raw stickiness input is the 1–5 roommate↔cold scale.
@@ -133,22 +137,7 @@ function getStickiness(client) {
     // 1–5 scale → 0–10  (Personal bond 5 → 10 … Cold 1 → 0)
     return Math.max(0, Math.min(10, ((explicit - 1) / 4) * 10));
   }
-
-  const intensity = num(client.relationship_intensity ?? client.relationshipIntensity);
-  if (intensity !== null) {
-    // 1–10 scale → 0–10
-    return Math.max(0, Math.min(10, ((intensity - 1) / 9) * 10));
-  }
-
-  const strength = num(client.relationship_strength ?? client.relationshipStrength);
-  const renewal = num(client.renewal_probability ?? client.renewalProbability);
-  if (strength !== null || renewal !== null) {
-    const sStrength = strength !== null ? ((strength - 1) / 9) * 10 : 5;
-    const sRenewal = renewal !== null ? renewal * 10 : 5;
-    return Math.max(0, Math.min(10, (sStrength + sRenewal) / 2));
-  }
-
-  return 5;
+  return UNRATED_STICKINESS;
 }
 
 /**
@@ -198,6 +187,7 @@ function calculateStrategicScores(clients) {
 module.exports = {
   EFFORT_BY_CADENCE,
   HANDFUL_MULTIPLIER,
+  UNRATED_STICKINESS,
   getMostRecentRevenue,
   revenueObjectFromRows,
   getEffort,

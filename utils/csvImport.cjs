@@ -464,14 +464,15 @@ function indexStoredClients(rows = []) {
 // theirs only when the file has them, so a column the file lacks is never in
 // the SET list and stays as it is; the other judgment columns (cadence,
 // conflict risk, practice area, notes) are in the base list and carry the
-// preserved value when absent, as before this change.
+// preserved value when absent, as before this change. The retired columns
+// (relationship_strength, renewal_probability, strategic_fit_score,
+// relationship_intensity; docs/plans/tier-2.md, S4) are not written: an update
+// leaves them as they are, and a new client gets their column defaults (5,
+// 0.7, 5 and 5), the values the import wrote until Tier 2 WP2.
 const IMPORT_WRITE_COLUMNS = [
-  ['name', 'text'], ['practice_area', 'text[]'],
-  ['relationship_strength', 'numeric'], ['conflict_risk', 'text'],
-  ['renewal_probability', 'numeric'], ['strategic_fit_score', 'numeric'],
+  ['name', 'text'], ['practice_area', 'text[]'], ['conflict_risk', 'text'],
   ['notes', 'text'], ['primary_lobbyist', 'text'], ['client_originator', 'text'],
   ['lobbyist_team', 'text[]'], ['interaction_frequency', 'text'],
-  ['relationship_intensity', 'numeric'],
 ];
 const PEOPLE_WRITE_COLUMNS = [
   ['lead_id', 'int'], ['second_chair_id', 'int'], ['originator_id', 'int'], ['originator_is_firm', 'boolean'],

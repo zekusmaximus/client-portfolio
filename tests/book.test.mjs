@@ -273,8 +273,6 @@ const scored = (rows) => strategic.calculateStrategicScores(rows.map((c) => ({
   ...c,
   practiceArea: c.practice_area || [],
   conflictRisk: c.conflict_risk || 'Medium',
-  relationshipStrength: c.relationship_strength || 5,
-  renewalProbability: c.renewal_probability || 0.7,
 })));
 const rev = (pairs) => Object.entries(pairs).map(([year, amount]) => ({ id: 1, year: Number(year), revenue_amount: amount }));
 
@@ -330,6 +328,20 @@ test('content: no notes, ids, dates, sign-in names, user_id or retired columns',
   assert.match(clientRows(text).find((r) => r.startsWith('| Acme Holdings |')), /\| not rated \|/);
 });
 
+// Tier 2 WP2 (docs/plans/tier-2.md, S4): the scorer no longer reads the
+// retired columns, so this unrated client scores with the fixed stand-in
+// (40 / 9) whatever they hold. Its score moved in WP2, deliberately: until
+// then relationship_intensity 8 gave it a stickiness score of 7.78 and a
+// strategic value of 3.39. No client on production moved: Jeff's count on
+// 2026-09-27 found all 84 at relationship_intensity 5, whose score was the
+// stand-in's (tests/strategic.test.mjs).
+test('content: an unrated client scores with the stand-in, whatever the retired columns hold', () => {
+  const acme = CONTENT_CLIENTS.find((c) => c.id === UUID);
+  assert.deepEqual([acme.relationship_intensity, acme.relationship_strength, acme.renewal_probability], [8, 7, 0.93]);
+  assert.deepEqual([acme.stickinessScore, acme.strategicValue], [4.44, 1.72]);
+  assert.equal(strategic.getStickiness(acme), strategic.UNRATED_STICKINESS);
+});
+
 test('content: defaults read as defaults; an unrated client counts under unrated exposure, never as safe (T5)', () => {
   const { model, text } = contentBook();
   const acme = cells(clientRows(text).find((r) => r.startsWith('| Acme Holdings |')));
@@ -368,6 +380,9 @@ test('content: the legend states the labels, the effort share, the defaults and 
   assert.match(text, /÷ \$50,000, at most 10/);
   assert.match(text, /Stickiness score = \(pick − 1\) ÷ 4 × 10\. Conflict penalty: High 3, Medium 1, Low 0\./);
   assert.match(text, /cadence "not set" \(effort 1, and 1\.5 with a handful\)/);
+  // The stand-in is the scorer's, and said to be one (Tier 2 WP2, S4)
+  assert.match(text, /stickiness "not rated" \(the strategic value then uses a fixed stand-in stickiness score of 4\.44, the same for every such client, not a rating\)/);
+  assert.equal(Math.round(strategic.getStickiness({}) * 100) / 100, 4.44);
   assert.match(text, /Clients not rated are counted separately and are never counted as safe\./);
 
   // The formula the legend states is the scorer's: a weight change in

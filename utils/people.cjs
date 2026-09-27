@@ -56,16 +56,19 @@ function validatePersonInput(input = {}, { partial = false } = {}) {
   return { errors, value };
 }
 
-// A person id from a request: a positive integer, or its decimal string.
-// Absent or '' is null; anything else is NaN, which matches nobody.
+// people.id is a SERIAL: PostgreSQL's integer, at most 2147483647
+const ID_MAX = 2147483647;
+
+// A person id from a request: a positive integer within PostgreSQL's integer
+// range, or its decimal string. Absent or '' is null; anything else is NaN,
+// which matches nobody. A larger number would fail in the query; readAnswerId
+// (utils/aiAnswers.cjs) bounds its ids the same way.
 function parseId(v) {
   if (v === null || v === undefined || v === '') return null;
-  if (typeof v === 'number') return Number.isInteger(v) && v > 0 ? v : NaN;
-  if (typeof v === 'string' && /^\d+$/.test(v.trim())) {
-    const n = Number(v.trim());
-    return n > 0 ? n : NaN;
-  }
-  return NaN;
+  const n = typeof v === 'number' ? v
+    : typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v.trim())
+      : NaN;
+  return Number.isInteger(n) && n > 0 && n <= ID_MAX ? n : NaN;
 }
 
 /**

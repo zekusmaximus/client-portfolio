@@ -67,6 +67,17 @@ test('parseId: integers and decimal strings; blank is null; anything else NaN', 
   assert.ok(Number.isNaN(parseId({})));
 });
 
+test('parseId: an id above PostgreSQL\'s integer range matches nobody, as a number or a string (Tier 2 WP2)', () => {
+  assert.equal(parseId(2147483647), 2147483647);
+  assert.equal(parseId('2147483647'), 2147483647);
+  for (const id of [2147483648, '2147483648', 99999999999, '99999999999', Number.MAX_SAFE_INTEGER, '1'.repeat(40)]) {
+    assert.ok(Number.isNaN(parseId(id)), String(id));
+  }
+  // validateAssignment then refuses it as it refuses any id not on the list
+  const { errors } = validateAssignment({ lead_id: 99999999999, second_chair_id: '99999999999' }, ROSTER);
+  assert.deepEqual(errors.map((e) => e.field), ['lead_id', 'second_chair_id']);
+});
+
 describe('validateAssignment', () => {
   test('an active partner lead, any other active second chair, any originator', () => {
     const result = validateAssignment(
