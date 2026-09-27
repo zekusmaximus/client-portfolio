@@ -7,8 +7,7 @@ const { sanitizeRequestBody } = require('./middleware/validation.cjs');
 const {
   processCSVData,
   validateClientData,
-  calculateStrategicScores,
-  optimizePortfolio
+  calculateStrategicScores
 } = require('./clientAnalyzer.cjs');
 const {
   extractRevenueYears,
@@ -52,35 +51,6 @@ function decodeHTMLEntities(text) {
     .replace(/&quot;/g, '"')
     .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
     .replace(/&#x([a-fA-F0-9]+);/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
-}
-
-// Helper to calculate strategic value for a single client
-function calculateStrategicValue(client) {
-  // 1. Convert qualitative fields
-  const intensityScore = client.relationshipIntensity ?? 5;           // 1-10
-  const crisisNeedsMap = { Low: 1, Medium: 5, High: 9 };
-  const crisisScore = 10 - (crisisNeedsMap[client.crisisManagementNeeds] ?? 5);
-
-  // 2. Quantitative defaults
-  const revenueScore            = client.revenueScore           ?? 0;
-  const growthScore             = client.growthScore            ?? 0;
-  const strategicFitScore       = client.strategicFitScore      ?? 5;
-  const renewalProbabilityScore = (client.renewalProbability ?? 0.7) * 10;
-
-  // 3. Conflict penalty
-  const conflictPenalty = { High: 3, Medium: 1, Low: 0 }[client.conflictRisk] ?? 1;
-
-  // 4. Weighted formula
-  const value = (
-    revenueScore            * 0.20 +
-    intensityScore          * 0.30 +
-    strategicFitScore       * 0.15 +
-    renewalProbabilityScore * 0.15 +
-    crisisScore             * 0.10 +
-    growthScore             * 0.10
-  ) - conflictPenalty;
-
-  return Math.max(0, Math.min(12, value));
 }
 
 // Validation for CSV processing
@@ -130,8 +100,9 @@ const handleCSVValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   
   if (!errors.isEmpty()) {
+    // express-validator 7 names the field `path` (it was `param` in 6)
     const errorMessages = errors.array().map(error => ({
-      field: error.param,
+      field: error.path,
       message: error.msg,
       value: error.value
     }));
@@ -157,7 +128,7 @@ const problems = (n) => `${n} problem${n === 1 ? '' : 's'}`;
 // back: the same 400 on any problem, or
 // { success: true, dryRun: true, validation, summary } with nothing written.
 router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async (req, res) => {
-  const client = db.pool.connect();
+  const conn = await db.pool.connect();
   
   try {
     const { csvData, dryRun = false } = req.body;
@@ -197,13 +168,13 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     const clientsWithScores = calculateStrategicScores(clients);
     
     // Save to database using upsert logic
-    await (await client).query('BEGIN');
+    await conn.query('BEGIN');
 
     // The People list, when the file assigns people. FOR SHARE, as the client
     // writes below: routes/people.cjs cannot deactivate anyone or move a lead
     // out of the partner role until this import commits.
     const { rows: roster } = 'lead' in columns
-      ? await (await client).query('SELECT id, name, role, active FROM people ORDER BY id FOR SHARE')
+      ? await conn.query('SELECT id, name, role, active FROM people ORDER BY id FOR SHARE')
       : { rows: [] };
 
     // Pre-fetch all existing clients to avoid N+1 queries
@@ -223,10 +194,9 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       // then writes the sheet's spelling.
       // FOR UPDATE: the values kept for columns the file lacks are written back
       // below, so a form save cannot land in between and be overwritten.
-      const { rows: allExistingClients } = await (await client).query(`
-        SELECT id, name, practice_area, relationship_strength, conflict_risk,
-               renewal_probability, strategic_fit_score, notes, primary_lobbyist,
-               client_originator, lobbyist_team, interaction_frequency, relationship_intensity,
+      const { rows: allExistingClients } = await conn.query(`
+        SELECT id, name, practice_area, conflict_risk, notes, primary_lobbyist,
+               client_originator, lobbyist_team, interaction_frequency,
                second_chair_id, originator_id, originator_is_firm
         FROM clients 
         WHERE LOWER(${unescapeStoredSql('name')}) = ANY($1)
@@ -247,7 +217,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       sharedNames: stored.shared
     });
     if (check.errors.length > 0) {
-      await (await client).query('ROLLBACK');
+      await conn.query('ROLLBACK');
       return res.status(400).json({
         success: false,
         error: `Nothing was imported: the file has ${problems(check.errors.length)}. Fix the rows below and upload it again.`,
@@ -284,21 +254,9 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           ? existingClient.practice_area
           : clientData.practiceArea || [];
 
-        const preservedRelationshipStrength = existingClient.relationship_strength !== 5
-          ? existingClient.relationship_strength
-          : clientData.relationshipStrength || 5;
-
         const preservedConflictRisk = existingClient.conflict_risk !== 'Medium'
           ? existingClient.conflict_risk
           : clientData.conflictRisk || 'Medium';
-
-        const preservedRenewalProbability = existingClient.renewal_probability !== 0.7
-          ? existingClient.renewal_probability
-          : clientData.renewalProbability || 0.7;
-
-        const preservedStrategicFitScore = existingClient.strategic_fit_score !== 5
-          ? existingClient.strategic_fit_score
-          : clientData.strategicFitScore || 5;
 
         const preservedNotes = existingClient.notes && existingClient.notes.trim() !== ''
           ? existingClient.notes
@@ -320,40 +278,28 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           ? existingClient.interaction_frequency
           : clientData.interactionFrequency || '';
 
-        const preservedRelationshipIntensity = existingClient.relationship_intensity !== 5
-          ? existingClient.relationship_intensity
-          : clientData.relationshipIntensity || 5;
-
         toUpdateMap.set(lowerName, {
           id: existingClient.id,
           name: clientData.name || '',
           practice_area: fromFile('practice_area', preservedPracticeArea),
-          relationship_strength: preservedRelationshipStrength,
           conflict_risk: fromFile('conflict_risk', preservedConflictRisk),
-          renewal_probability: preservedRenewalProbability,
-          strategic_fit_score: preservedStrategicFitScore,
           notes: fromFile('notes', preservedNotes),
           primary_lobbyist: assigned ? assigned.legacy.primary_lobbyist : preservedPrimaryLobbyist,
           client_originator: assigned ? assigned.legacy.client_originator : preservedClientOriginator,
           lobbyist_team: assigned ? assigned.legacy.lobbyist_team : preservedLobbyistTeam,
           interaction_frequency: fromFile('interaction_frequency', preservedInteractionFrequency),
-          relationship_intensity: preservedRelationshipIntensity,
           ...sheetOnly
         });
       } else {
         toInsertMap.set(lowerName, {
           name: clientData.name || '',
           practice_area: fromFile('practice_area', clientData.practiceArea || []),
-          relationship_strength: clientData.relationshipStrength || 5,
           conflict_risk: fromFile('conflict_risk', clientData.conflictRisk || 'Medium'),
-          renewal_probability: clientData.renewalProbability || 0.7,
-          strategic_fit_score: clientData.strategicFitScore || 5,
           notes: fromFile('notes', clientData.notes || ''),
           primary_lobbyist: assigned ? assigned.legacy.primary_lobbyist : clientData.primaryLobbyist || '',
           client_originator: assigned ? assigned.legacy.client_originator : clientData.clientOriginator || '',
           lobbyist_team: assigned ? assigned.legacy.lobbyist_team : clientData.lobbyistTeam || [],
           interaction_frequency: fromFile('interaction_frequency', clientData.interactionFrequency || ''),
-          relationship_intensity: clientData.relationshipIntensity || 5,
           ...sheetOnly
         });
       }
@@ -375,7 +321,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     if (updateRows.length > 0) {
       const updateColumns = [['id', 'text'], ...writeColumns];
       const { sql, params } = valuesList(updateRows, updateColumns);
-      const { rows: updatedRows } = await (await client).query(`
+      const { rows: updatedRows } = await conn.query(`
         UPDATE clients c SET
           ${writeColumns.map(([column]) => `${column} = v.${column}`).join(',\n          ')},
           updated_at = CURRENT_TIMESTAMP
@@ -391,7 +337,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     const insertRows = Array.from(toInsertMap.values());
     if (insertRows.length > 0) {
       const { sql, params } = valuesList(insertRows, writeColumns);
-      const { rows: insertedRows } = await (await client).query(`
+      const { rows: insertedRows } = await conn.query(`
         INSERT INTO clients (${writeColumns.map(([column]) => column).join(', ')})
         VALUES ${sql}
         RETURNING *
@@ -424,7 +370,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
 
       const pairs = [...upserts.map(([clientId, year]) => [clientId, year]), ...deletes];
       if (pairs.length > 0) {
-        await (await client).query(`
+        await conn.query(`
           DELETE FROM client_revenues r
           USING unnest($1::text[], $2::text[]) AS d(client_id, year)
           WHERE r.client_id::text = d.client_id AND r.year::text = d.year
@@ -439,7 +385,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
           params.push(clientId, year, amount);
           valuePlaceholders.push(`($${params.length - 2}, $${params.length - 1}, $${params.length})`);
         }
-        await (await client).query(`
+        await conn.query(`
           INSERT INTO client_revenues (client_id, year, revenue_amount)
           VALUES ${valuePlaceholders.join(',')}
         `, params);
@@ -447,7 +393,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     }
 
     // Check file: every write above succeeded; undo them all
-    await (await client).query(dryRun ? 'ROLLBACK' : 'COMMIT');
+    await conn.query(dryRun ? 'ROLLBACK' : 'COMMIT');
 
     const summary = {
       totalClients: clientsWithScores.length,
@@ -471,138 +417,14 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     });
 
   } catch (error) {
-    await (await client).query('ROLLBACK');
+    await conn.query('ROLLBACK').catch(() => {});
     console.error('CSV processing error:', error);
     res.status(500).json({ 
       error: 'Failed to process CSV data',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   } finally {
-    (await client).release();
-  }
-});
-
-// POST /api/data/update-client
-router.post('/update-client', (req, res) => {
-  try {
-    const { clients, updatedClient } = req.body;
-    
-    if (!clients || !Array.isArray(clients) || !updatedClient) {
-      return res.status(400).json({ 
-        error: 'Invalid request. Expected clients array and updatedClient object.' 
-      });
-    }
-
-    // Calculate new strategic value for the updated client
-    updatedClient.strategicValue = calculateStrategicValue(updatedClient);
-
-    // Update the client in the array (replace old record)
-    const updatedClients = clients.map(client =>
-      client.id === updatedClient.id ? { ...client, ...updatedClient } : client
-    );
-
-    // Return the full updated clients array
-    res.json({
-      success: true,
-      clients: updatedClients
-    });
-
-  } catch (error) {
-    console.error('Client update error:', error);
-    res.status(500).json({ 
-      error: 'Failed to update client data',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// POST /api/data/optimize-portfolio
-router.post('/optimize-portfolio', (req, res) => {
-  try {
-    const { clients, maxCapacity = 2000 } = req.body;
-    
-    if (!clients || !Array.isArray(clients)) {
-      return res.status(400).json({ 
-        error: 'Invalid request. Expected clients array.' 
-      });
-    }
-
-    // Ensure clients have strategic scores
-    const clientsWithScores = calculateStrategicScores(clients);
-    
-    // Optimize the portfolio
-    const optimization = optimizePortfolio(clientsWithScores, maxCapacity);
-    
-    res.json({
-      success: true,
-      optimization,
-      parameters: {
-        maxCapacity,
-        totalEligibleClients: clientsWithScores.filter(c => 
-          (parseFloat(c.timeCommitment) || 0) > 0
-        ).length
-      }
-    });
-
-  } catch (error) {
-    console.error('Portfolio optimization error:', error);
-    res.status(500).json({ 
-      error: 'Failed to optimize portfolio',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// GET /api/data/analytics
-router.post('/analytics', (req, res) => {
-  try {
-    const { clients } = req.body;
-    
-    if (!clients || !Array.isArray(clients)) {
-      return res.status(400).json({ 
-        error: 'Invalid request. Expected clients array.' 
-      });
-    }
-
-    // Calculate analytics
-    const clientsWithScores = calculateStrategicScores(clients);
-    
-    // Practice area breakdown
-    const practiceAreas = {};
-    clientsWithScores.forEach(client => {
-      if (client.practiceArea && Array.isArray(client.practiceArea)) {
-        client.practiceArea.forEach(area => {
-          if (!practiceAreas[area]) {
-            practiceAreas[area] = { count: 0, revenue: 0 };
-          }
-          practiceAreas[area].count++;
-          practiceAreas[area].revenue += client.averageRevenue || 0;
-        });
-      }
-    });
-    
-    // Top clients by strategic value
-    const topClients = clientsWithScores
-      .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0))
-      .slice(0, 10);
-    
-    res.json({
-      success: true,
-      analytics: {
-        practiceAreas,
-        topClients,
-        totalRevenue: clientsWithScores.reduce((sum, c) => sum + (c.averageRevenue || 0), 0),
-        averageStrategicValue: clientsWithScores.length > 0 ? 
-          clientsWithScores.reduce((sum, c) => sum + (c.strategicValue || 0), 0) / clientsWithScores.length : 0
-      }
-    });
-
-  } catch (error) {
-    console.error('Analytics calculation error:', error);
-    res.status(500).json({ 
-      error: 'Failed to calculate analytics',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    conn.release();
   }
 });
 
@@ -639,10 +461,7 @@ function toApiClient(row) {
     ...client,
     revenue: revenueObjectFromRows(client.revenues),
     practiceArea: Array.isArray(client.practice_area) ? client.practice_area : [],
-    relationshipStrength: client.relationship_strength || 5,
     conflictRisk: client.conflict_risk || 'Medium',
-    renewalProbability: client.renewal_probability || 0.7,
-    strategicFitScore: client.strategic_fit_score || 5,
     timeCommitment: client.time_commitment || 40,
   };
 }
@@ -694,10 +513,10 @@ router.get('/clients', async (req, res) => {
 
 // POST /api/data/clients - Create new client with revenues
 router.post('/clients', async (req, res) => {
-  const client = db.pool.connect();
+  const conn = await db.pool.connect();
   
   try {
-    await (await client).query('BEGIN');
+    await conn.query('BEGIN');
     
     // The legacy retention columns (relationship_strength, relationship_intensity,
     // renewal_probability) and the phantom strategic_fit_score are retired: no
@@ -719,16 +538,16 @@ router.post('/clients', async (req, res) => {
       revenues = []
     } = req.body;
 
-    const assignment = await resolveAssignment(await client, req.body);
+    const assignment = await resolveAssignment(conn, req.body);
     if (assignment.errors.length > 0) {
-      await (await client).query('ROLLBACK');
+      await conn.query('ROLLBACK');
       return res.status(400).json(assignmentRejected(assignment.errors));
     }
     const people = assignment.value;
     const legacy = assignment.legacy;
 
     // Insert client record
-    const { rows: [newClient] } = await (await client).query(`
+    const { rows: [newClient] } = await conn.query(`
       INSERT INTO clients (
         name, practice_area, conflict_risk, notes, primary_lobbyist,
         client_originator, lobbyist_team, interaction_frequency,
@@ -757,10 +576,10 @@ router.post('/clients', async (req, res) => {
         INSERT INTO client_revenues (client_id, year, revenue_amount)
         VALUES ${valuePlaceholders.join(',')}
       `;
-      await (await client).query(query, params);
+      await conn.query(query, params);
     }
 
-    await (await client).query('COMMIT');
+    await conn.query('COMMIT');
     
     // Fetch the complete client with revenues and people
     const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [newClient.id]);
@@ -774,25 +593,28 @@ router.post('/clients', async (req, res) => {
     });
     
   } catch (error) {
-    await (await client).query('ROLLBACK');
+    await conn.query('ROLLBACK').catch(() => {});
     console.error('Error creating client:', error);
     res.status(500).json({ 
       error: 'Failed to create client',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   } finally {
-    (await client).release();
+    conn.release();
   }
 });
 
 // PUT /api/data/clients/:id - Update client with revenues
 router.put('/clients/:id', async (req, res) => {
-  const client = db.pool.connect();
+  const conn = await db.pool.connect();
   
   try {
-    await (await client).query('BEGIN');
+    await conn.query('BEGIN');
     
-    const clientId = req.params.id;
+    // Compared as text, as the second-chair route does: production's client
+    // ids are integers and init-db.sql's uuids, so an id of the other type, or
+    // a malformed one, matches nobody (404) instead of failing in PostgreSQL
+    const clientId = String(req.params.id);
     // Legacy retention columns (relationship_strength, relationship_intensity,
     // renewal_probability) and the phantom strategic_fit_score are retired and
     // intentionally left out of the SET clause — an edit no longer touches them,
@@ -810,16 +632,16 @@ router.put('/clients/:id', async (req, res) => {
       revenues = []
     } = req.body;
 
-    const assignment = await resolveAssignment(await client, req.body);
+    const assignment = await resolveAssignment(conn, req.body);
     if (assignment.errors.length > 0) {
-      await (await client).query('ROLLBACK');
+      await conn.query('ROLLBACK');
       return res.status(400).json(assignmentRejected(assignment.errors));
     }
     const people = assignment.value;
     const legacy = assignment.legacy;
 
     // Update client record
-    const { rows: [updatedClient] } = await (await client).query(`
+    const { rows: [updatedClient] } = await conn.query(`
       UPDATE clients SET
         name = $1, practice_area = $2, conflict_risk = $3,
         notes = $4, primary_lobbyist = $5, client_originator = $6,
@@ -828,7 +650,7 @@ router.put('/clients/:id', async (req, res) => {
         lead_id = $11, second_chair_id = $12, originator_id = $13,
         originator_is_firm = $14,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $15
+      WHERE id::text = $15
       RETURNING *
     `, [
       name, practice_area, conflict_risk,
@@ -841,12 +663,13 @@ router.put('/clients/:id', async (req, res) => {
     ]);
 
     if (!updatedClient) {
-      await (await client).query('ROLLBACK');
+      await conn.query('ROLLBACK');
       return res.status(404).json({ error: 'Client not found' });
     }
 
-    // Delete existing revenues
-    await (await client).query('DELETE FROM client_revenues WHERE client_id = $1', [clientId]);
+    // Delete existing revenues. From here on the client's id is the stored
+    // one, in untyped placeholders that take the column's type, uuid or integer
+    await conn.query('DELETE FROM client_revenues WHERE client_id = $1', [updatedClient.id]);
 
     // Insert new revenues in bulk
     if (revenues.length > 0) {
@@ -854,7 +677,7 @@ router.put('/clients/:id', async (req, res) => {
       const valuePlaceholders = [];
       let paramIndex = 1;
       revenues.forEach(revenue => {
-        params.push(clientId, revenue.year, revenue.revenue_amount);
+        params.push(updatedClient.id, revenue.year, revenue.revenue_amount);
         valuePlaceholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2})`);
         paramIndex += 3;
       });
@@ -862,13 +685,13 @@ router.put('/clients/:id', async (req, res) => {
         INSERT INTO client_revenues (client_id, year, revenue_amount)
         VALUES ${valuePlaceholders.join(',')}
       `;
-      await (await client).query(query, params);
+      await conn.query(query, params);
     }
 
-    await (await client).query('COMMIT');
+    await conn.query('COMMIT');
     
     // Fetch the complete updated client with revenues and people
-    const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [clientId]);
+    const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [updatedClient.id]);
 
     // Calculate strategic scores for the updated client
     const clientsWithScores = calculateStrategicScores(rows.map(toApiClient));
@@ -879,14 +702,14 @@ router.put('/clients/:id', async (req, res) => {
     });
     
   } catch (error) {
-    await (await client).query('ROLLBACK');
+    await conn.query('ROLLBACK').catch(() => {});
     console.error('Error updating client:', error);
     res.status(500).json({ 
       error: 'Failed to update client',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   } finally {
-    (await client).release();
+    conn.release();
   }
 });
 
@@ -969,40 +792,42 @@ router.put('/clients/:id/second-chair', async (req, res) => {
 
 // DELETE /api/data/clients/:id - Delete client and associated revenues
 router.delete('/clients/:id', async (req, res) => {
-  const client = db.pool.connect();
+  const conn = await db.pool.connect();
   
   try {
-    await (await client).query('BEGIN');
+    await conn.query('BEGIN');
     
-    const clientId = req.params.id;
+    // Compared as text, as in PUT: an id of the other type, or a malformed
+    // one, matches nobody (404)
+    const clientId = String(req.params.id);
 
     // First delete associated revenues
-    await (await client).query('DELETE FROM client_revenues WHERE client_id = $1', [clientId]);
+    await conn.query('DELETE FROM client_revenues WHERE client_id::text = $1', [clientId]);
 
     // Then delete the client
-    const { rowCount } = await (await client).query(
-      'DELETE FROM clients WHERE id = $1', 
+    const { rowCount } = await conn.query(
+      'DELETE FROM clients WHERE id::text = $1', 
       [clientId]
     );
 
     if (rowCount === 0) {
-      await (await client).query('ROLLBACK');
+      await conn.query('ROLLBACK');
       return res.status(404).json({ error: 'Client not found' });
     }
 
-    await (await client).query('COMMIT');
+    await conn.query('COMMIT');
     
     res.status(204).end();
     
   } catch (error) {
-    await (await client).query('ROLLBACK');
+    await conn.query('ROLLBACK').catch(() => {});
     console.error('Error deleting client:', error);
     res.status(500).json({ 
       error: 'Failed to delete client',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   } finally {
-    (await client).release();
+    conn.release();
   }
 });
 

@@ -26,6 +26,12 @@ const EFFORT_BY_CADENCE = {
 const DEFAULT_CADENCE_EFFORT = 1; // unknown / unset cadence
 const HANDFUL_MULTIPLIER = 1.5;   // "this one's a handful" flag
 
+// Mirror of UNRATED_STICKINESS in utils/strategic.cjs: the stickiness (0–10)
+// of a client nobody has rated, a fixed stand-in and not a rating (40 / 9,
+// what the retired relationship_intensity gave at its default of 5;
+// docs/plans/tier-2.md, S4). tests/strategic.test.mjs holds the two equal.
+export const UNRATED_STICKINESS = 40 / 9;
+
 // Largest effort a single client can reach (Daily cadence × handful). Used to
 // normalize effort onto a 0–10 scale where succession math expects it.
 export const MAX_EFFORT = EFFORT_BY_CADENCE.Daily * HANDFUL_MULTIPLIER; // 7.5
@@ -61,11 +67,11 @@ export const resolveEffort = (client) => {
 /**
  * Stickiness (0–10): how locked-in the relationship is.
  * Prefers the server-computed `stickinessScore`; otherwise derives it from the
- * raw 1–5 `stickiness` pick, falling back to the legacy retention fields so
- * un-migrated rows still produce a number (mirrors strategic.cjs).
+ * raw 1–5 `stickiness` pick, or UNRATED_STICKINESS when there is none
+ * (mirrors getStickiness in strategic.cjs).
  */
 export const resolveStickinessScore = (client) => {
-  if (!client) return 5;
+  if (!client) return UNRATED_STICKINESS;
 
   const precomputed = num(client.stickinessScore);
   if (precomputed !== null) return precomputed;
@@ -75,21 +81,7 @@ export const resolveStickinessScore = (client) => {
   if (explicit !== null) {
     return Math.max(0, Math.min(10, ((explicit - 1) / 4) * 10));
   }
-
-  const intensity = num(client.relationship_intensity ?? client.relationshipIntensity);
-  if (intensity !== null) {
-    return Math.max(0, Math.min(10, ((intensity - 1) / 9) * 10));
-  }
-
-  const strength = num(client.relationship_strength ?? client.relationshipStrength);
-  const renewal = num(client.renewal_probability ?? client.renewalProbability);
-  if (strength !== null || renewal !== null) {
-    const sStrength = strength !== null ? ((strength - 1) / 9) * 10 : 5;
-    const sRenewal = renewal !== null ? renewal * 10 : 5;
-    return Math.max(0, Math.min(10, (sStrength + sRenewal) / 2));
-  }
-
-  return 5;
+  return UNRATED_STICKINESS;
 };
 
 /**

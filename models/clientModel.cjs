@@ -49,10 +49,7 @@ exports.listWithMetrics = async () => {
      revenue,
      // Defaults expected by scoring util
      timeCommitment: c.time_commitment || 40,
-     relationshipStrength: c.relationship_strength || 5,
      conflictRisk: c.conflict_risk || 'Medium',
-     renewalProbability: c.renewal_probability || 0.7,
-     strategicFitScore: c.strategic_fit_score || 5,
      practiceArea: c.practice_area || [],
    };
  });

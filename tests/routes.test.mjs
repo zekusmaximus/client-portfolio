@@ -42,17 +42,13 @@ import {
 import { createSseParser, eventJson } from '../src/utils/sse.js';
 
 // Every route server.cjs registers, as METHOD and the full path, with whether
-// it needs a signed-in partner and the page files that call it. The three
-// routes S3 deletes are here until WP2 deletes them and moves them to REMOVED.
+// it needs a signed-in partner and the page files that call it.
 const CONTRACTS = {
   'POST /api/auth/login': { signIn: false, page: 'src/portfolioStore.js (login), src/LoginPage.jsx' },
   'POST /api/auth/logout': { signIn: false, page: 'src/portfolioStore.js (logout)' },
   'GET /api/auth/me': { signIn: true, page: 'src/portfolioStore.js (checkAuth)' },
   'POST /api/auth/change-password': { signIn: true, page: 'src/ChangePasswordDialog.jsx' },
   'POST /api/data/process-csv': { signIn: true, page: 'src/DataUploadManager.jsx' },
-  'POST /api/data/update-client': { signIn: true, page: null },
-  'POST /api/data/optimize-portfolio': { signIn: true, page: null },
-  'POST /api/data/analytics': { signIn: true, page: null },
   'GET /api/data/clients': { signIn: true, page: 'src/portfolioStore.js (fetchClients)' },
   'POST /api/data/clients': { signIn: true, page: 'src/portfolioStore.js (addClient), src/ClientEnhancementForm.jsx' },
   'PUT /api/data/clients/:id': { signIn: true, page: 'src/portfolioStore.js (updateClient), src/ClientEnhancementForm.jsx' },
@@ -72,11 +68,16 @@ const CONTRACTS = {
 };
 
 // Routes deleted in earlier packages: none may be registered again, and each
-// answers 404 (Tier 1 WP3 deleted claude.cjs). WP2 adds S3's three here.
+// answers 404. Tier 1 WP3 deleted claude.cjs; Tier 2 WP2 (S3) the three
+// /api/data routes nothing on the page called, update-client scoring with a
+// second, retired formula.
 const REMOVED = [
   'POST /api/claude/analyze-portfolio',
   'POST /api/claude/strategic-advice',
   'POST /api/claude/client-recommendations',
+  'POST /api/data/update-client',
+  'POST /api/data/optimize-portfolio',
+  'POST /api/data/analytics',
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -134,8 +135,9 @@ test('inventory: every registered route has a contract with tests, every contrac
   assert.deepEqual(contracts.filter((r) => !blocks.includes(r)), [], 'a contract without a route() block of tests');
   assert.deepEqual(blocks.filter((r) => !contracts.includes(r)), [], 'a route() block without a contract');
   assert.equal(new Set(blocks).size, blocks.length, 'a route() block written twice');
-  // The plan's count (docs/plans/tier-2.md, section 6): 21 live routes and S3's three
-  assert.equal(routes.length, 24);
+  // The plan's count (docs/plans/tier-2.md, section 6): 21 live routes, once
+  // WP2 deleted S3's three
+  assert.equal(routes.length, 21);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -617,25 +619,25 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(await clientCount(), before);
     });
 
-    // The request check (csvValidationRules). Pinned defect: `field` is
-    // missing from each detail because handleCSVValidationErrors reads
-    // error.param, which express-validator 7 renamed error.path
-    // (docs/plans/tier-2.md, section 3 item 6); WP2 fixes it and adds `field` here.
-    test('400 { error, details: [{ message, value }] } from the request check: no rows, a row without CLIENT, dryRun not a boolean; nothing written', async () => {
+    // The request check (csvValidationRules). Until Tier 2 WP2 each detail
+    // lacked `field`: handleCSVValidationErrors read error.param, which
+    // express-validator 7 renamed error.path (docs/plans/tier-2.md, section 3
+    // item 6). The page shows details[].message (src/DataUploadManager.jsx).
+    test('400 { error, details: [{ field, message, value }] } from the request check: no rows, a row without CLIENT, dryRun not a boolean; nothing written', async () => {
       const before = await clientCount();
       const refusals = [
-        [{ csvData: [] }, 'CSV data must be a non-empty array'],
-        [{ csvData: 'CLIENT\nx' }, 'CSV data must be a non-empty array'],
-        [{ csvData: [{ '2026 Contracts': '$1' }] }, 'Row 2: CLIENT is required and must be a non-empty string'],
-        [{ csvData: [{ CLIENT: 'Fine Client' }], dryRun: 'true' }, 'dryRun must be true or false'],
+        [{ csvData: [] }, 'csvData', 'CSV data must be a non-empty array'],
+        [{ csvData: 'CLIENT\nx' }, 'csvData', 'CSV data must be a non-empty array'],
+        [{ csvData: [{ '2026 Contracts': '$1' }] }, 'csvData', 'Row 2: CLIENT is required and must be a non-empty string'],
+        [{ csvData: [{ CLIENT: 'Fine Client' }], dryRun: 'true' }, 'dryRun', 'dryRun must be true or false'],
       ];
-      for (const [body, message] of refusals) {
+      for (const [body, field, message] of refusals) {
         const res = await call('POST', '/api/data/process-csv', body);
         assert.equal(res.status, 400, JSON.stringify(body));
         assert.deepEqual(keysOf(res.body), ['details', 'error']);
         assert.equal(res.body.error, 'CSV validation failed');
-        assert.ok(res.body.details.some((d) => d.message === message), `${JSON.stringify(body)}: ${JSON.stringify(res.body.details)}`);
-        for (const detail of res.body.details) assert.deepEqual(keysOf(detail), ['message', 'value'], 'no field (error.param; WP2)');
+        assert.ok(res.body.details.some((d) => d.field === field && d.message === message), `${JSON.stringify(body)}: ${JSON.stringify(res.body.details)}`);
+        for (const detail of res.body.details) assert.deepEqual(keysOf(detail), ['field', 'message', 'value'], JSON.stringify(detail));
       }
       assert.equal(await clientCount(), before);
     });
@@ -651,54 +653,6 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         errors: [{ row: 2, client: name, message: 'Lead "Nobody Here" is not on the People list.' }],
       }]);
       assert.equal(await clientCount(), before);
-    });
-  });
-
-  // S3 deletes the next three in WP2: nothing on the page calls them, and
-  // update-client scores with a second, retired formula. WP2 moves each to
-  // REMOVED, where it answers 404.
-  route('POST /api/data/update-client', () => {
-    test('200 { success, clients } with the updated client merged in and scored; 400 { error } without clients and updatedClient', async () => {
-      const res = await call('POST', '/api/data/update-client', {
-        clients: [{ id: 1, name: 'One' }, { id: 2, name: 'Two' }],
-        updatedClient: { id: 2, name: 'Two, edited', conflictRisk: 'Low' },
-      });
-      assert.equal(res.status, 200, res.text);
-      assert.deepEqual(keysOf(res.body), ['clients', 'success']);
-      assert.deepEqual(res.body.clients.map((c) => c.name), ['One', 'Two, edited']);
-      assert.equal(typeof res.body.clients[1].strategicValue, 'number');
-      for (const body of [{}, { clients: [] }, { updatedClient: {} }]) {
-        const bad = await call('POST', '/api/data/update-client', body);
-        assert.deepEqual([bad.status, bad.body], [400, { error: 'Invalid request. Expected clients array and updatedClient object.' }], JSON.stringify(body));
-      }
-    });
-  });
-
-  route('POST /api/data/optimize-portfolio', () => {
-    test('200 { success, optimization, parameters }; 400 { error } without a clients array', async () => {
-      const res = await call('POST', '/api/data/optimize-portfolio', {
-        clients: [{ id: 1, name: 'One', revenues: [{ year: 2026, revenue_amount: 100000 }] }],
-      });
-      assert.equal(res.status, 200, res.text);
-      assert.deepEqual(keysOf(res.body), ['optimization', 'parameters', 'success']);
-      assert.deepEqual(keysOf(res.body.optimization), ['averageStrategicValue', 'clientCount', 'clients', 'excludedClients', 'totalRevenue']);
-      assert.deepEqual(res.body.parameters, { maxCapacity: 2000, totalEligibleClients: 0 });
-      const bad = await call('POST', '/api/data/optimize-portfolio', {});
-      assert.deepEqual([bad.status, bad.body], [400, { error: 'Invalid request. Expected clients array.' }]);
-    });
-  });
-
-  route('POST /api/data/analytics', () => {
-    test('200 { success, analytics }; 400 { error } without a clients array', async () => {
-      const res = await call('POST', '/api/data/analytics', {
-        clients: [{ id: 1, name: 'One', practiceArea: ['Energy'], revenues: [{ year: 2026, revenue_amount: 100000 }] }],
-      });
-      assert.equal(res.status, 200, res.text);
-      assert.deepEqual(keysOf(res.body), ['analytics', 'success']);
-      assert.deepEqual(keysOf(res.body.analytics), ['averageStrategicValue', 'practiceAreas', 'topClients', 'totalRevenue']);
-      assert.deepEqual(res.body.analytics.practiceAreas, { Energy: { count: 1, revenue: 100000 } });
-      const bad = await call('POST', '/api/data/analytics', { clients: 'none' });
-      assert.deepEqual([bad.status, bad.body], [400, { error: 'Invalid request. Expected clients array.' }]);
     });
   });
 
@@ -796,16 +750,22 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(await clientCount(), before);
     });
 
-    // Pinned defect (a WP2 candidate, found by this suite): parseId
-    // (utils/people.cjs) takes any positive integer as a person id, and one
-    // above PostgreSQL's integer range fails in the people query (500) instead
-    // of matching nobody (400 "Validation failed"). PUT shares the check
-    // (resolveAssignment, data.cjs); readAnswerId (utils/aiAnswers.cjs) bounds
-    // its ids and answers 404.
-    test('a person id above PostgreSQL\'s integer range answers 500, not 400; nothing written', async () => {
+    // Until Tier 2 WP2 parseId (utils/people.cjs) took any positive integer
+    // as a person id, and one above PostgreSQL's integer range failed in the
+    // people query (500). It now matches nobody, as readAnswerId
+    // (utils/aiAnswers.cjs) bounds its ids.
+    test('a person id above PostgreSQL\'s integer range answers 400 "Validation failed", as any id not on the list; nothing written', async () => {
+      const kevin = await seed('Kevin');
       const before = await clientCount();
-      const res = await call('POST', '/api/data/clients', formBody({ lead_id: 99999999999 }));
-      assert.deepEqual([res.status, res.body.error], [500, 'Failed to create client']);
+      for (const [people, details] of [
+        [{ lead_id: 99999999999 }, [{ field: 'lead_id', message: 'The lead must be an active partner.' }]],
+        [{ lead_id: '99999999999' }, [{ field: 'lead_id', message: 'The lead must be an active partner.' }]],
+        [{ lead_id: kevin.id, second_chair_id: 99999999999 }, [{ field: 'second_chair_id', message: 'The second chair must be an active person on the People list.' }]],
+        [{ lead_id: kevin.id, originator_id: 99999999999 }, [{ field: 'originator_id', message: 'The originator must be on the People list.' }]],
+      ]) {
+        const res = await call('POST', '/api/data/clients', formBody(people));
+        assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Validation failed', details }], JSON.stringify(people));
+      }
       assert.equal(await clientCount(), before);
     });
   });
@@ -852,16 +812,35 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
     });
 
-    // Pinned defect (a WP2 candidate): the id is compared in its column's type
-    // (WHERE id = $1), so an id that is not this shape's type fails in
-    // PostgreSQL and answers 500, where the second-chair route, which compares
-    // id::text, answers 404 (CLAUDE.md: "Never cast a client id to a type")
-    test('a malformed id, or one of the other shape\'s type, answers 500 { error: "Failed to update client" }, not 404', async () => {
+    // Until Tier 2 WP2 the id was compared in its column's type (WHERE id =
+    // $1), so an id that is not this shape's type failed in PostgreSQL (500).
+    // It is compared as text now, as the second-chair route does (CLAUDE.md:
+    // "Never cast a client id to a type").
+    test('404 { error: "Client not found" } for a malformed id, or one of the other shape\'s type; nothing written', async () => {
       const lead = await seed('Kevin');
+      const bystander = await addClient({ lead, revenues: { 2025: 1000, 2026: 2000 } });
+      const before = await storedClient(bystander.id);
+      const count = await clientCount();
       for (const id of [otherShapeId, 'not-an-id']) {
         const res = await call('PUT', `/api/data/clients/${id}`, formBody({ lead_id: lead.id }));
-        assert.deepEqual([res.status, res.body.error], [500, 'Failed to update client'], id);
+        assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }], id);
       }
+      assert.equal(await clientCount(), count);
+      assert.deepEqual(await storedClient(bystander.id), before);
+      assert.deepEqual(await revenueRows(bystander.id), [{ year: 2025, amount: 1000 }, { year: 2026, amount: 2000 }]);
+    });
+
+    test('a person id above PostgreSQL\'s integer range answers 400 "Validation failed" (Tier 2 WP2); nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, second_chair_id: 99999999999 }));
+      assert.deepEqual([res.status, res.body], [400, {
+        success: false, error: 'Validation failed',
+        details: [{ field: 'second_chair_id', message: 'The second chair must be an active person on the People list.' }],
+      }]);
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
     });
 
     // Pinned defect: a PUT is a full overwrite, and one without `revenues`
@@ -940,13 +919,16 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       }
     });
 
-    // Pinned defect (a WP2 candidate), as POST /api/data/clients': a person id
-    // above PostgreSQL's integer range fails in the people query
-    test('a second chair id above PostgreSQL\'s integer range answers 500, not 400; nothing written', async () => {
+    // As POST /api/data/clients': until Tier 2 WP2 a person id above
+    // PostgreSQL's integer range failed in the people query (500)
+    test('a second chair id above PostgreSQL\'s integer range answers 400 "Validation failed", as any id not on the list; nothing written', async () => {
       const created = await addClient({ lead: await seed('Kevin') });
       const before = await storedClient(created.id);
       const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: 99999999999, expected_second_chair_id: null });
-      assert.deepEqual([res.status, res.body], [500, { success: false, error: 'Failed to assign the second chair' }]);
+      assert.deepEqual([res.status, res.body], [400, {
+        success: false, error: 'Validation failed',
+        details: [{ field: 'second_chair_id', message: 'The second chair must be an active person on the People list.' }],
+      }]);
       assert.deepEqual(await storedClient(created.id), before);
     });
   });
@@ -966,12 +948,16 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
     });
 
-    // Pinned defect (a WP2 candidate), as PUT's: compared in the column's type
-    test('a malformed id, or one of the other shape\'s type, answers 500 { error: "Failed to delete client" }, not 404', async () => {
+    // As PUT's: compared in the column's type until Tier 2 WP2 (500), as text now
+    test('404 { error: "Client not found" } for a malformed id, or one of the other shape\'s type; nothing deleted', async () => {
+      const bystander = await addClient({ lead: await seed('Kevin'), revenues: { 2026: 3000 } });
+      const count = await clientCount();
       for (const id of [otherShapeId, 'not-an-id']) {
         const res = await call('DELETE', `/api/data/clients/${id}`);
-        assert.deepEqual([res.status, res.body.error], [500, 'Failed to delete client'], id);
+        assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }], id);
       }
+      assert.equal(await clientCount(), count);
+      assert.deepEqual(await revenueRows(bystander.id), [{ year: 2026, amount: 3000 }]);
     });
   });
 
@@ -1107,11 +1093,13 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       }
     });
 
-    // Pinned defect (a WP2 candidate), as POST /api/data/clients': parseId
-    // takes an id above PostgreSQL's integer range, and the query fails
-    test('an id above PostgreSQL\'s integer range answers 500 { success: false, error }, not 404', async () => {
-      const res = await call('PUT', '/api/people/99999999999', { active: true });
-      assert.deepEqual([res.status, res.body], [500, { success: false, error: 'Failed to update the person.' }]);
+    // As POST /api/data/clients': until Tier 2 WP2 parseId took an id above
+    // PostgreSQL's integer range, and the query failed (500)
+    test('404 { success: false, error: "No such person." } for an id above PostgreSQL\'s integer range', async () => {
+      for (const id of ['2147483648', '99999999999']) {
+        const res = await call('PUT', `/api/people/${id}`, { active: true });
+        assert.deepEqual([res.status, res.body], [404, { success: false, error: 'No such person.' }], id);
+      }
     });
 
     test('400 { success: false, error } for a malformed change or none', async () => {

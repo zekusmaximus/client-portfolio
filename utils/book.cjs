@@ -29,7 +29,7 @@
 // From utils/escaping.cjs directly: utils/transitionPlan.cjs re-exports it,
 // and itself requires this module for the transition plan's figures (WP6).
 const { unescapeText } = require('./escaping.cjs');
-const { getEffort, calculateStrategicValue, EFFORT_BY_CADENCE, HANDFUL_MULTIPLIER } = require('./strategic.cjs');
+const { getEffort, calculateStrategicValue, EFFORT_BY_CADENCE, HANDFUL_MULTIPLIER, UNRATED_STICKINESS } = require('./strategic.cjs');
 
 /**
  * The part of a client's effort its second chair carries (P10 as amended by
@@ -419,7 +419,7 @@ function legend(model) {
     `- Stickiness is a partner's judgment of how locked-in the relationship is, from 1 to 5: ${stickiness}. "not rated" means nobody has judged it yet; it is not a middle value.`,
     `- Effort is the relative work a client takes, from how often it is touched (cadence): ${cadences}. A handful (every interaction is heavy) multiplies it by ${HANDFUL_MULTIPLIER}.`,
     `- Strategic value (0 to 10) = revenue score × 0.5 + stickiness score × 0.5 − conflict penalty, kept within 0 to 10. Revenue score = the client's latest year's revenue ÷ $50,000, at most 10 ($500,000 or more scores 10); the latest year is the client's own, which can be earlier than ${y}. Stickiness score = (pick − 1) ÷ 4 × 10. Conflict penalty: High 3, Medium 1, Low 0.`,
-    '- Defaults, not judgments: stickiness "not rated" (the strategic value then uses a stand-in from older fields, not a rating); cadence "not set" (effort 1, and 1.5 with a handful); conflict risk "not set" (scored as Medium); originator "not recorded"; "—" in a revenue column (no revenue on file for that year). Treat each as unknown.',
+    `- Defaults, not judgments: stickiness "not rated" (the strategic value then uses a fixed stand-in stickiness score of ${UNRATED_STICKINESS.toFixed(2)}, the same for every such client, not a rating); cadence "not set" (effort 1, and 1.5 with a handful); conflict risk "not set" (scored as Medium); originator "not recorded"; "—" in a revenue column (no revenue on file for that year). Treat each as unknown.`,
     `- Load: a client's lead carries its full effort and its second chair ${share}% of it. Client counts and revenue count in full for both chairs. Revenue in the people tables is ${y}'s.`,
     `- Each person's figure is followed by its ratio to the average of the active people in the same role, those with no clients included: (1.3×) is 30% above that average. Lead books compare with the active partners. (—) means there is nothing to compare with: fewer than two active people in the role, or an average of zero. There is no capacity ceiling; balance is relative to the role average.`,
     `- Revenue per effort: the ${y} revenue of the clients a person leads ÷ their lead effort. "n/a" in a lead column: not a partner and leads no client.`,

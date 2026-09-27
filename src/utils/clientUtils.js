@@ -2,34 +2,25 @@
  * Utility functions for client data processing
  */
 
+// The five cadences (the client form's, the import's `Cadence` column's and
+// EFFORT_BY_CADENCE's in utils/strategic.cjs)
+const CADENCES = ['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed'];
+
 /**
- * Helper function to determine if a client is enhanced
- * A client is considered enhanced if they have detailed information beyond basic fields
+ * Whether a client has the brief's "two quick picks" (docs/plans/tier-2.md,
+ * S5): a Stickiness pick, an integer from 1 to 5 (what the book and the AI
+ * tab's "Rated for stickiness" count as rated), and a cadence. Client Details
+ * shows such a client as "Enhanced". Until Tier 2 WP2 any client counted,
+ * because the rule read strategicFitScore, which the API set to 5 for all.
  * @param {Object} client - The client object
- * @returns {boolean} - True if client has enhanced information
+ * @returns {boolean} - True if the client is rated for stickiness and has a cadence
  */
 export const isClientEnhanced = (client) => {
   if (!client) return false;
-  
-  // Check for enhanced fields beyond basic client information
-  const hasEnhancedFields = (
-    // Practice areas selected
-    (client.practiceArea && client.practiceArea.length > 0) ||
-    // Relationship metrics customized (assuming defaults are 5, 'Medium', 0.7)
-    (client.relationshipStrength && client.relationshipStrength !== 5) ||
-    (client.conflictRisk && client.conflictRisk !== 'Medium') ||
-    (client.renewalProbability && client.renewalProbability !== 0.7) ||
-    // Strategic metrics set
-    (client.strategicFitScore && client.strategicFitScore > 0) ||
-    // Team information added
-    (client.primary_lobbyist && client.primary_lobbyist.trim() !== '') ||
-    (client.client_originator && client.client_originator.trim() !== '') ||
-    (client.lobbyist_team && client.lobbyist_team.length > 0) ||
-    // Notes added
-    (client.notes && client.notes.trim() !== '')
-  );
-  
-  return hasEnhancedFields;
+  const pick = parseFloat(client.stickiness);
+  const rated = Number.isInteger(pick) && pick >= 1 && pick <= 5;
+  const cadence = client.interaction_frequency ?? client.interactionFrequency;
+  return rated && CADENCES.includes(cadence);
 };
 
 /**

@@ -4,6 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import strategic from '../utils/strategic.cjs';
+import { UNRATED_STICKINESS as PAGE_UNRATED_STICKINESS, resolveStickinessScore } from '../src/utils/clientMetrics.js';
+import { CLIENTS as BOOK_CLIENTS } from './fixtures/books.mjs';
 
 // The WP0 fixture, plus a client whose rows span 2025 and 2026.
 const FIXTURE = [
@@ -82,4 +84,97 @@ test('the revenue object shape scores identically to the rows it came from', () 
       client.name
     );
   }
+});
+
+/* ------------------------------------------------------------------------ */
+/*        The retired columns and the unrated stand-in (Tier 2 WP2, S4)     */
+/* ------------------------------------------------------------------------ */
+
+// getStickiness as it was until Tier 2 WP2 (at 4a0f2a3), frozen here: the pick,
+// else relationship_intensity, else relationship_strength with
+// renewal_probability, else 5.
+function legacyStickiness(client) {
+  const num = (v) => {
+    const n = parseFloat(v);
+    return Number.isNaN(n) ? null : n;
+  };
+  const explicit = num(client.stickiness);
+  if (explicit !== null) return Math.max(0, Math.min(10, ((explicit - 1) / 4) * 10));
+  const intensity = num(client.relationship_intensity ?? client.relationshipIntensity);
+  if (intensity !== null) return Math.max(0, Math.min(10, ((intensity - 1) / 9) * 10));
+  const strength = num(client.relationship_strength ?? client.relationshipStrength);
+  const renewal = num(client.renewal_probability ?? client.renewalProbability);
+  if (strength !== null || renewal !== null) {
+    const sStrength = strength !== null ? ((strength - 1) / 9) * 10 : 5;
+    const sRenewal = renewal !== null ? renewal * 10 : 5;
+    return Math.max(0, Math.min(10, (sStrength + sRenewal) / 2));
+  }
+  return 5;
+}
+// The strategic value with the legacy stickiness and the unchanged weights
+function legacyStrategicValue(client) {
+  const revenueScore = Math.min(10, strategic.getMostRecentRevenue(client, client.revenues) / 50000);
+  const penalty = { High: 3, Medium: 1, Low: 0 }[client.conflict_risk ?? client.conflictRisk ?? 'Medium'] ?? 1;
+  return Math.max(0, Math.min(10, revenueScore * 0.5 + legacyStickiness(client) * 0.5 - penalty));
+}
+
+// What production's clients hold in the retired columns: the column defaults,
+// on all 84 (Jeff's read-only count, 2026-09-27), and what every new row gets
+const PRODUCTION_RETIRED = { relationship_intensity: 5, relationship_strength: 5, renewal_probability: '0.70', strategic_fit_score: 5 };
+
+// Every client of the fixture books, and a grid of picks (none included),
+// conflict risks and revenues, each stored as the database stores it
+function fixtureClients() {
+  const grid = [];
+  for (const stickiness of [null, undefined, 1, 2, 3, 4, 5, '3']) {
+    for (const conflict of ['Low', 'Medium', 'High', null, 'Unknown']) {
+      for (const amount of [0, 30000, 250000, 900000]) {
+        grid.push({ stickiness, conflict_risk: conflict, revenues: [{ year: 2026, revenue_amount: String(amount) }] });
+      }
+    }
+  }
+  return [...FIXTURE, ...BOOK_CLIENTS, ...grid].map((client) => ({ ...client, ...PRODUCTION_RETIRED }));
+}
+
+test('no score moves on the fixture books: stored with production\'s retired values, the stand-in scores as relationship_intensity 5 did', () => {
+  const clients = fixtureClients();
+  const scored = strategic.calculateStrategicScores(clients);
+  assert.ok(clients.some((c) => c.stickiness === null || c.stickiness === undefined), 'unrated clients are in the set');
+  clients.forEach((client, i) => {
+    assert.equal(strategic.getStickiness(client), legacyStickiness(client), JSON.stringify(client));
+    assert.equal(strategic.calculateStrategicValue(client), legacyStrategicValue(client), JSON.stringify(client));
+    assert.equal(scored[i].strategicValue, Math.round(legacyStrategicValue(client) * 100) / 100);
+    assert.equal(scored[i].stickinessScore, Math.round(legacyStickiness(client) * 100) / 100);
+  });
+  // Exactly the legacy value for relationship_intensity 5, not 4.44
+  assert.equal(strategic.UNRATED_STICKINESS, 40 / 9);
+  assert.equal(strategic.UNRATED_STICKINESS, ((5 - 1) / 9) * 10);
+});
+
+test('the retired columns are not read: an unrated client scores the stand-in whatever they hold, in either spelling', () => {
+  for (const retired of [
+    {},
+    { relationship_intensity: 8, relationship_strength: 7, renewal_probability: 0.93, strategic_fit_score: 6 },
+    { relationship_intensity: null, relationship_strength: 1, renewal_probability: 0.1 },
+    { relationshipIntensity: 10, relationshipStrength: 10, renewalProbability: 1, strategicFitScore: 10 },
+  ]) {
+    const client = { stickiness: null, conflict_risk: 'Low', revenues: [{ year: 2026, revenue_amount: 100000 }], ...retired };
+    assert.equal(strategic.getStickiness(client), 40 / 9, JSON.stringify(retired));
+    assert.equal(strategic.calculateStrategicValue(client), 2 * 0.5 + (40 / 9) * 0.5, JSON.stringify(retired));
+  }
+  // A pick is read as before, whatever the retired columns hold
+  assert.equal(strategic.getStickiness({ stickiness: 4, relationship_intensity: 1 }), 7.5);
+});
+
+test('the page\'s stickiness is the server\'s: the same stand-in, and the same score for every pick and none', () => {
+  assert.equal(PAGE_UNRATED_STICKINESS, strategic.UNRATED_STICKINESS);
+  for (const client of fixtureClients()) {
+    assert.equal(resolveStickinessScore(client), strategic.getStickiness(client), JSON.stringify(client));
+    // The API's client carries the server's rounded score, which the page prefers
+    const [api] = strategic.calculateStrategicScores([client]);
+    assert.equal(resolveStickinessScore(api), api.stickinessScore);
+  }
+  // Raw form state (the client form's live preview), rated and not
+  assert.equal(resolveStickinessScore({ stickiness: null, interaction_frequency: 'Weekly' }), 40 / 9);
+  assert.equal(resolveStickinessScore({ stickiness: 5 }), 10);
 });
