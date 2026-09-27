@@ -84,10 +84,10 @@ the build log names the Node version it used.
 |---|---|
 | Instance type (Free or paid) | confirm in the dashboard; it decides sections 7, 11 and the Shell |
 | Region | confirm in the dashboard; the database should be in the same one |
-| Node version | 22.16.0 (confirmed by Jeff on 2026-09-26). Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22, `@anthropic-ai/sdk` 0.128.0 supports Node 20 or later, and `bcrypt` 6 Node 18 or later |
+| Node version | 22.16.0, Render's default for the service, not pinned (confirmed by Jeff on 2026-09-26, and in the deploy log of `3b5a246` on 2026-09-27). Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22, `@anthropic-ai/sdk` 0.128.0 supports Node 20 or later, and `bcrypt` 6 Node 18 or later |
 | Root directory | confirm in the dashboard (the repository root is what the code needs) |
-| Build command | confirm in the dashboard (`npm ci` is what the code needs) |
-| Start command | confirm in the dashboard (`node server.cjs` or `npm start`) |
+| Build command | `npm install` (the deploy log of `3b5a246`, 2026-09-27). The code needs `npm ci`, which CI already runs: with `npm install`, a lockfile that does not match `package.json` installs other versions instead of failing the build. Jeff may switch it (the service's Settings, Build Command). Each build restores a cache of `node_modules` from the one before and installs the dev dependencies too, so the log counts them ("audited 609 packages" on 2026-09-27) |
+| Start command | `npm start`, which runs `node server.cjs` (the deploy log of `3b5a246`, 2026-09-27) |
 | Pre-deploy command | confirm in the dashboard (none is needed; pre-deploy commands exist on paid instances only: <https://render.com/docs/deploys>) |
 | Auto-deploy and branch | confirm in the dashboard (Settings: On Commit, After CI Checks Pass, or Off: <https://render.com/docs/deploys>) |
 | Health check path | confirm in the dashboard (`/api/health` if you set one; section 10) |
@@ -836,10 +836,11 @@ remain are dev dependencies and need Vite 8, a major version.
 | `esbuild` 0.18.20 | moderate (dev server answers any website) | `vite` 4 | `npm run dev` only | Vite 8 | with Vite |
 
 Until WP3 the table also listed `tar` 6.2.1 (critical), `@mapbox/node-pre-gyp`
-1.0.11 and `bcrypt` 5.1.1 (high): bcrypt 5's install script, run by `npm ci`
-on Render, downloaded its binary from GitHub and unpacked it with `tar`.
-bcrypt 6 ships its binaries inside the npm package (`prebuilds/`, loaded by
-`node-gyp-build`), so `npm ci` fetches nothing outside the npm registry and
+1.0.11 and `bcrypt` 5.1.1 (high): bcrypt 5's install script, run by Render's
+build (`npm install`, section 1.2), downloaded its binary from GitHub and
+unpacked it with `tar`. bcrypt 6 ships its binaries inside the npm package
+(`prebuilds/`, loaded by `node-gyp-build`), so the install fetches nothing
+outside the npm registry and
 the lockfile's integrity hash covers the binary. On Render (Linux x64, glibc) it loads
 `prebuilds/linux-x64/bcrypt.glibc.node`; only where no prebuild matches does
 the install compile bcrypt from source, which needs Python, `make` and a C++

@@ -16,7 +16,9 @@ live site. `docs/plans/tier-1.md` (the AI rebuild), approved by Jeff on
 shared six-partner tool), approved by Jeff on 2026-09-27. Its gate (S1) is met:
 WP0's docs part merged as PR #39. WP1 (contract tests per route,
 `tests/routes.test.mjs`) merged as PR #40 and WP2 (dead code and small
-defects) as PR #41; WP3 (bcrypt 6) is under way. Run the rest in order, and
+defects) as PR #41; WP3 (bcrypt 6) merged as PR #42 and was verified on
+gbacpod.com by Jeff on 2026-09-27; WP4 (validation on the live write path)
+is under way. Run the rest in order, and
 update its status table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
