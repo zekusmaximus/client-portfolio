@@ -2,13 +2,12 @@
 // utils/book.cjs, the server's port of the page's load arithmetic, held equal
 // to the page's own modules (src/utils/load.js, src/utils/revenue.js) on the
 // fixture book of tests/load.test.mjs and on 200 random books; then the text:
-// deterministic, every client once, names decoded, no notes, defaults
+// deterministic, every client once, names as stored, no notes, defaults
 // labelled as defaults.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import book from '../utils/book.cjs';
 import strategic from '../utils/strategic.cjs';
-import escaping from '../utils/escaping.cjs';
 import {
   partnershipModel,
   SECOND_CHAIR_EFFORT_SHARE as PAGE_SHARE,
@@ -133,7 +132,7 @@ function randomBook(seed) {
     if (revenues.length === 0 && rand() < 0.5) revenues.push({ id: null, year: null, revenue_amount: null });
     const raw = {
       id: uuids ? `${hex(rand, 8)}-${hex(rand, 4)}-4${hex(rand, 3)}-8${hex(rand, 3)}-${hex(rand, 12)}` : 1000 + i,
-      name: `${pick(rand, ['Alpha', 'beta', 'Smith &amp; Co', 'Gamma'])} ${Math.floor(rand() * 20)}`,
+      name: `${pick(rand, ['Alpha', 'beta', 'Smith & Co', 'Gamma'])} ${Math.floor(rand() * 20)}`,
       lead,
       secondChair,
       interaction_frequency: pick(rand, CADENCES),
@@ -278,13 +277,13 @@ const scored = (rows) => strategic.calculateStrategicScores(rows.map((c) => ({
 const rev = (pairs) => Object.entries(pairs).map(([year, amount]) => ({ id: 1, year: Number(year), revenue_amount: amount }));
 
 const CONTENT_CLIENTS = scored([
-  stored({ id: 987654, name: 'Smith &amp; Co', lead: byName.get('Kevin'), secondChair: byName.get('Jay'), notes: NOTE,
+  stored({ id: 987654, name: 'Smith & Co', lead: byName.get('Kevin'), secondChair: byName.get('Jay'), notes: NOTE,
     stickiness: 1, revenues: rev({ 2025: 80000, 2026: 90000 }), practice_area: ['Healthcare'] }),
   stored({ id: UUID, name: 'Acme Holdings', lead: byName.get('Kevin'), stickiness: null, interaction_frequency: null,
     conflict_risk: null, revenues: rev({ 2026: 50000 }) }),
   stored({ id: 12, name: 'acme holdings', lead: byName.get('Paula'), secondChair: byName.get('Steve'), stickiness: 2,
     revenues: [{ id: null, year: null, revenue_amount: null }] }),
-  stored({ id: 13, name: 'Northern &lt;Rail&gt; Board', lead: byName.get('Paula'), secondChair: byName.get('Anna'), stickiness: 5,
+  stored({ id: 13, name: 'Northern <Rail> Board', lead: byName.get('Paula'), secondChair: byName.get('Anna'), stickiness: 5,
     originator: byName.get('Jay'), originator_is_firm: true, high_maintenance: true, interaction_frequency: 'Daily',
     revenues: rev({ 2024: 10000, 2026: 250000 }) }),
   stored({ id: 14, name: 'Orphan Trust', lead: null, stickiness: 4, originator: byName.get('Steve'), revenues: rev({ 2026: 20000 }) }),
@@ -309,7 +308,7 @@ test('content: every client once, by name regardless of case then id as text; in
   assert.doesNotMatch(text, /987654|3f2b8c1e/);
 });
 
-test('content: names decoded (&amp; is &), and the people come from the nested lead, not the legacy text', () => {
+test('content: names as stored, which is as typed (& and < as they are), and the people come from the nested lead, not the legacy text', () => {
   const { text } = contentBook();
   assert.match(text, /\| Smith & Co \| Kevin \| Jay \|/);
   assert.doesNotMatch(text, /&amp;|&lt;|&gt;|&#x27;/);
@@ -318,13 +317,16 @@ test('content: names decoded (&amp; is &), and the people come from the nested l
   assert.match(text, /\| Northern <Rail> Board \| Paula \| Anna \| Firm \(originated by Jay\) \|/);
 });
 
-// Tier 2 WP5: text saved since WP5 is stored as typed, and the book's one
-// level of decoding reads it as it is, so a book of plain names is the book of
-// their escaped copies, byte for byte
-test('content: the same book when the names are stored as typed (since WP5) as when they are stored escaped (before)', () => {
-  const plain = CONTENT_CLIENTS.map((c) => ({ ...c, name: escaping.unescapeStored(c.name) }));
-  assert.deepEqual(plain.map((c) => c.name).filter((n) => /[&<]/.test(n)), ['Smith & Co', 'Northern <Rail> Board']);
-  assert.equal(buildBook({ people: PEOPLE, clients: plain, now: NOW }).text, contentBook().text);
+// Tier 2 WP5's second PR: the book shows a name as stored. Until then it
+// undid one level of the request sanitizer's escaping (text()), which also
+// turned a literal `&amp;` into `&`; the repair found nothing stored escaped
+// (2026-09-28), and the API has stored text as typed since WP5's first PR.
+test('content: a name is shown as stored, a literal entity included; nothing is decoded', () => {
+  const [smith] = CONTENT_CLIENTS;
+  const literal = { ...smith, id: 987655, name: 'Literal &amp; Co' };
+  const { text } = buildBook({ people: PEOPLE, clients: [...CONTENT_CLIENTS, literal], now: NOW });
+  assert.match(text, /\| Literal &amp; Co \| Kevin \| Jay \|/);
+  assert.match(text, /\| Smith & Co \| Kevin \| Jay \|/);
 });
 
 test('content: no notes, ids, dates, sign-in names, user_id or retired columns', () => {

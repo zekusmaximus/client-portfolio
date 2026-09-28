@@ -4,10 +4,13 @@
 // HTML-escaped every string in a client write with validator.escape before the
 // route saw it, so a client saved through the client form was stored as
 // `Barnes &amp; Noble Education Fund` or `O&#x27;Brien Trust` (review 4.9).
-// New writes are stored as typed; the text stored before stays escaped until
-// scripts/unescape-book.cjs repairs it with unescapeStored, and these undo it
-// where text is compared, shown or sent to the AI. Pure: no I/O and no env,
-// so tests can import it.
+// New writes are stored as typed, and scripts/unescape-book.cjs repairs text
+// stored before (on 2026-09-28 it found none on production). What remains
+// here is a guard where a stored name is compared or saved: the import's
+// matching (unescapeStoredSql, and indexStoredClients in utils/csvImport.cjs),
+// a transition plan's saved client name (answerRow) and the repair itself.
+// Nothing shows or sends text through it any more (WP5's second PR removed the
+// display decoders). Pure: no I/O and no env, so tests can import it.
 
 // validator.escape's replacements (validator 13), in the order unescapeText
 // undoes them: `&amp;` last, so one call undoes exactly one escape.
@@ -22,7 +25,7 @@ const ESCAPES = [
   ['&amp;', '&'],
 ];
 
-/** Undo one validator.escape: `O&#x27;Brien &amp; Co` -> `O'Brien & Co`, `&amp;lt;` -> `&lt;`. */
+/** Undo one validator.escape: `O&#x27;Brien &amp; Co` -> `O'Brien & Co`, `&amp;lt;` -> `&lt;`. unescapeStored's second half. */
 function unescapeText(text) {
   if (typeof text !== 'string') return text;
   return ESCAPES.reduce((out, [entity, char]) => out.split(entity).join(char), text);
@@ -30,8 +33,8 @@ function unescapeText(text) {
 
 // Until WP5, text sent back as it was stored was escaped again: `&amp;amp;`
 // where it had `&`, `&amp;#x27;` where it had `'`. The client form did that to
-// notes until it filled its fields unescaped (src/utils/clientForm.js), a
-// direct request could, and the form's DOMPurify pass escaped any text holding
+// notes until it filled its fields unescaped (Tier 1, until WP5's second PR
+// made that unnecessary), a direct request could, and the form's DOMPurify pass escaped any text holding
 // a `<` before the server escaped it again. Every
 // escape after the first only adds `amp;` after an `&`, so collapsing an `&`
 // and every `amp;` after it to `&` undoes those (and the first escape of an
@@ -63,4 +66,4 @@ function unescapeStoredSql(column) {
   );
 }
 
-module.exports = { ESCAPES, unescapeText, unescapeStored, unescapeStoredSql };
+module.exports = { ESCAPES, unescapeStored, unescapeStoredSql };

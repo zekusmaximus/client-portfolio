@@ -19,9 +19,8 @@ const { saveAnswer, listAnswers, getAnswer, monthSummary } = require('../models/
 // spends no AI budget.
 // No request pass, as in routes/people.cjs: a question is stored and sent
 // exactly as the partner wrote it ("Smith & Co", not "Smith &amp; Co"),
-// checked by checkQuestion, and rendered by React as text; the book decodes
-// names the client form stored escaped before WP5 (unescapeText) until the
-// repair (scripts/unescape-book.cjs) and WP5's second PR.
+// checked by checkQuestion, and rendered by React as text. The book shows
+// names as stored, which since Tier 2 WP5 is as typed.
 router.use(auth);
 
 // The book is built at each request from the database (loadBook,

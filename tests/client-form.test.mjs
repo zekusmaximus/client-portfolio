@@ -1,13 +1,12 @@
-// src/utils/clientForm.js: the client form's fields for a stored client. A
-// name or notes the form saved before Tier 2 WP5 are stored HTML-escaped (the
-// request sanitizer, and DOMPurify for a note with `<`) until the repair
-// (scripts/unescape-book.cjs); the form shows them unescaped, so an edit saves
-// without retyping the name. Since WP5 the save is modelled as the page and
+// src/utils/clientForm.js: the client form's fields for a stored client,
+// shown as stored, which since Tier 2 WP5 is as typed. Until WP5's second PR
+// the form unescaped the name and notes, because the API's request sanitizer
+// stored them HTML-escaped; the repair (scripts/unescape-book.cjs) found
+// nothing left escaped on 2026-09-28. The save is modelled as the page and
 // the server do it: the form's sanitizeFormData, which trims, then the
-// server's trimRequestBody, which trims; nothing is escaped.
+// server's trimRequestBody, which trims; nothing is escaped or unescaped.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import validator from 'validator';
 import { clientFormData, clientRequestBody, revenuesToSend, formErrors, SEE_ABOVE } from '../src/utils/clientForm.js';
 import { validateField, sanitizeFormData } from '../src/utils/validation.js';
 
@@ -19,7 +18,7 @@ const stored = (form) => {
 
 const CLIENT = {
   id: 7,
-  name: 'Barnes &amp; Noble Education Fund',
+  name: 'Barnes & Noble Education Fund',
   practiceArea: ['Education'],
   conflict_risk: 'Low',
   lead_id: 3,
@@ -29,11 +28,11 @@ const CLIENT = {
   interaction_frequency: 'Monthly',
   stickiness: 4,
   high_maintenance: false,
-  notes: 'O&#x27;Brien asked about R&amp;amp;D',
+  notes: "O'Brien asked about R&D < 5%",
   revenues: [{ year: 2026, revenue_amount: '40000.00' }],
 };
 
-test('a stored client fills the form with its name and notes unescaped, and every other field as before', () => {
+test('a stored client fills the form with its name and notes as stored, and every other field as before', () => {
   assert.deepEqual(clientFormData(CLIENT), {
     name: 'Barnes & Noble Education Fund',
     practiceArea: ['Education'],
@@ -45,7 +44,7 @@ test('a stored client fills the form with its name and notes unescaped, and ever
     interaction_frequency: 'Monthly',
     stickiness: 4,
     high_maintenance: false,
-    notes: "O'Brien asked about R&D",
+    notes: "O'Brien asked about R&D < 5%",
     revenues: [{ year: 2026, revenue_amount: '40000.00' }],
   });
   // The defaults, and one empty revenue row in `now`'s year
@@ -56,10 +55,19 @@ test('a stored client fills the form with its name and notes unescaped, and ever
   });
 });
 
-test('a name stored escaped passes the form\'s name pattern, so an edit saves without retyping it', () => {
-  for (const name of ['Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust', 'O&amp;#x27;Brien Trust', 'Health &#x2F; Human Services']) {
-    assert.match(validateField('name', name) || '', /invalid characters/, `stored as ${name}: refused as it was shown before`);
-    assert.equal(validateField('name', clientFormData({ name }).name), null, name);
+// Until WP5's second PR the form unescaped what it showed, so a note holding a
+// literal entity (`&lt;b&gt;`) came back as `<b>` and the next save stored
+// that. It shows the text as stored now; a name holding an entity, which only
+// an old backup could bring back, is shown so and refused, as the server
+// refuses it (the runbook's 7.5 repair is the remedy).
+test('the form shows name and notes exactly as stored: a note with a literal entity is saved back unchanged; a name holding an entity is refused, as the server refuses it', () => {
+  const literal = { ...CLIENT, notes: 'Write &lt;b&gt; for bold; Copyright &#169;; R&amp;D is not R&D' };
+  const form = clientFormData(literal);
+  assert.equal(form.notes, literal.notes);
+  assert.deepEqual(stored(form), { name: literal.name, notes: literal.notes });
+  for (const name of ['Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust']) {
+    assert.equal(clientFormData({ name }).name, name);
+    assert.match(validateField('name', name) || '', /invalid characters/, name);
   }
 });
 
@@ -83,20 +91,6 @@ test('a save stores the name and notes exactly as typed, and saving again stores
       assert.deepEqual(db, first, `save ${save + 1}: stored unchanged`);
     }
   }
-
-  // Notes a save escaped several levels deep before the form filled its
-  // fields unescaped: shown as typed, then, since WP5, stored as typed
-  const deep = { name: 'Acme', notes: validator.escape(validator.escape(validator.escape('A&B'))) };
-  assert.equal(deep.notes, 'A&amp;amp;amp;B');
-  const form = clientFormData(deep);
-  assert.equal(form.notes, 'A&B');
-  assert.equal(stored(form).notes, 'A&B');
-
-  // As the form stored a name and a note with `<` before WP5 (DOMPurify, then
-  // the sanitizer): opened as typed, saved as typed
-  const before = { name: validator.escape('Barnes & Noble'), notes: validator.escape('R&amp;D &lt; 5% of "budget"') };
-  assert.deepEqual(before, { name: 'Barnes &amp; Noble', notes: 'R&amp;amp;D &amp;lt; 5% of &quot;budget&quot;' });
-  assert.deepEqual(stored(clientFormData(before)), { name: 'Barnes & Noble', notes: 'R&D < 5% of "budget"' });
 });
 
 test('a client nobody has rated opens as Not rated, so saving it for another reason keeps it unrated; a rating stays', () => {

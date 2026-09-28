@@ -1009,16 +1009,17 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.equal(await bookSize(), size);
   });
 
-  // The page's side: the client form fills its fields unescaped
-  // (src/utils/clientForm.js), so a client stored escaped before WP5 opens as
-  // typed, and since WP5 its save stores exactly what the form shows, a note
-  // with `<` included; saving again stores the same text. Scenarios'
-  // transition sheet writes client names unescaped
+  // The page's side: the client form shows a client as stored
+  // (src/utils/clientForm.js), and since Tier 2 WP5 its save stores exactly
+  // what the form shows, a note with `<` included; saving again stores the
+  // same text. Scenarios' transition sheet writes client names as stored
   // (src/utils/transitionPlans.js), so Check file and the import read them.
-  test('the form stores a name with & and a note with < as typed, repairing a name stored escaped before WP5, and saves them again unchanged; a transition sheet for it passes Check file and imports', async () => {
+  // Until WP5's second PR both unescaped what they read, for names the form
+  // had stored escaped; the repair found none left (2026-09-28).
+  test('the form stores a name with & and a note with < as typed and saves them again unchanged; a transition sheet for it passes Check file and imports', async () => {
     const BARNES = 'Barnes & Noble Education Fund';
     const listed = async () => (await call('GET', '/api/data/clients')).body.clients;
-    const barnesId = String((await listed()).find((c) => escaping.unescapeStored(c.name) === BARNES).id);
+    const barnesId = String((await listed()).find((c) => c.name === BARNES).id);
     const stored = async () => (await db.query('SELECT name, notes FROM clients WHERE id::text = $1', [barnesId])).rows[0];
 
     // As ClientEnhancementForm's save and the store's formatClientForAPI send it
@@ -1044,9 +1045,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     };
     const openForm = async () => clientFormData((await listed()).find((c) => String(c.id) === barnesId));
 
-    // As the form stored the name before WP5, until the repair
-    await db.query('UPDATE clients SET name = $1 WHERE id::text = $2', [validator.escape(BARNES), barnesId]);
-    assert.equal((await openForm()).name, BARNES, 'the form shows it as typed');
+    assert.equal((await openForm()).name, BARNES, 'the form shows it as stored');
 
     // A partner types notes with an ampersand and a `<` (which DOMPurify, and
     // then the request sanitizer, escaped until WP5) and saves
@@ -1277,7 +1276,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       const rows = bookText.slice(bookText.indexOf('\n## Clients (')).split('\n')
         .filter((line) => line.startsWith('| ') && !line.startsWith('| ---') && !line.startsWith('| Client |'))
         .map((line) => line.slice(2, -2).split(' | ')[0]);
-      assert.deepEqual(rows.sort(), list.clients.map((c) => escaping.unescapeText(c.name)).sort());
+      assert.deepEqual(rows.sort(), list.clients.map((c) => c.name).sort());
       // The question and the date only in the one user turn
       assert.equal(askRequest.messages.length, 1);
       assert.equal(askRequest.messages[0].role, 'user');
@@ -1437,9 +1436,10 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       assert.deepEqual([row.kind, row.question, row.answer, row.book_sha256], ['brief', null, brief.body.answer, bookSha]);
 
       // A transition plan: the client's id as text (an integer on production's
-      // tables, a uuid here) and its name unescaped, although the client form
-      // stored it escaped before WP5 (as set below; until WP5 the route's
-      // sanitizer escaped it once more)
+      // tables, a uuid here) and its name unescaped by answerRow's guard, with
+      // the name set below as the client form stored it before WP5 (as an old
+      // backup could bring back; until WP5 the route's sanitizer escaped it
+      // once more)
       const NAME = "Smith & O'Brien Holdings";
       const paula = (await db.query("SELECT id FROM people WHERE name = 'Paula'")).rows[0].id;
       const created = await call('POST', '/api/data/clients', {
@@ -1932,7 +1932,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       // A client's effort as the book's client table shows it, to the hundredth
       const effort = String(Math.round(target.effort * 100) / 100);
       for (const line of [
-        `- **Name**: ${escaping.unescapeText(target.name)}`,
+        `- **Name**: ${target.name}`,
         `- **Practice Areas**: ${target.practice_area.join('; ')}`,
         `- **Current Lead**: ${leaving.name} (leaving)`,
         `- **Current Second Chair**: ${target.secondChair ? target.secondChair.name : 'none'}`,

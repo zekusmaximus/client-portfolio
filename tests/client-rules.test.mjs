@@ -323,7 +323,8 @@ describe('trimRequestBody (middleware/validation.cjs): the sanitizer\'s trim, wi
       return Object.fromEntries(Array.from({ length: Math.floor(next() * 4) }, (_, i) => [`k${i}`, value(depth + 1)]));
     };
     const undoOne = (v) => {
-      if (typeof v === 'string') return escaping.unescapeText(v);
+      // One validator.escape undone: its replacements, `&amp;` last
+      if (typeof v === 'string') return escaping.ESCAPES.reduce((out, [entity, char]) => out.split(entity).join(char), v);
       if (Array.isArray(v)) return v.map(undoOne);
       if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, undoOne(x)]));
       return v;
@@ -371,17 +372,17 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
     });
   };
 
-  // Clients the form saved before WP5 are stored escaped until the repair
-  // (scripts/unescape-book.cjs); the form opens them unescaped
-  test('stored clients opened in the form and saved unchanged: names and notes stored escaped before WP5, no rating, no cadence, a note with <', () => {
+  // Clients as stored since Tier 2 WP5 (the repair found nothing left
+  // escaped); the form opens them as stored and sends them back unchanged
+  test('stored clients opened in the form and saved unchanged: names with & and \', a note with < and a literal entity, no rating, no cadence', () => {
     const stored = [
       {
-        id: 7, name: 'Barnes &amp; Noble Education Fund', practiceArea: ['Education'], conflict_risk: 'Low', lead_id: 3,
+        id: 7, name: 'Barnes & Noble Education Fund', practiceArea: ['Education'], conflict_risk: 'Low', lead_id: 3,
         second_chair_id: 5, originator_id: null, originator_is_firm: true, interaction_frequency: 'Monthly', stickiness: 4,
-        high_maintenance: false, notes: 'O&#x27;Brien asked about R&amp;amp;D &amp;lt; 5%', revenues: [{ year: 2026, revenue_amount: 40000 }],
+        high_maintenance: false, notes: "O'Brien asked about R&D < 5%; write &lt;b&gt; for bold", revenues: [{ year: 2026, revenue_amount: 40000 }],
       },
       {
-        id: 8, name: 'O&amp;#x27;Brien Trust', practiceArea: ['Other'], conflict_risk: 'High', lead_id: 1, second_chair_id: null,
+        id: 8, name: "O'Brien Trust", practiceArea: ['Other'], conflict_risk: 'High', lead_id: 1, second_chair_id: null,
         originator_id: 7, originator_is_firm: false, interaction_frequency: '', stickiness: null, high_maintenance: true,
         notes: null, revenues: [{ year: 2024, revenue_amount: 1000.5 }, { year: 2026, revenue_amount: 999999999.99 }],
       },
@@ -393,8 +394,8 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
       const body = pageBody(form);
       assert.deepEqual(checkClient(asRouteSees(body)), [], `${client.name}, as the route sees it`);
       assert.deepEqual(checkClient(body), [], `${client.name}, as typed`);
-      // The text the form shows goes out as it is: nothing escaped
-      assert.deepEqual([body.name, body.notes], [escaping.unescapeStored(client.name), escaping.unescapeStored(client.notes || '')]);
+      // The stored text goes out as it is: nothing escaped or unescaped
+      assert.deepEqual([body.name, body.notes], [client.name, client.notes || '']);
     }
   });
 

@@ -1,14 +1,13 @@
 // The client form's fields for a stored client (ClientEnhancementForm in edit
 // mode). Pure, so tests/client-form.test.mjs can check it.
 //
-// The name and the notes are shown unescaped (unescapeStored): the API returns
-// a client the form saved before Tier 2 WP5 as the request sanitizer stored
-// it, `Barnes &amp; Noble Education Fund`, until the repair
-// (scripts/unescape-book.cjs); its `;` the form's name pattern refuses, so
-// every later edit of the client failed until the partner retyped the `&`, and
-// notes, which have no pattern, gained a level of escaping with each save.
-// Text saved since WP5 is stored as typed, and unescapeStored leaves it as it
-// is.
+// The name and the notes are shown as stored, which since Tier 2 WP5 is as
+// they were typed. Until WP5's second PR the form unescaped them
+// (unescapeStored), because the API's request sanitizer stored them
+// HTML-escaped (`Barnes &amp; Noble`), whose `;` the form's name pattern
+// refused; the repair (scripts/unescape-book.cjs) found nothing left escaped
+// on 2026-09-28, and unescaping now would only change a literal `&lt;` a
+// partner typed in a note into `<` at the next save.
 //
 // A client nobody has rated keeps `stickiness: null` ("Not rated"): the form
 // used to fill it with 3, so saving the client for any reason rated it 3, and
@@ -17,8 +16,6 @@
 // The save's side too: the body the API receives (clientRequestBody, the
 // store's formatClientForAPI), the revenue rows it sends (revenuesToSend) and
 // a 400's details as the form's errors (formErrors; docs/plans/tier-2.md, WP4).
-
-import { unescapeStored } from './escaping.js';
 
 /** The form's state for `client`; a client with no revenue gets one empty row for `now`'s year. */
 export function clientFormData(client, now = new Date()) {
@@ -29,7 +26,7 @@ export function clientFormData(client, now = new Date()) {
     : clientRevenues;
 
   return {
-    name: unescapeStored(client.name || ''),
+    name: client.name || '',
     practiceArea: client.practiceArea || [],
     conflict_risk: client.conflict_risk || 'Medium',
     lead_id: client.lead_id ? String(client.lead_id) : '',
@@ -39,7 +36,7 @@ export function clientFormData(client, now = new Date()) {
     interaction_frequency: client.interaction_frequency || 'As-Needed',
     stickiness: Number.isInteger(client.stickiness) ? client.stickiness : null,
     high_maintenance: client.high_maintenance === true,
-    notes: unescapeStored(client.notes || ''),
+    notes: client.notes || '',
     revenues: revenuesWithDefault
   };
 }

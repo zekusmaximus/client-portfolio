@@ -1,17 +1,19 @@
 // utils/escaping.cjs: undoing the validator.escape the request sanitizer
-// applied to client text until Tier 2 WP5 (S8), once
-// (unescapeText) or however many times a stored text was escaped
-// (unescapeStored), and the same as a PostgreSQL expression
+// applied to client text until Tier 2 WP5 (S8), however many times a stored
+// text was escaped (unescapeStored), and the same as a PostgreSQL expression
 // (unescapeStoredSql; tests/import-db.test.mjs runs it against a real server).
-// The page's copy, src/utils/escaping.js, is held equal to the server's.
+// What remains after WP5's second PR is a guard for the import's name matching,
+// a transition plan's saved client name and the repair script: nothing on the
+// page or in the AI's book decodes text any more, and the page has no copy.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import validator from 'validator';
 import escaping from '../utils/escaping.cjs';
-import transitionPlan from '../utils/transitionPlan.cjs';
-import * as page from '../src/utils/escaping.js';
 
-const { ESCAPES, unescapeText, unescapeStored, unescapeStoredSql } = escaping;
+const { ESCAPES, unescapeStored, unescapeStoredSql } = escaping;
 
 const escapeTimes = (text, times) => Array.from({ length: times }).reduce((out) => validator.escape(out), text);
 
@@ -30,14 +32,7 @@ test('ESCAPES is validator.escape\'s set, with &amp; last', () => {
   const specials = ESCAPES.map(([, char]) => char).join('');
   assert.equal(validator.escape(specials), ESCAPES.map(([entity]) => entity).join(''));
   assert.equal(ESCAPES.at(-1)[0], '&amp;');
-  assert.equal(transitionPlan.unescapeText, unescapeText, 'the transition plan uses the same function');
-});
-
-test('unescapeText undoes one escape', () => {
-  assert.equal(unescapeText('O&#x27;Brien &amp; &lt;Co&gt; &quot;x&quot; a&#x2F;b &#x5C; &#96;'), `O'Brien & <Co> "x" a/b \\ \``);
-  assert.equal(unescapeText('&amp;lt;'), '&lt;', 'one level only');
-  assert.equal(unescapeText('Barnes &amp;amp; Noble'), 'Barnes &amp; Noble');
-  assert.equal(unescapeText(null), null);
+  assert.deepEqual(Object.keys(escaping).sort(), ['ESCAPES', 'unescapeStored', 'unescapeStoredSql']);
 });
 
 test('unescapeStored undoes every escape a stored name went through', () => {
@@ -72,19 +67,23 @@ test('unescapeStoredSql applies the same replacements in the same order, with no
   assert.equal((sql.match(/'/g) || []).length % 2, 0);
 });
 
-test('the page\'s unescapeStored (src/utils/escaping.js) equals the server\'s, on any text', () => {
-  assert.deepEqual(page.ESCAPES, ESCAPES);
-  const fixed = [
-    'Barnes &amp; Noble Education Fund', 'O&amp;#x27;Brien Trust', '&amp;amp;lt;', 'R&D; Q&A;', '&;&amp&amp;;',
-    '&#x27&#x27;', 'plain', '', null, undefined, 42,
-  ];
-  for (const text of fixed) assert.equal(page.unescapeStored(text), unescapeStored(text), JSON.stringify(text));
-  // With semicolons too: the two must agree whatever is stored, not only on round trips
-  const alphabet = `a Z&;'"<>/\\\`#x27amplgtquot`;
-  const next = random(9);
-  for (let i = 0; i < 3000; i += 1) {
-    const length = Math.floor(next() * 30);
-    const text = Array.from({ length }, () => alphabet[Math.floor(next() * alphabet.length)]).join('');
-    assert.equal(page.unescapeStored(text), unescapeStored(text), JSON.stringify(text));
+// Tier 2 WP5's second PR: the page shows and sends text as stored
+test('the page decodes and unescapes nothing: no copy of unescapeStored, no decodeHtmlEntities, no innerHTML', () => {
+  const src = fileURLToPath(new URL('../src', import.meta.url));
+  assert.equal(existsSync(join(src, 'utils', 'escaping.js')), false);
+  const files = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (/\.(jsx?|tsx?)$/.test(name)) files.push(path);
+    }
+  };
+  walk(src);
+  assert.ok(files.length > 50, 'the page\'s sources were read');
+  for (const file of files) {
+    // The code only: comments may name what was removed
+    const text = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert.doesNotMatch(text, /unescapeStored|unescapeText|decodeHtmlEntities|decodeHTMLEntities|\.innerHTML\s*=|dangerouslySetInnerHTML/, file);
   }
 });

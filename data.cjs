@@ -171,9 +171,10 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       // Using ANY($1) allows us to match against an array of lowercased names.
       // A name saved through the client form before WP5 was stored
       // HTML-escaped by the request sanitizer (`Barnes &amp; Noble`), once
-      // per save, and stays so until scripts/unescape-book.cjs repairs it, so
-      // it is compared unescaped, as indexStoredClients keys it; the update
-      // below then writes the sheet's spelling.
+      // per save. scripts/unescape-book.cjs repaired the book (it found none
+      // left, 2026-09-28); names are still compared unescaped, as
+      // indexStoredClients keys them, as a guard for a restored backup, and
+      // the update below writes the sheet's spelling.
       // FOR UPDATE: the values kept for columns the file lacks are written back
       // below, so a form save cannot land in between and be overwritten.
       const { rows: allExistingClients } = await conn.query(`
