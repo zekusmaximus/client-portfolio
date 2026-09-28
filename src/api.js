@@ -255,6 +255,16 @@ export function apiErrorBody(err) {
 }
 
 /**
+ * The HTTP status of a failed response, from an error thrown by the helpers
+ * above (their message reads "... failed with status 409 – {...}"), or null
+ * for a network failure or any other error.
+ */
+export function apiErrorStatus(err) {
+  const match = /failed with status (\d{3})\b/.exec((err && err.message) || '');
+  return match ? Number(match[1]) : null;
+}
+
+/**
  * Human-readable message for an error thrown by the helpers above. The backend
  * answers failures as `{ success: false, error: '...' }`. Pull the JSON `error`
  * back out when it is there; otherwise return the message as is.

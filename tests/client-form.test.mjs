@@ -7,7 +7,7 @@
 // server's trimRequestBody, which trims; nothing is escaped or unescaped.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clientFormData, clientRequestBody, revenuesToSend, formErrors, SEE_ABOVE } from '../src/utils/clientForm.js';
+import { clientFormData, clientRequestBody, revenuesToSend, formErrors, mergeAfterConflict, SEE_ABOVE } from '../src/utils/clientForm.js';
 import { validateField, sanitizeFormData } from '../src/utils/validation.js';
 
 // What the database holds after the form saves `form`
@@ -155,6 +155,59 @@ test('clientRequestBody is the body formatClientForAPI sent', () => {
       stickiness: undefined, high_maintenance: 'yes', revenues: null, status: 'Former', practice_area: ['Other'] },
   ];
   for (const sample of samples) assert.deepEqual(clientRequestBody(sample), oldFormatClientForAPI(sample), JSON.stringify(sample));
+});
+
+// Tier 2 WP6 (S10), on purpose: the body gains expected_updated_at when the
+// form gives one (the client's updated_at_exact as it loaded it, or null for a
+// client stored without updated_at), and is otherwise the old body
+test('clientRequestBody adds expected_updated_at, and only when the form gives it', () => {
+  const sample = { name: 'Acme', lead_id: 3, revenues: [] };
+  assert.equal('expected_updated_at' in clientRequestBody(sample), false);
+  assert.equal('expected_updated_at' in clientRequestBody({ ...sample, expected_updated_at: undefined }), false);
+  for (const expected of ['2026-09-28T20:34:00.006586', null]) {
+    assert.deepEqual(clientRequestBody({ ...sample, expected_updated_at: expected }),
+      { ...oldFormatClientForAPI(sample), expected_updated_at: expected });
+  }
+});
+
+// After a stale save's 409 (WP6, S10): the form shows the client as it is
+// now, with every edit of this partner's kept over it
+const formOf = (overrides = {}) => clientFormData({ ...CLIENT, ...overrides }, new Date('2026-09-28T12:00:00Z'));
+
+test('mergeAfterConflict: the other save\'s changes where this partner changed nothing, this partner\'s edits kept, a field both changed kept as typed and named', () => {
+  const base = formOf();
+  // A (the other save) changed stickiness 4 to 5 and the revenue; B (this
+  // partner) changed the cadence and the notes; both changed the conflict risk
+  const theirs = formOf({ stickiness: 5, conflict_risk: 'High', revenues: [{ year: 2026, revenue_amount: '45000.00' }] });
+  const mine = { ...base, interaction_frequency: 'Weekly', notes: 'Typed by B', conflict_risk: 'Medium' };
+  const merge = mergeAfterConflict(base, mine, theirs);
+  assert.deepEqual(merge.formData, {
+    ...base, stickiness: 5, revenues: theirs.revenues, interaction_frequency: 'Weekly', notes: 'Typed by B', conflict_risk: 'Medium',
+  });
+  assert.deepEqual(merge.theirs, ['revenues', 'conflict_risk', 'stickiness']);
+  assert.deepEqual(merge.kept, ['interaction_frequency', 'notes']);
+  assert.deepEqual(merge.clashes, ['conflict_risk']);
+  // Saved, the merge writes B's edits and keeps A's: nothing of A's is undone
+  const body = clientRequestBody({ ...merge.formData, revenues: revenuesToSend(merge.formData.revenues).revenues });
+  assert.deepEqual([body.stickiness, body.interaction_frequency, body.revenues], [5, 'Weekly', [{ year: 2026, revenue_amount: 45000 }]]);
+});
+
+test('mergeAfterConflict: practice areas as a set, revenue as a save sends it, the same change on both sides no clash, and no edits gives the client as it is now', () => {
+  const base = formOf();
+  const theirs = formOf({ stickiness: 2 });
+  // Ticked in another order, and an empty revenue row added: no edit
+  const reordered = { ...base, practiceArea: [...base.practiceArea].reverse(), revenues: [...base.revenues, { year: '', revenue_amount: '' }] };
+  let merge = mergeAfterConflict(base, reordered, theirs);
+  assert.deepEqual([merge.kept, merge.clashes, merge.theirs], [[], [], ['stickiness']]);
+  assert.deepEqual(merge.formData, { ...reordered, practiceArea: theirs.practiceArea, revenues: theirs.revenues, stickiness: 2 });
+  // Both set stickiness to 2: the saved value, neither kept nor a clash
+  merge = mergeAfterConflict(base, { ...base, stickiness: 2 }, theirs);
+  assert.deepEqual([merge.kept, merge.clashes, merge.formData.stickiness], [[], [], 2]);
+  // A rating cleared by this partner ("Not rated") is an edit, kept
+  merge = mergeAfterConflict(base, { ...base, stickiness: null }, formOf({ notes: 'By A' }));
+  assert.deepEqual([merge.kept, merge.formData.stickiness, merge.formData.notes], [['stickiness'], null, 'By A']);
+  // Nothing changed on either side
+  assert.deepEqual(mergeAfterConflict(base, base, base), { formData: base, theirs: [], kept: [], clashes: [] });
 });
 
 test('formErrors puts each detail of a 400 beside its field, a revenue entry beside the form row that sent it, and the rest under general', () => {

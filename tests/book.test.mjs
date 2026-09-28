@@ -340,6 +340,17 @@ test('content: no notes, ids, dates, sign-in names, user_id or retired columns',
   assert.match(clientRows(text).find((r) => r.startsWith('| Acme Holdings |')), /\| not rated \|/);
 });
 
+// Tier 2 WP6 (S9, S10): every client response gained updated_by (c.*) and
+// updated_at_exact; neither reaches the book, so the same clients give the
+// same book whoever saved them last and when (T8), and the book never reads
+// client_changes, which holds notes (T4)
+test('content: who saved a client last, and when, never reaches the book', () => {
+  const { text } = contentBook();
+  const saved = CONTENT_CLIENTS.map((c, i) => ({ ...c, updated_by: 900 + i, updated_at: `2026-09-2${i}T10:00:00.000Z`, updated_at_exact: `2026-09-2${i}T10:00:00.123456` }));
+  assert.equal(buildBook({ people: PEOPLE, clients: saved, now: NOW }).text, text);
+  assert.doesNotMatch(text, /updated|90[0-4]|2026-09-2/);
+});
+
 // Tier 2 WP2 (docs/plans/tier-2.md, S4): the scorer no longer reads the
 // retired columns, so this unrated client scores with the fixed stand-in
 // (40 / 9) whatever they hold. Its score moved in WP2, deliberately: until

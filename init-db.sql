@@ -196,5 +196,28 @@ CREATE TABLE IF NOT EXISTS ai_answers (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_answers_created_at ON ai_answers (created_at DESC, id DESC);
 
+-- Who changed a client, and what (docs/plans/tier-2.md, S9, WP6): one row per
+-- client per write that changed something, written in the write's own
+-- transaction, so a change never lands without its row. No key to clients:
+-- production's ids are integers and this file's uuids, reset-book refuses a
+-- key that does not cascade, and history outlives a deleted client and a
+-- reset. changed_by and clients.updated_by never cascade (check-schema); the
+-- username is copied so a row reads the same after its account is gone. No
+-- backfill: past changes have no rows, and updated_by stays NULL until a
+-- client's next write. A rollback start runs an older file, which names
+-- neither and leaves both in place.
+CREATE TABLE IF NOT EXISTS client_changes (
+    id SERIAL PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    client_name VARCHAR(255),
+    changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    changed_by_username VARCHAR(255),
+    source VARCHAR(20) NOT NULL CHECK (source IN ('form', 'import', 'second-chair', 'delete')),
+    changes JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_client_changes_client ON client_changes (client_id, created_at DESC);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
 -- No default users are created for security reasons
 -- Use the create-admin.cjs script to create your first administrator account

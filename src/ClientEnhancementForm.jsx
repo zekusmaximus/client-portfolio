@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -35,13 +35,27 @@ import {
   FileText,
   DollarSign,
   Plus,
-  Trash2
+  Trash2,
+  History
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
-import { clientFormData, formErrors, revenuesToSend } from './utils/clientForm';
-import { apiErrorBody } from './api';
+import { clientFormData, formErrors, mergeAfterConflict, revenuesToSend } from './utils/clientForm';
+import { apiClient, apiErrorBody, apiErrorMessage, apiErrorStatus } from './api';
+import { conflictNotice, historyEntry, lastChangedLine } from './utils/clientHistory';
 import { enhanceClientWithSuccessionMetrics, getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
+
+// A client's history (docs/plans/tier-2.md, S9, WP6), newest first, from an
+// API that lists client-edit-conflict in /api/health; null from an older API,
+// which has no history (and no GET .../changes), so the form shows none.
+async function fetchHistory(clientId) {
+  const health = await apiClient.get('/api/health');
+  if (!Array.isArray(health?.features) || !health.features.includes('client-edit-conflict')) return null;
+  const response = await apiClient.get(`/data/clients/${clientId}/changes`);
+  return response.changes || [];
+}
+
+const NO_HISTORY = { available: false, loading: false, rows: [], error: null };
 
 const ClientEnhancementForm = ({ onClose }) => {
   const { 
@@ -77,6 +91,16 @@ const ClientEnhancementForm = ({ onClose }) => {
 
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState({});
+  // The client as the form last filled from it: the one opened, then, after
+  // a stale save (409), the client as it is now. Its updated_at_exact goes
+  // back as expected_updated_at (S10).
+  const [loaded, setLoaded] = useState(null);
+  const [history, setHistory] = useState(NO_HISTORY);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [conflict, setConflict] = useState(null);
+  // The form as the partner has it now, for the merge after a 409
+  const formRef = useRef(formData);
+  formRef.current = formData;
 
   // Practice area options
   const practiceAreaOptions = [
@@ -96,6 +120,10 @@ const ClientEnhancementForm = ({ onClose }) => {
 
   // Initialize form data when client changes
   useEffect(() => {
+    setLoaded(client);
+    setConflict(null);
+    setHistoryOpen(false);
+    setHistory(NO_HISTORY);
     if (client) {
       setFormData(clientFormData(client));
     } else {
@@ -115,6 +143,16 @@ const ClientEnhancementForm = ({ onClose }) => {
         revenues: [{ year: new Date().getFullYear(), revenue_amount: '' }]
       });
     }
+    if (!client) return undefined;
+    let live = true;
+    setHistory({ ...NO_HISTORY, loading: true });
+    fetchHistory(client.id)
+      .then((rows) => { if (live) setHistory(rows === null ? NO_HISTORY : { ...NO_HISTORY, available: true, rows }); })
+      .catch((error) => {
+        console.error('Could not load the client\'s history:', error);
+        if (live) setHistory({ ...NO_HISTORY, error: 'Could not load this client\'s history.' });
+      });
+    return () => { live = false; };
   }, [client]);
 
   const handlePracticeAreaChange = (area, checked) => {
@@ -212,6 +250,7 @@ const ClientEnhancementForm = ({ onClose }) => {
     }
     
     setIsSaving(true);
+    setConflict(null);
     // The form row of each revenue entry sent, for a 400 about one of them
     let formRows = [];
     
@@ -238,7 +277,13 @@ const ClientEnhancementForm = ({ onClose }) => {
 
       if (isEditMode) {
         console.log('Updating client:', client.id);
-        await updateClient(client.id, clientData);
+        // The client as the form loaded it (S10): only an API with
+        // client-edit-conflict sends updated_at_exact, and only then does the
+        // form send it back
+        const expected = loaded && 'updated_at_exact' in loaded
+          ? { expected_updated_at: loaded.updated_at_exact ?? null }
+          : {};
+        await updateClient(client.id, { ...clientData, ...expected });
       } else {
         console.log('Adding new client');
         await addClient(clientData);
@@ -249,6 +294,28 @@ const ClientEnhancementForm = ({ onClose }) => {
       
     } catch (error) {
       console.error('Error saving client:', error);
+
+      // Another save came first (409, S10): the store has reloaded the book.
+      // The form now shows the client as it is, with every edit of this
+      // partner's kept over it (mergeAfterConflict), and says who saved and
+      // when; nothing typed is dropped, and saving again writes those edits.
+      if (isEditMode && apiErrorStatus(error) === 409) {
+        const fresh = usePortfolioStore.getState().clients.find((c) => String(c.id) === String(client.id));
+        if (fresh) {
+          const merge = mergeAfterConflict(clientFormData(loaded || client), formRef.current, clientFormData(fresh));
+          setFormData(merge.formData);
+          setLoaded(fresh);
+          setErrors({});
+          setConflict(conflictNotice(apiErrorBody(error)?.latest_change ?? null, merge));
+          setHistoryOpen(true);
+          fetchHistory(client.id)
+            .then((rows) => setHistory(rows === null ? NO_HISTORY : { ...NO_HISTORY, available: true, rows }))
+            .catch(() => {});
+          return;
+        }
+        setErrors({ general: apiErrorMessage(error) });
+        return;
+      }
       
       // Validation errors from the backend (400 "Validation failed"): each
       // beside its field, or under general where the form has no place for it
@@ -277,7 +344,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         <CardHeader className="flex flex-row items-center justify-between bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700">
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
-            {isEditMode ? `Edit Client: ${formatClientName(client.name)}` : 'Create New Client'}
+            {isEditMode ? `Edit Client: ${formatClientName((loaded || client).name)}` : 'Create New Client'}
           </CardTitle>
           <Button variant="ghost" size="sm" onClick={handleClose}>
             <X className="h-4 w-4" />
@@ -286,6 +353,12 @@ const ClientEnhancementForm = ({ onClose }) => {
         
         <CardContent className="space-y-6 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
         <TooltipProvider>
+          {isEditMode && history.available && (
+            <p className="text-sm text-muted-foreground" data-testid="last-changed">
+              {lastChangedLine(history.rows) || 'No changes recorded yet.'}
+            </p>
+          )}
+
           {/* Client Basic Information */}
           <div className="space-y-4">
             <div className="space-y-2">
@@ -669,6 +742,64 @@ const ClientEnhancementForm = ({ onClose }) => {
               </p>
             )}
           </div>
+
+          {/* History (docs/plans/tier-2.md, S9, WP6): every save that changed
+              this client, newest first, with who, when and each field from
+              and to; a note's text only on request */}
+          {isEditMode && history.error && (
+            <p className="text-sm text-muted-foreground">{history.error}</p>
+          )}
+          {isEditMode && history.available && (
+            <div className="space-y-3 border-t pt-4" data-testid="client-history">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setHistoryOpen((open) => !open)}>
+                <History className="h-4 w-4 mr-2" />
+                {historyOpen ? 'Hide history' : `History (${history.rows.length})`}
+              </Button>
+              {historyOpen && (history.rows.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No changes recorded yet: the history starts with the first save after it was added.</p>
+              ) : (
+                <ol className="space-y-3">
+                  {history.rows.map(historyEntry).map((entry) => (
+                    <li key={entry.id} className="text-sm border rounded-md p-3 space-y-1">
+                      <div className="font-medium">{entry.title}</div>
+                      <div className="text-muted-foreground">{entry.when} · {entry.who}</div>
+                      <ul className="space-y-1">
+                        {entry.lines.map((line) => (
+                          <li key={line.key}>
+                            {line.long ? (
+                              <details>
+                                <summary className="cursor-pointer">{line.text}</summary>
+                                <div className="mt-1 grid gap-2 md:grid-cols-2">
+                                  <div>
+                                    <div className="text-muted-foreground">Before</div>
+                                    <pre className="whitespace-pre-wrap font-sans">{line.fromText}</pre>
+                                  </div>
+                                  <div>
+                                    <div className="text-muted-foreground">After</div>
+                                    <pre className="whitespace-pre-wrap font-sans">{line.toText}</pre>
+                                  </div>
+                                </div>
+                              </details>
+                            ) : line.text}
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ol>
+              ))}
+            </div>
+          )}
+
+          {/* A stale save (409, S10): what happened and what the form shows now */}
+          {conflict && (
+            <div className="p-3 bg-amber-50 border border-amber-300 rounded-md" role="status" data-testid="edit-conflict">
+              <p className="text-sm text-amber-900 flex items-start gap-1">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                {conflict}
+              </p>
+            </div>
+          )}
 
           {/* Error Message */}
           {errors.general && (

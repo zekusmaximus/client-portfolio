@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { apiClient, apiErrorMessage } from './api';
+import { apiClient, apiErrorMessage, apiErrorStatus } from './api';
 import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
 import { computeReportingYear, revenueForYear } from './utils/revenue';
 import { toggleId, withChoice } from './utils/departure';
@@ -123,10 +123,12 @@ const usePortfolioStore = create(
         set({ clients: enhancedClients, reportingYear: computeReportingYear(enhancedClients) });
       },
 
-      // Fetch clients from backend
-      fetchClients: async () => {
+      // Fetch clients from backend. A load already in flight is not started
+      // again, unless `force`: after a stale save (updateClient's 409) the
+      // form needs the book as it is now, not as a load begun earlier read it.
+      fetchClients: async ({ force = false } = {}) => {
         const { clientsLoading } = get();
-        if (clientsLoading) return;
+        if (clientsLoading && force !== true) return;
         set({ clientsLoading: true, fetchError: null });
         try {
           const response = await apiClient.get('/data/clients');
@@ -228,7 +230,12 @@ const usePortfolioStore = create(
         }
       },
 
-      // Update existing client
+      // Update existing client. clientData.expected_updated_at, when the form
+      // gives it, is the client's updated_at_exact as the form loaded it
+      // (docs/plans/tier-2.md, S10, WP6): the API answers 409 when another
+      // save came first. Then the book is reloaded before the error goes back
+      // to the form, which shows the client as it is now (mergeAfterConflict)
+      // and keeps the modal open, as on any failure.
       updateClient: async (clientId, clientData) => {
         try {
           const formattedData = get().formatClientForAPI(clientData);
@@ -242,6 +249,7 @@ const usePortfolioStore = create(
           return response.client;
         } catch (err) {
           console.error('Failed to update client:', err);
+          if (apiErrorStatus(err) === 409) await get().fetchClients({ force: true });
           throw err;
         }
       },

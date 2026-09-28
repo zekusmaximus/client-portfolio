@@ -26,6 +26,20 @@ const { unescapeStoredSql } = require('./utils/escaping.cjs');
 const { NAME_MAX, NAME_PATTERN, isObjectBody, checkClient } = require('./utils/clientRules.cjs');
 const { revenueObjectFromRows } = require('./utils/strategic.cjs');
 const {
+  clientSnapshot,
+  clientChanges,
+  revenueSnapshot,
+  importedRevenue,
+  updatedAtExactSql,
+  readExpectedUpdatedAt,
+  isCurrent,
+  INSERT_CHANGES_SQL,
+  insertChangesParams,
+  CLIENT_CHANGES_SQL,
+  LATEST_CHANGE_SQL,
+  conflictBody
+} = require('./utils/clientChanges.cjs');
+const {
   parseId,
   validateAssignment,
   legacyText,
@@ -116,6 +130,14 @@ const problems = (n) => `${n} problem${n === 1 ? '' : 's'}`;
 // check and every write runs in the same transaction, which is then rolled
 // back: the same 400 on any problem, or
 // { success: true, dryRun: true, validation, summary } with nothing written.
+//
+// Who changed what (docs/plans/tier-2.md, S9, WP6): a matched client whose
+// fields and revenue the file leaves as they are is not written at all (its
+// updated_at stays, so a form left open on it still saves), and every client
+// the import does change or create is logged as `import`, all in one insert
+// in the import's transaction; Check file rolls those back with the rest.
+// summary.updatedClients counts the stored clients the file names, as
+// before; summary.changedClients those it changed.
 router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async (req, res) => {
   const conn = await db.pool.connect();
   
@@ -176,11 +198,10 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       // indexStoredClients keys them, as a guard for a restored backup, and
       // the update below writes the sheet's spelling.
       // FOR UPDATE: the values kept for columns the file lacks are written back
-      // below, so a form save cannot land in between and be overwritten.
+      // below, so a form save cannot land in between and be overwritten. Every
+      // column, since each is compared with what the file would write (WP6).
       const { rows: allExistingClients } = await conn.query(`
-        SELECT id, name, practice_area, conflict_risk, notes, primary_lobbyist,
-               client_originator, lobbyist_team, interaction_frequency,
-               second_chair_id, originator_id, originator_is_firm
+        SELECT *
         FROM clients 
         WHERE LOWER(${unescapeStoredSql('name')}) = ANY($1)
         FOR UPDATE
@@ -209,7 +230,23 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     }
 
     let updatedCount = 0;
+    let changedCount = 0;
     let insertedCount = 0;
+
+    // For the history (WP6): the People list's names, and the matched
+    // clients' revenue as stored, read after their lock
+    const { rows: nameRows } = await conn.query('SELECT id, name FROM people');
+    const names = new Map(nameRows.map((p) => [p.id, p.name]));
+    const revenueRowsByClient = async (ids) => {
+      const byClient = new Map(ids.map((id) => [String(id), []]));
+      if (ids.length === 0) return byClient;
+      const { rows } = await conn.query(`
+        SELECT client_id::text AS client_id, year, revenue_amount
+          FROM client_revenues WHERE client_id::text = ANY($1::text[])`, [ids.map(String)]);
+      rows.forEach((r) => byClient.get(r.client_id).push(r));
+      return byClient;
+    };
+    const storedRevenue = await revenueRowsByClient([...existingClientsMap.values()].map((c) => c.id));
 
     // --- Pass 1: compute all field values ---
     // Names are unique in the file (checkSheet), so each client is written once.
@@ -292,6 +329,30 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       }
     }
 
+    // Each year's total of the file's amounts, over every client it names,
+    // whether or not the import writes it (below)
+    const totalsByYear = revenueTotals(
+      planRevenueWrites([...revenueDataMap].map(([lowerName, revenue]) => ({ id: lowerName, revenue })), revenueYears).upserts,
+      revenueYears
+    );
+
+    // A matched client the file leaves as it is is not written (WP6): its
+    // stored fields and revenue against what the file would write, compared
+    // as the history compares them (utils/clientChanges.cjs)
+    updatedCount = toUpdateMap.size;
+    for (const [lowerName, row] of toUpdateMap) {
+      const existingClient = existingClientsMap.get(lowerName);
+      const revenueBefore = revenueSnapshot(storedRevenue.get(String(existingClient.id)));
+      const stored = { ...clientSnapshot(existingClient, { names }), revenue: revenueBefore };
+      const planned = {
+        ...clientSnapshot({ ...existingClient, ...row }, { names }),
+        revenue: revenueDataMap.has(lowerName)
+          ? importedRevenue(revenueBefore, revenueDataMap.get(lowerName), revenueYears)
+          : revenueBefore
+      };
+      if (!clientChanges(stored, planned)) toUpdateMap.delete(lowerName);
+    }
+
     // Map to collect returned rows by lowerName for revenue association
     const clientResultMap = new Map(); // lowerName -> returned DB row
 
@@ -301,30 +362,37 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     // NOT EXISTS never replaced them: their ids are integers, init-db.sql's are
     // uuids, and the import must work on both.
     const updateRows = Array.from(toUpdateMap.values());
+    let updatedRows = [];
     if (updateRows.length > 0) {
       const updateColumns = [['id', 'text'], ...writeColumns];
       const { sql, params } = valuesList(updateRows, updateColumns);
-      const { rows: updatedRows } = await conn.query(`
+      params.push(accountId(req.user));
+      ({ rows: updatedRows } = await conn.query(`
         UPDATE clients c SET
           ${writeColumns.map(([column]) => `${column} = v.${column}`).join(',\n          ')},
-          updated_at = CURRENT_TIMESTAMP
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = (SELECT id FROM users WHERE id = $${params.length})
         FROM (VALUES ${sql}) AS v(${updateColumns.map(([column]) => column).join(', ')})
         WHERE c.id::text = v.id
         RETURNING c.*
-      `, params);
+      `, params));
       updatedRows.forEach(r => clientResultMap.set(r.name.toLowerCase(), r));
-      updatedCount = updatedRows.length;
+      changedCount = updatedRows.length;
     }
 
     // --- Pass 2b: bulk INSERT new clients ---
     const insertRows = Array.from(toInsertMap.values());
+    let insertedRows = [];
     if (insertRows.length > 0) {
       const { sql, params } = valuesList(insertRows, writeColumns);
-      const { rows: insertedRows } = await conn.query(`
-        INSERT INTO clients (${writeColumns.map(([column]) => column).join(', ')})
-        VALUES ${sql}
+      params.push(accountId(req.user));
+      const columnNames = writeColumns.map(([column]) => column).join(', ');
+      ({ rows: insertedRows } = await conn.query(`
+        INSERT INTO clients (${columnNames}, updated_by)
+        SELECT v.*, (SELECT id FROM users WHERE id = $${params.length})
+          FROM (VALUES ${sql}) AS v(${columnNames})
         RETURNING *
-      `, params);
+      `, params));
       insertedRows.forEach(r => clientResultMap.set(r.name.toLowerCase(), r));
       insertedCount = insertedRows.length;
     }
@@ -338,10 +406,10 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     // the file names, then insert the positive amounts. No ON CONFLICT, which
     // needs UNIQUE (client_id, year), and no client_revenues.updated_at:
     // production's older table need not have either (see pass 2a).
-    let totalsByYear = {};
     if (revenueYears.length === 0) {
       validation.warnings.push('No `YYYY Contracts` columns found; revenue not changed.');
     } else {
+      // The clients written above; a matched client left as it is keeps its rows
       const revenueClients = [];
       for (const [lowerName, revenue] of revenueDataMap) {
         const dbRow = clientResultMap.get(lowerName);
@@ -349,7 +417,6 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
         revenueClients.push({ id: dbRow.id, revenue });
       }
       const { upserts, deletes } = planRevenueWrites(revenueClients, revenueYears);
-      totalsByYear = revenueTotals(upserts, revenueYears);
 
       const pairs = [...upserts.map(([clientId, year]) => [clientId, year]), ...deletes];
       if (pairs.length > 0) {
@@ -375,12 +442,30 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       }
     }
 
+    // What each client written above changed, from its rows as stored
+    // before and as written; a new client from nothing. One insert.
+    const writtenRevenue = await revenueRowsByClient([...updatedRows, ...insertedRows].map((r) => r.id));
+    const byId = new Map([...existingClientsMap.values()].map((c) => [String(c.id), c]));
+    const after = (row) => clientSnapshot(row, { names, revenues: writtenRevenue.get(String(row.id)) });
+    await logChanges(conn, [
+      ...updatedRows.map((row) => ({
+        clientId: row.id,
+        clientName: row.name,
+        changes: clientChanges(
+          clientSnapshot(byId.get(String(row.id)), { names, revenues: storedRevenue.get(String(row.id)) }),
+          after(row)
+        )
+      })),
+      ...insertedRows.map((row) => ({ clientId: row.id, clientName: row.name, changes: clientChanges(null, after(row)) }))
+    ], req.user, 'import');
+
     // Check file: every write above succeeded; undo them all
     await conn.query(dryRun ? 'ROLLBACK' : 'COMMIT');
 
     const summary = {
       totalClients: clientsWithScores.length,
       updatedClients: updatedCount,
+      changedClients: changedCount,
       newClients: insertedCount,
       revenueYears,
       revenueTotals: totalsByYear,
@@ -417,6 +502,7 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
 const clientsQuery = (where = '') => `
   SELECT
     c.*,
+    ${updatedAtExactSql('c.updated_at')} AS updated_at_exact,
     COALESCE(
       jsonb_agg(
         jsonb_build_object(
@@ -475,6 +561,54 @@ const validationFailed = (details) => ({
   error: 'Validation failed',
   details
 });
+
+// Who changed what (docs/plans/tier-2.md, S9, WP6; utils/clientChanges.cjs).
+// Every client write reads the client it changes FOR UPDATE, writes, reads
+// what it wrote, and logs one client_changes row per client that changed, in
+// its own transaction: a failed insert fails the write. clients.updated_by is
+// set with updated_at, to the signed-in account while it exists (the JWT is
+// not checked against users, so a session can outlive its account).
+const accountId = (user) => (Number.isInteger(user?.userId) ? user.userId : null);
+
+// The client as stored, locked until the write commits, with its
+// updated_at to the microsecond (S10). Ids compared as text: production's
+// client ids are integers and init-db.sql's uuids.
+const lockClient = async (conn, clientId) => (await conn.query(`
+  SELECT c.*, ${updatedAtExactSql('c.updated_at')} AS updated_at_exact
+    FROM clients c
+   WHERE c.id::text = $1
+   FOR UPDATE`, [clientId])).rows[0];
+
+// A client's revenue rows, by its stored id (an untyped placeholder takes the
+// column's type, uuid or integer)
+const revenueRowsOf = async (conn, id) => (await conn.query(
+  'SELECT year, revenue_amount FROM client_revenues WHERE client_id = $1', [id])).rows;
+
+// The People list's names for the ids a change names, as they are now
+const peopleNames = async (conn, ids) => {
+  const wanted = [...new Set(ids.filter(Number.isInteger))];
+  if (wanted.length === 0) return new Map();
+  const { rows } = await conn.query('SELECT id, name FROM people WHERE id = ANY($1::int[])', [wanted]);
+  return new Map(rows.map((p) => [p.id, p.name]));
+};
+const peopleIdsOf = (...rows) => rows.filter(Boolean)
+  .flatMap((row) => [row.lead_id, row.second_chair_id, row.originator_id]);
+
+// One statement for every client that changed; nothing when none did. A
+// failure fails the write (the caller rolls back), and is rethrown without
+// PostgreSQL's `detail`, which for a refused row prints the whole row, a
+// note's text included, into the 500's log line.
+const logChanges = async (conn, entries, user, source) => {
+  const params = insertChangesParams(entries, user, source);
+  if (!params) return;
+  try {
+    await conn.query(INSERT_CHANGES_SQL, params);
+  } catch (error) {
+    const failure = new Error(`client_changes insert failed: ${error.message}`);
+    failure.code = error.code;
+    throw failure;
+  }
+};
 
 // GET /api/data/clients - Get all clients with aggregated revenue data
 router.get('/clients', async (req, res) => {
@@ -546,14 +680,16 @@ router.post('/clients', async (req, res) => {
         name, practice_area, conflict_risk, notes, primary_lobbyist,
         client_originator, lobbyist_team, interaction_frequency,
         stickiness, high_maintenance,
-        lead_id, second_chair_id, originator_id, originator_is_firm
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        lead_id, second_chair_id, originator_id, originator_is_firm, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                (SELECT id FROM users WHERE id = $15))
       RETURNING *
     `, [
       name, practice_area, conflict_risk, notes, legacy.primary_lobbyist,
       legacy.client_originator, legacy.lobbyist_team, interaction_frequency,
       stickiness, high_maintenance,
-      people.lead_id, people.second_chair_id, people.originator_id, people.originator_is_firm
+      people.lead_id, people.second_chair_id, people.originator_id, people.originator_is_firm,
+      accountId(req.user)
     ]);
 
     // Insert revenue records in bulk
@@ -572,6 +708,11 @@ router.post('/clients', async (req, res) => {
       `;
       await conn.query(query, params);
     }
+
+    // A new client is a change from nothing: every field it has, as written
+    const names = await peopleNames(conn, peopleIdsOf(newClient));
+    const after = clientSnapshot(newClient, { names, revenues: await revenueRowsOf(conn, newClient.id) });
+    await logChanges(conn, [{ clientId: newClient.id, clientName: newClient.name, changes: clientChanges(null, after) }], req.user, 'form');
 
     await conn.query('COMMIT');
     
@@ -600,12 +741,19 @@ router.post('/clients', async (req, res) => {
 
 // PUT /api/data/clients/:id - Update client with revenues
 // Checked as POST is, before the client is looked up: a body the rules refuse
-// answers 400 whatever the id. `revenues` is the client's whole revenue, as
-// before; a body without it leaves the stored revenue as it is, and
-// `revenues: []` clears it.
+// (the fields, `expected_updated_at`'s form, the people) answers 400 whatever
+// the id. Then the client, read FOR UPDATE: 404 when there is none, and 409
+// when `expected_updated_at` (S10, docs/plans/tier-2.md WP6) is not the
+// updated_at_exact it holds now, with who saved it last and when (the newest
+// client_changes row). A body without `expected_updated_at` (the older page,
+// a direct request) is not checked, and is logged like any other. `revenues`
+// is the client's whole revenue, as before; a body without it leaves the
+// stored revenue as it is, and `revenues: []` clears it. A save that changes
+// nothing writes nothing: no updated_at, no history row.
 router.put('/clients/:id', async (req, res) => {
   const fieldErrors = checkClient(req.body);
   if (!isObjectBody(req.body)) return res.status(400).json(validationFailed(fieldErrors));
+  const expected = readExpectedUpdatedAt(req.body);
 
   const conn = await db.pool.connect();
   
@@ -633,14 +781,32 @@ router.put('/clients/:id', async (req, res) => {
       revenues
     } = req.body;
 
+    // The people are read FOR SHARE before the client is locked, as every
+    // write does, so a rename (routes/people.cjs: the person, then its
+    // clients) cannot deadlock with a save
     const assignment = await resolveAssignment(conn, req.body);
-    const details = [...fieldErrors, ...assignment.errors];
+    const details = [...fieldErrors, ...expected.errors, ...assignment.errors];
     if (details.length > 0) {
       await conn.query('ROLLBACK');
       return res.status(400).json(validationFailed(details));
     }
     const people = assignment.value;
     const legacy = assignment.legacy;
+
+    // Read, compare, then write: the lock holds a second save of the same
+    // client until this one commits, and that save then finds the new
+    // updated_at and answers 409
+    const before = await lockClient(conn, clientId);
+    if (!before) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ error: 'Client not found' });
+    }
+    if (expected.present && !isCurrent(before.updated_at_exact, expected.value)) {
+      const { rows: [latest] } = await conn.query(LATEST_CHANGE_SQL, [String(before.id)]);
+      await conn.query('ROLLBACK');
+      return res.status(409).json(conflictBody(latest));
+    }
+    const revenueBefore = revenues !== undefined ? await revenueRowsOf(conn, before.id) : undefined;
 
     // Update client record
     const { rows: [updatedClient] } = await conn.query(`
@@ -651,7 +817,8 @@ router.put('/clients/:id', async (req, res) => {
         stickiness = $9, high_maintenance = $10,
         lead_id = $11, second_chair_id = $12, originator_id = $13,
         originator_is_firm = $14,
-        updated_at = CURRENT_TIMESTAMP
+        updated_at = CURRENT_TIMESTAMP,
+        updated_by = (SELECT id FROM users WHERE id = $16)
       WHERE id::text = $15
       RETURNING *
     `, [
@@ -661,13 +828,9 @@ router.put('/clients/:id', async (req, res) => {
       stickiness, high_maintenance,
       people.lead_id, people.second_chair_id, people.originator_id,
       people.originator_is_firm,
-      clientId
+      clientId,
+      accountId(req.user)
     ]);
-
-    if (!updatedClient) {
-      await conn.query('ROLLBACK');
-      return res.status(404).json({ error: 'Client not found' });
-    }
 
     // Replace the revenue with the body's, when it has any. From here on the
     // client's id is the stored one, in untyped placeholders that take the
@@ -693,7 +856,23 @@ router.put('/clients/:id', async (req, res) => {
       await conn.query(query, params);
     }
 
-    await conn.query('COMMIT');
+    // What changed, from the rows as stored before and after (a field left
+    // out took the route's default, and revenue changed only if sent). None:
+    // undo the write, so updated_at stays and no row is logged.
+    const names = await peopleNames(conn, peopleIdsOf(before, updatedClient));
+    const changes = clientChanges(
+      clientSnapshot(before, { names, revenues: revenueBefore }),
+      clientSnapshot(updatedClient, {
+        names,
+        revenues: revenues !== undefined ? await revenueRowsOf(conn, updatedClient.id) : undefined
+      })
+    );
+    if (changes) {
+      await logChanges(conn, [{ clientId: updatedClient.id, clientName: updatedClient.name, changes }], req.user, 'form');
+      await conn.query('COMMIT');
+    } else {
+      await conn.query('ROLLBACK');
+    }
     
     // Fetch the complete updated client with revenues and people
     const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [updatedClient.id]);
@@ -727,7 +906,9 @@ router.put('/clients/:id', async (req, res) => {
 // the meantime, the answer is 409 and nothing is written. The second chair is
 // checked as every write checks it (validateAssignment: an active person on
 // the People list, not the lead), read FOR SHARE, and the client FOR UPDATE.
-// Ids are compared as text: production's client ids are integers.
+// Ids are compared as text: production's client ids are integers. The change
+// is logged as `second-chair` (WP6); a request that sets the seat the client
+// already holds changes nothing and writes nothing, updated_at included.
 router.put('/clients/:id/second-chair', async (req, res) => {
   const body = req.body || {};
   const clientId = String(req.params.id);
@@ -744,9 +925,7 @@ router.put('/clients/:id/second-chair', async (req, res) => {
   const conn = await db.pool.connect();
   try {
     await conn.query('BEGIN');
-    const { rows: [current] } = await conn.query(`
-      SELECT id, lead_id, second_chair_id, originator_id, originator_is_firm
-        FROM clients WHERE id::text = $1 FOR UPDATE`, [clientId]);
+    const current = await lockClient(conn, clientId);
     if (!current) {
       await conn.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'Client not found' });
@@ -777,12 +956,21 @@ router.put('/clients/:id/second-chair', async (req, res) => {
       return res.status(400).json(validationFailed(assignment.errors));
     }
 
-    await conn.query(`
+    const { rows: [updated] } = await conn.query(`
       UPDATE clients
-         SET second_chair_id = $1, lobbyist_team = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE id::text = $3`,
-      [assignment.value.second_chair_id, assignment.legacy.lobbyist_team, clientId]);
-    await conn.query('COMMIT');
+         SET second_chair_id = $1, lobbyist_team = $2, updated_at = CURRENT_TIMESTAMP,
+             updated_by = (SELECT id FROM users WHERE id = $4)
+       WHERE id::text = $3
+       RETURNING *`,
+      [assignment.value.second_chair_id, assignment.legacy.lobbyist_team, clientId, accountId(req.user)]);
+    const names = await peopleNames(conn, peopleIdsOf(current, updated));
+    const changes = clientChanges(clientSnapshot(current, { names }), clientSnapshot(updated, { names }));
+    if (changes) {
+      await logChanges(conn, [{ clientId: updated.id, clientName: updated.name, changes }], req.user, 'second-chair');
+      await conn.query('COMMIT');
+    } else {
+      await conn.query('ROLLBACK');
+    }
 
     const { rows } = await db.query(clientsQuery('WHERE c.id::text = $1'), [clientId]);
     res.json({ success: true, client: calculateStrategicScores(rows.map(toApiClient))[0] });
@@ -796,6 +984,10 @@ router.put('/clients/:id/second-chair', async (req, res) => {
 });
 
 // DELETE /api/data/clients/:id - Delete client and associated revenues
+// The client is read FOR UPDATE with its revenue and logged as `delete`
+// (WP6): every field it had, from its value to null, with its name kept, so
+// its history outlives it. No expected_updated_at: the plan gives DELETE none
+// (docs/plans/tier-2.md, section 11), and the page asks before deleting.
 router.delete('/clients/:id', async (req, res) => {
   const conn = await db.pool.connect();
   
@@ -806,19 +998,20 @@ router.delete('/clients/:id', async (req, res) => {
     // one, matches nobody (404)
     const clientId = String(req.params.id);
 
-    // First delete associated revenues
-    await conn.query('DELETE FROM client_revenues WHERE client_id::text = $1', [clientId]);
-
-    // Then delete the client
-    const { rowCount } = await conn.query(
-      'DELETE FROM clients WHERE id::text = $1', 
-      [clientId]
-    );
-
-    if (rowCount === 0) {
+    const before = await lockClient(conn, clientId);
+    if (!before) {
       await conn.query('ROLLBACK');
       return res.status(404).json({ error: 'Client not found' });
     }
+    const revenueBefore = await revenueRowsOf(conn, before.id);
+    const names = await peopleNames(conn, peopleIdsOf(before));
+
+    // First delete associated revenues, then the client, by the stored id
+    await conn.query('DELETE FROM client_revenues WHERE client_id = $1', [before.id]);
+    await conn.query('DELETE FROM clients WHERE id = $1', [before.id]);
+
+    const changes = clientChanges(clientSnapshot(before, { names, revenues: revenueBefore }), null);
+    await logChanges(conn, [{ clientId: before.id, clientName: before.name, changes }], req.user, 'delete');
 
     await conn.query('COMMIT');
     
@@ -836,6 +1029,21 @@ router.delete('/clients/:id', async (req, res) => {
   }
 });
 
+// GET /api/data/clients/:id/changes - a client's history (WP6), newest first:
+// { success, changes: [{ id, client_id, client_name, changed_by_username,
+// source, changes, created_at }] }. Read from client_changes alone, by the id
+// as text: a deleted client's history answers as any other (it outlives the
+// client, and ids are never reused), and an id with no history answers an
+// empty list.
+router.get('/clients/:id/changes', async (req, res) => {
+  try {
+    const { rows } = await db.query(CLIENT_CHANGES_SQL, [String(req.params.id)]);
+    res.json({ success: true, changes: rows });
+  } catch (error) {
+    console.error('Error fetching client changes:', error);
+    res.status(500).json({ success: false, error: 'Failed to load the client\'s history' });
+  }
+});
 
 module.exports = router;
 
