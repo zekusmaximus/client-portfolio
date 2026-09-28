@@ -716,8 +716,11 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         { CLIENT: long, '2026 Contracts': '$500', Notes: '' },
       ] });
       assert.equal(res.status, 200, res.text);
-      const { rows } = await db.query('SELECT name, notes FROM clients WHERE name = ANY($1) ORDER BY name', [[name, long]]);
-      assert.deepEqual(rows, [{ name: long, notes: '' }, { name, notes }].sort((a, b) => (a.name < b.name ? -1 : 1)));
+      // Sorted here, not by ORDER BY: the database's collation decides where
+      // `&` sorts (C puts it first, glibc's en_US, CI's, ignores it)
+      const byName = (a, b) => (a.name < b.name ? -1 : 1);
+      const { rows } = await db.query('SELECT name, notes FROM clients WHERE name = ANY($1)', [[name, long]]);
+      assert.deepEqual(rows.sort(byName), [{ name: long, notes: '' }, { name, notes }].sort(byName));
     });
 
     // The page lists errors by row (src/DataUploadManager.jsx)
