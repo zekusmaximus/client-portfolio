@@ -668,8 +668,15 @@ The next nightly backup dumps the new book. It needs only the `users`,
 
 ### 7.5 Repairing text stored escaped (`unescape-book`)
 
-Once, between Tier 2 WP5's two pull requests (`docs/plans/tier-2.md`,
-section 10, S8). Until WP5 the API HTML-escaped every string a client save
+**Done on 2026-09-28:** the preview in Render's Shell found 84 clients and
+nothing to repair in any column, no shared names and no entity-like text in
+any table, so `--confirm` was not needed. Since WP5's second pull request the
+page shows text as stored and decodes nothing, so if a backup restored from
+before 2026-09-28 ever brings escaped text back, it shows raw (`&amp;`): run
+the preview and, if it lists anything, `--confirm` (steps 2 to 4 below).
+
+Written for the one run between Tier 2 WP5's two pull requests
+(`docs/plans/tier-2.md`, section 10, S8). Until WP5 the API HTML-escaped every string a client save
 sent, so a client saved on Client Details was stored as `Barnes &amp; Noble`,
 its note with a `<` two levels deep (`R&amp;amp;D &amp;lt; 5%`), and a client
 from before the People list may hold escaped people text. WP5's first PR
@@ -677,14 +684,15 @@ stores what partners type; this repair rewrites what was stored before, in
 `clients.name`, `notes`, `primary_lobbyist`, `client_originator` and
 `lobbyist_team`, with the text as typed (`unescapeStored`,
 `utils/escaping.cjs`). Nothing else changes: not `updated_at`, the revenue,
-the People list, the accounts or the saved AI answers. The page reads the
-text correctly before and after the repair; what changes is the text the
-page shows raw (the Partnership tab's associate split and person sheets,
-Scenarios, the Partnership report), which reads `&amp;` until the repair.
+the People list, the accounts or the saved AI answers. Between WP5's two
+pull requests the page read the text correctly before and after the repair,
+but for the places that showed it raw (the Partnership tab's associate split
+and person sheets, Scenarios, the Partnership report); since the second, it
+shows all text as stored, so escaped text reads `&amp;` everywhere until
+repaired.
 
 It cannot tell a literal `&amp;` a partner typed from an escape, and turns
-both into `&`; nor can the page's displays today, so nothing that reads
-right now will read differently.
+both into `&`.
 
 **Before step 1**, open
 <https://client-portfolio-backend.onrender.com/api/health> and confirm
