@@ -6,9 +6,10 @@ const { validatePersonInput, parseId, personChangeBlockers } = require('../utils
 
 // The People list (docs/plans/people-and-second-chair.md, P1-P5). Every
 // signed-in partner may read and change it (P2). There is no DELETE: people are
-// deactivated, never removed. sanitizeRequestBody is deliberately not applied:
-// validatePersonInput admits only letters, spaces, hyphens, apostrophes and
-// periods, and escaping would store "O'Brien" as "O&#x27;Brien".
+// deactivated, never removed. No request pass: validatePersonInput admits
+// only letters, spaces, hyphens, apostrophes and periods and trims the name,
+// and the request sanitizer the client routes ran until WP5 would have stored
+// "O'Brien" as "O&#x27;Brien".
 router.use(auth);
 
 const PEOPLE_SELECT = `

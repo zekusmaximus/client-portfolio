@@ -131,8 +131,11 @@ app.get('/api/health', async (req, res) => {
     // cost (ai-answers): an API without it saves no answers and has no
     // GET /api/ai/answers. And before the AI tab streams an answer
     // (ai-stream): an API without it ignores Accept: text/event-stream and
-    // answers JSON once the whole answer is written.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream'],
+    // answers JSON once the whole answer is written. plain-text is not for
+    // the page: it tells Jeff, before he repairs the stored text
+    // (scripts/unescape-book.cjs, deploy/README.md 7.5), that this API stores
+    // text as typed; an API without it escapes every save again.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text'],
     services: {}
   };
 

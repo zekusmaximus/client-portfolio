@@ -337,6 +337,14 @@ deploy until it is refreshed. The newer page on an older API is safe: it asks
 updated yet; try again in a few minutes." instead of the Ask box. So roll back
 Render and Netlify together (5.1 and 5.2), and check both with section 4.
 
+**Tier 2 WP5's first pull request** (text stored as typed) is safe to roll
+back on either side: the page from before it works on the API after it, and
+the reverse, each storing text the page reads correctly (checked end to end
+in its pull request). An API rolled back past it escapes every save again, as
+before, so do not run 7.5's repair on it; once WP5's second pull request
+(which removes the page's one-level decoders) has merged, a rollback must take
+both of WP5's pull requests together.
+
 ### 5.1 The page (Netlify)
 
 Deploys > the last good deploy > **Publish deploy**. It publishes that earlier
@@ -426,8 +434,9 @@ account adds nobody to it, and associates get no account
 
 A partner changes their own password from the header's **Change password**
 button. The scripts below are for adding a partner, for a forgotten password,
-for removing an account (7.3) and for starting the book over (7.4). Neither a
-reset nor a deletion ends sessions already issued; section 8.1 does.
+for removing an account (7.3), for starting the book over (7.4) and for
+repairing text stored escaped (7.5). Neither a reset nor a deletion ends
+sessions already issued; section 8.1 does.
 
 ### 7.1 From the Render Shell (paid instances only)
 
@@ -657,6 +666,106 @@ The next nightly backup dumps the new book. It needs only the `users`,
 `clients` and `client_revenues` tables to exist and `users` to be non-empty
 (`backup/pg-backup.sh`, check 2), so a small or empty book backs up normally.
 
+### 7.5 Repairing text stored escaped (`unescape-book`)
+
+Once, between Tier 2 WP5's two pull requests (`docs/plans/tier-2.md`,
+section 10, S8). Until WP5 the API HTML-escaped every string a client save
+sent, so a client saved on Client Details was stored as `Barnes &amp; Noble`,
+its note with a `<` two levels deep (`R&amp;amp;D &amp;lt; 5%`), and a client
+from before the People list may hold escaped people text. WP5's first PR
+stores what partners type; this repair rewrites what was stored before, in
+`clients.name`, `notes`, `primary_lobbyist`, `client_originator` and
+`lobbyist_team`, with the text as typed (`unescapeStored`,
+`utils/escaping.cjs`). Nothing else changes: not `updated_at`, the revenue,
+the People list, the accounts or the saved AI answers. The page reads the
+text correctly before and after the repair; what changes is the text the
+page shows raw (the Partnership tab's associate split and person sheets,
+Scenarios, the Partnership report), which reads `&amp;` until the repair.
+
+It cannot tell a literal `&amp;` a partner typed from an escape, and turns
+both into `&`; nor can the page's displays today, so nothing that reads
+right now will read differently.
+
+**Before step 1**, open
+<https://client-portfolio-backend.onrender.com/api/health> and confirm
+`features` ends with `"plain-text"`. Without it Render is still running an API
+that escapes every save: deploy it first (section 4.1, Manual Deploy when
+auto-deploy is off, then 4.3), and never run the repair on that API, or on
+one rolled back to it (section 5), because each later save escapes its text
+again. Then on Client Details open one client with an `&` or `'` in its name
+and a note, **Save** it unchanged, and check its name and note read the same.
+
+Tell the partners not to save clients or import a sheet from step 2 until
+step 3 is done: the preview's count would change, and `--confirm` would then
+refuse (safely) until the preview runs again.
+
+1. **Back up by hand** (7.4 step 3's block, or `backup/INSTALL.md` step 7),
+   and wait for it to pass: `gh run watch --exit-status` ends without an
+   error and the log shows `row counts match for N tables`. Write down the run
+   id.
+
+2. **Preview.** In the Render Shell (bash; it runs the deployed commit, so
+   `ls scripts/unescape-book.cjs` finding the file proves Render runs WP5):
+
+   ```bash
+   ls scripts/unescape-book.cjs && node scripts/unescape-book.cjs
+   ```
+
+   Or from your machine (the environment in 7.2, after the `/api/health`
+   check above; `git pull; npm ci` first, so your clone has the script):
+   `node scripts/unescape-book.cjs`.
+
+   It changes nothing and exits 1 by design. It prints `Clients: <n>`; then,
+   for each of the five columns, how many clients hold escaped text and up to
+   five of them as stored and as repaired (a note's text is never printed,
+   only its length before and after, since notes stay out of logs and out of
+   the AI); `Clients to repair: <n>`; the names two or more clients share
+   regardless of case once repaired (the import's rule); entity-like text the
+   repair leaves as it is (such as `&nbsp;`, which the old form wrote for a
+   non-breaking space in a note with `<`, or a `&#169;` someone typed); any
+   other text column of any table holding entity-like text, which nothing
+   changes; and last the exact command for step 3:
+   `Nothing was changed. To repair the <n> clients above, run: npm run unescape:book -- --confirm <n>`.
+   **Bring the whole output to the session.** If `Names two or more clients
+   share` lists anything, stop there and bring it: `--confirm` refuses while
+   any name is shared, and one of each pair is deleted on Client Details
+   first.
+
+3. **Repair**, with the count the preview printed. In the Render Shell:
+
+   ```bash
+   node scripts/unescape-book.cjs --confirm <n>
+   ```
+
+   (from your machine the same, or `npm run unescape:book -- --confirm <n>`).
+   One transaction: it locks `clients` against writes (the page can still
+   read), counts again, and refuses unless exactly `<n>` clients hold escaped
+   text; writes the repaired text; reads it back; and commits only if nothing
+   is left to repair and no name is shared. It prints
+   `Repaired <n> clients (name <a>, notes <b>, primary_lobbyist <c>, client_originator <d>, lobbyist_team <e>); updated_at left as it was.`
+   and a line per client with what changed, and exits 0. Anything else starts
+   `Refused:`, changes nothing and exits 1: a count that changed since the
+   preview (a save or an import in between: run step 2 again), a shared name,
+   or a save in progress (it waits 10 seconds; run it again). **Bring its
+   output to the session.**
+
+4. **Check.** Run the preview again: `Clients to repair: 0` and
+   `Nothing was changed, and nothing is left to repair.` Running `--confirm`
+   again is safe: with the old count it refuses, and `--confirm 0` changes
+   nothing. On <https://gbacpod.com>: a client whose name had `&` or `'` and
+   a note that had `&` read correctly on Client Details (the list and the
+   **Edit Client** form), in Scenarios (choose someone who leads it as
+   leaving: its name in Stages 1 to 3, Stage 3's client picker included) and
+   in the Partnership report (**Export**, **Report**), with `&` shown once.
+
+5. **Rollback.** The repair changes only those five columns. The API from
+   before WP5 reads repaired text correctly, since its displays decode one
+   level and plain text has none, but escapes each later save again; after a
+   rollback, run the repair again once WP5 is back (a second run repairs only
+   what was escaped since). To put the text back as it was, restore step 1's
+   backup (`backup/RESTORE.md` (e2)), which also undoes every other change
+   since step 1.
+
 ---
 
 ## 8. Rotating secrets
@@ -741,7 +850,7 @@ example `"event":"ai_error"`.
 
 ```json
 { "status": "OK", "timestamp": "<ISO time>", "uptimeSeconds": 8509, "environment": "production",
-  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream"],
+  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text"],
   "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5" } }
 ```
 
@@ -751,7 +860,7 @@ example `"event":"ai_error"`.
 | `timestamp` | the server's clock when it answered |
 | `uptimeSeconds` | seconds since the process started. It resets on every deploy, restart and, on a Free instance, every spin-up |
 | `environment` | `NODE_ENV`; must be `production` on Render |
-| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. The last one added is `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). A name missing after a merge means Render has not deployed that merge yet |
+| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). The last one added is `plain-text` (Tier 2 WP5), which the page does not read: it says this API stores text as typed, and 7.5's repair runs only on an API that lists it. A name missing after a merge means Render has not deployed that merge yet |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
 | `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`) |

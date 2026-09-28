@@ -53,7 +53,8 @@ const ROSTER_IN = [
   { name: 'Paula', role: 'partner', lead: load(3, 195000, 9.5), second: load(3, 250000, 1.6) },
   { name: 'Jay', role: 'emeritus', lead: load(0, 0, 0), second: load(2, 127000, 1.5) },
   { name: 'Ben', role: 'associate', lead: load(0, 0, 0), second: load(4, 205000, 1.6) },
-  // escaped by the request sanitizer on the way in
+  // escaped by the request sanitizer on the way in until WP5; the route's
+  // one-level decoding (which WP5's second PR removes) still reads it
   { name: 'Mary O&#x27;Brien', role: 'associate', lead: load(0, 0, 0), second: load(0, 0, 0) },
   { name: 'Mary', role: 'associate', lead: load(0, 0, 0), second: load(0, 0, 0) },
 ];

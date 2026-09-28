@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require('./db.cjs');
 const auth = require('./middleware/auth.cjs');
 const { body, validationResult } = require('express-validator');
-const { sanitizeRequestBody } = require('./middleware/validation.cjs');
+const { trimRequestBody } = require('./middleware/validation.cjs');
 const {
   processCSVData,
   validateClientData,
@@ -37,22 +37,10 @@ const {
 
 // Apply authentication middleware to all routes
 router.use(auth);
-router.use(sanitizeRequestBody);
-
-// Helper function to decode HTML entities
-function decodeHTMLEntities(text) {
-  if (!text || typeof text !== 'string') return text;
-  
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, '/')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
-    .replace(/&#x([a-fA-F0-9]+);/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
-}
+// Every string trimmed and otherwise stored as sent (docs/plans/tier-2.md, S8,
+// WP5): no escaping, so an import cell and a form field are written as the
+// partner typed them.
+router.use(trimRequestBody);
 
 // Validation for CSV processing
 const csvValidationRules = [
@@ -75,15 +63,14 @@ const csvValidationRules = [
         }
         
         // Validate CLIENT length and pattern: the client form's
-        // (utils/clientRules.cjs)
-        if (row.CLIENT.trim().length > NAME_MAX) {
+        // (utils/clientRules.cjs), on the name as the sheet spells it, which
+        // is what the import stores
+        const client = row.CLIENT.trim();
+        if (client.length > NAME_MAX) {
           throw new Error(`Row ${rowNumberOf(i)}: CLIENT must not exceed 255 characters`);
         }
         
-        // Decode HTML entities for validation
-        const decodedClient = decodeHTMLEntities(row.CLIENT.trim());
-        
-        if (!NAME_PATTERN.test(decodedClient)) {
+        if (!NAME_PATTERN.test(client)) {
           throw new Error(`Row ${rowNumberOf(i)}: CLIENT contains invalid characters`);
         }
       }
@@ -141,19 +128,11 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       });
     }
 
-    // Process the CSV data
-    // First, decode HTML entities in the raw CSV data (sanitizeRequestBody
-    // escaped every string; names only match the People list decoded)
-    const decodedCsvData = csvData.map(row => {
-      const decodedRow = {};
-      for (const [key, value] of Object.entries(row)) {
-        decodedRow[key] = typeof value === 'string' ? decodeHTMLEntities(value) : value;
-      }
-      return decodedRow;
-    });
-    
-    const headers = headerKeys(decodedCsvData);
-    const clients = processCSVData(decodedCsvData);
+    // Process the CSV data: every cell as the sheet spells it. Until WP5 each
+    // cell arrived escaped by the request sanitizer and was decoded here; the
+    // cells now arrive as sent (trimmed), and are neither escaped nor decoded.
+    const headers = headerKeys(csvData);
+    const clients = processCSVData(csvData);
 
     // The years the file covers, from its `YYYY Contracts` headers (D5)
     const revenueYears = extractRevenueYears(headers);
@@ -190,10 +169,11 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     if (clientNames.length > 0) {
       // Fetch all potential matches in one query
       // Using ANY($1) allows us to match against an array of lowercased names.
-      // A name saved through the client form is stored HTML-escaped by
-      // sanitizeRequestBody (`Barnes &amp; Noble`), once per save, so it is
-      // compared unescaped, as indexStoredClients keys it; the update below
-      // then writes the sheet's spelling.
+      // A name saved through the client form before WP5 was stored
+      // HTML-escaped by the request sanitizer (`Barnes &amp; Noble`), once
+      // per save, and stays so until scripts/unescape-book.cjs repairs it, so
+      // it is compared unescaped, as indexStoredClients keys it; the update
+      // below then writes the sheet's spelling.
       // FOR UPDATE: the values kept for columns the file lacks are written back
       // below, so a form save cannot land in between and be overwritten.
       const { rows: allExistingClients } = await conn.query(`

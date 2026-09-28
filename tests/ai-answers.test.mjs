@@ -138,8 +138,9 @@ test('answerRow: a transition plan stores the client id as text and its name une
   assert.equal(plan({ id: 42, name: 'Acme' }).client_id, '42');
   const uuid = '3f2b8c1e-8d2a-4a4b-9c3e-2f1a0b9c8d7e';
   assert.equal(plan({ id: uuid, name: 'Acme' }).client_id, uuid);
-  // The route runs behind sanitizeRequestBody, and the page sends the name as
-  // the API stored it (escaped once by the client form): undone however often
+  // The page sends the name as the API stores it: escaped if the client form
+  // saved it before WP5 (and, until WP5, escaped once more by the route's
+  // request sanitizer), plain since: undone however often, plain as it is
   assert.equal(plan({ id: 1, name: 'Smith &amp; O&#x27;Brien' }).client_name, "Smith & O'Brien");
   assert.equal(plan({ id: 1, name: 'Smith &amp;amp; O&amp;#x27;Brien' }).client_name, "Smith & O'Brien");
   assert.equal(plan({ id: 1, name: "Smith & O'Brien" }).client_name, "Smith & O'Brien");

@@ -1,6 +1,6 @@
 // src/utils/bookSheet.js: the book as an import sheet (Data Upload's
 // "Download the book as a sheet"). Every column and vocabulary, text the
-// request sanitizer stored escaped written unescaped, quoting, blank cells,
+// request sanitizer stored escaped before WP5 written unescaped, quoting, blank cells,
 // the revenue years, a missing or inactive lead, and the sheet read back by
 // the import's own parsing (processCSVData, checkSheet) into the stored
 // values. tests/import-db.test.mjs imports it through server.cjs.
@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import Papa from 'papaparse';
 import { buildBookSheet, revenueYearsOnFile, BOOK_SHEET_COLUMNS } from '../src/utils/bookSheet.js';
+import { unescapeStored } from '../src/utils/escaping.js';
 import csvImport from '../utils/csvImport.cjs';
 import analyzer from '../clientAnalyzer.cjs';
 
@@ -154,4 +155,24 @@ test('read back by the import\'s own parsing, every cell gives the stored value,
     const amounts = Object.fromEntries(sheet.years.map((y) => [y, (c.revenues.find((r) => Number(r.year) === y && parseFloat(r.revenue_amount) > 0) || { revenue_amount: 0 }).revenue_amount]));
     assert.deepEqual(read.revenue, Object.fromEntries(Object.entries(amounts).map(([y, a]) => [y, parseFloat(a)])), c.name);
   }
+});
+
+// Tier 2 WP5: text saved since WP5 is stored as typed. The sheet unescapes
+// what was stored escaped before, so a book of plain text writes the same
+// sheet as its escaped copy, and a literal entity typed since (which is no
+// escape) is written as it is and read back as it is; until WP5 the import
+// decoded it (`&#169;` became ©)
+test('text stored as typed: the same sheet as for its escaped copy; a note with < and a literal entity written and read back as typed', () => {
+  const plain = (c) => ({ ...c, name: unescapeStored(c.name), notes: unescapeStored(c.notes) });
+  const book = [BARNES, ENERGY, OBRIEN];
+  assert.equal(buildBookSheet(book.map(plain), PEOPLE).csv, buildBookSheet(book, PEOPLE).csv);
+
+  const TYPED = client('t1', "Smith & O'Brien / Co", {
+    ...seats(KEVIN), notes: 'Copyright &#169; 2026, R&D < 5% of "budget"', revenues: [{ year: 2026, revenue_amount: 100 }],
+  });
+  const sheet = buildBookSheet([TYPED], PEOPLE);
+  const { data } = parse(sheet.csv);
+  assert.deepEqual([data[0].CLIENT, data[0].Notes], [TYPED.name, TYPED.notes]);
+  const [read] = processCSVData(data);
+  assert.deepEqual([read.name, read.sheet.values.notes], [TYPED.name, TYPED.notes]);
 });

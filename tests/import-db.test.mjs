@@ -338,7 +338,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.equal(energy.client_originator, '');
   });
 
-  test('names match the People list decoded, in any case: an apostrophe survives the request sanitizer', async () => {
+  test('names match the People list decoded, in any case: an apostrophe resolves (it went through the request sanitizer until WP5)', async () => {
     const added = await call('POST', '/api/people', { name: "Mary O'Brien", role: 'associate' });
     assert.equal(added.status, 201, JSON.stringify(added.body));
 
@@ -417,7 +417,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -738,7 +738,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     const zero = { count: 0, revenue: 0, effort: 0 };
     const entry = (name) => ({ name, role: 'partner', lead: zero, second: zero });
     const staying = everyone.people.filter((p) => p.active && p.name !== 'Kevin').map((p) => entry(p.name));
-    assert.ok(staying.some((p) => p.name === "Mary O'Brien"), 'an apostrophe goes through the request sanitizer');
+    assert.ok(staying.some((p) => p.name === "Mary O'Brien"), 'an apostrophe reaches the roster check (escaped by the request sanitizer until WP5)');
     const stage1Data = { departing: [{ name: 'Kevin', role: 'partner' }], impactData: { totalRevenueAtRisk: 1 } };
     const plan = (roster) => call('POST', '/api/scenarios/transition-plan', { client, stage1Data, roster });
 
@@ -879,11 +879,13 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.deepEqual(await rest(), before);
   });
 
-  // A client saved through the client form is stored HTML-escaped by
-  // sanitizeRequestBody (review 4.9), once per save. The import matches stored
-  // names unescaped, so it updates that client instead of adding a second one
-  // with the plain name, and writes the sheet's spelling back.
-  test('a client re-saved through PUT with & and an apostrophe in its name is updated by the next import, not duplicated', async () => {
+  // Since WP5 a client saved through PUT is stored as typed. One the client
+  // form saved before WP5 was stored HTML-escaped by the request sanitizer
+  // (review 4.9), once per save, and stays so until the repair
+  // (scripts/unescape-book.cjs). The import matches stored names unescaped, so
+  // it updates that client instead of adding a second one with the plain
+  // name, and writes the sheet's spelling back.
+  test('a client saved through PUT with & and an apostrophe in its name is stored as typed; stored escaped, as before WP5, it is updated by the next import, not duplicated', async () => {
     // The SQL the import matches with and the JavaScript that keys the rows agree
     const samples = [
       'Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust', 'O&amp;#x27;Brien Trust', '&amp;amp;amp;',
@@ -936,9 +938,17 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     };
     await save(ids[BARNES], BARNES);
     await save(ids[OBRIEN], OBRIEN);
-    // A second save sending the name as it is stored, as a direct request can
-    // (the page's name pattern refuses the `;`): escaped again
-    assert.equal(await save(ids[OBRIEN], await storedName(ids[OBRIEN])), 'O&#x27;Brien Trust');
+    // A second save sending the name as it is stored: stored as typed, so
+    // unchanged (until WP5 each save escaped it once more)
+    assert.equal(await save(ids[OBRIEN], await storedName(ids[OBRIEN])), OBRIEN);
+    assert.equal(await storedName(ids[BARNES]), BARNES);
+    assert.equal(await storedName(ids[OBRIEN]), OBRIEN);
+
+    // As the form stored them before WP5, until the repair: escaped once, and
+    // twice (a save that sent the stored text back)
+    const setName = (id, name) => db.query('UPDATE clients SET name = $1 WHERE id::text = $2', [name, id]);
+    await setName(ids[BARNES], validator.escape(BARNES));
+    await setName(ids[OBRIEN], validator.escape(validator.escape(OBRIEN)));
     assert.equal(await storedName(ids[BARNES]), 'Barnes &amp; Noble Education Fund');
     assert.equal(await storedName(ids[OBRIEN]), 'O&amp;#x27;Brien Trust');
 
@@ -980,7 +990,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       revenues: [{ year: 2026, revenue_amount: 40000 }],
     });
     assert.equal(posted.status, 201, JSON.stringify(posted.body));
-    assert.equal(posted.body.client.name, 'Barnes &amp; Noble Education Fund');
+    assert.equal(posted.body.client.name, BARNES, 'stored as typed (escaped until WP5)');
     const withDuplicate = await snapshot();
     const refused = await importCsv(sheet);
     assert.equal(refused.status, 400, JSON.stringify(refused.body));
@@ -999,11 +1009,13 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.equal(await bookSize(), size);
   });
 
-  // The page's side of the same escaping: the client form fills its fields
-  // unescaped (src/utils/clientForm.js), so saving a client again stores the
-  // same text; and Scenarios' transition sheet writes client names unescaped
+  // The page's side: the client form fills its fields unescaped
+  // (src/utils/clientForm.js), so a client stored escaped before WP5 opens as
+  // typed, and since WP5 its save stores exactly what the form shows, a note
+  // with `<` included; saving again stores the same text. Scenarios'
+  // transition sheet writes client names unescaped
   // (src/utils/transitionPlans.js), so Check file and the import read them.
-  test('the form saves an escaped name again unchanged, and a transition sheet for it passes Check file and imports', async () => {
+  test('the form stores a name with & and a note with < as typed, repairing a name stored escaped before WP5, and saves them again unchanged; a transition sheet for it passes Check file and imports', async () => {
     const BARNES = 'Barnes & Noble Education Fund';
     const listed = async () => (await call('GET', '/api/data/clients')).body.clients;
     const barnesId = String((await listed()).find((c) => escaping.unescapeStored(c.name) === BARNES).id);
@@ -1032,14 +1044,19 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     };
     const openForm = async () => clientFormData((await listed()).find((c) => String(c.id) === barnesId));
 
-    // A partner types notes with an ampersand and a `<` (which DOMPurify escapes before the server does) and saves
+    // As the form stored the name before WP5, until the repair
+    await db.query('UPDATE clients SET name = $1 WHERE id::text = $2', [validator.escape(BARNES), barnesId]);
+    assert.equal((await openForm()).name, BARNES, 'the form shows it as typed');
+
+    // A partner types notes with an ampersand and a `<` (which DOMPurify, and
+    // then the request sanitizer, escaped until WP5) and saves
     const typedNotes = 'R&D < 5% of "budget"';
     const unrated = async () => (await db.query('SELECT stickiness FROM clients WHERE id::text = $1', [barnesId])).rows[0].stickiness;
     assert.equal(await unrated(), null, 'nobody has rated it');
     await formSave({ ...(await openForm()), practiceArea: ['Education'], notes: typedNotes });
     assert.equal(await unrated(), null, 'saved for another reason, it is still not rated');
     const first = await stored();
-    assert.equal(first.name, 'Barnes &amp; Noble Education Fund');
+    assert.deepEqual(first, { name: BARNES, notes: typedNotes }, 'stored exactly as typed');
     // Saved twice more with only the stickiness changed: shown as typed, stored unchanged
     for (const stickiness of [2, 4]) {
       const form = await openForm();
@@ -1111,6 +1128,11 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     res = await importCsv(['CLIENT,Lead', ...unled.map((name) => `${name},Paula`)].join('\n'));
     assert.equal(res.status, 200, JSON.stringify(res.body));
 
+    // A literal entity a partner typed in a note since WP5, which is no
+    // escape: the sheet writes it as it is and the import stores it as it is
+    // (until WP5 the import decoded every cell, and `&#169;` became ©)
+    await db.query("UPDATE clients SET notes = 'Copyright &#169; 2026' WHERE id = (SELECT id FROM clients ORDER BY id::text LIMIT 1)");
+
     // The whole book: Check file writes nothing, then Upload updates every client and creates none
     let clientCount;
     ({ sheet, clientCount } = await bookSheet());
@@ -1129,13 +1151,12 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     const after = await book();
     assert.deepEqual(after.revenues, stored.revenues);
     assert.deepEqual(after.people, stored.people);
-    // Byte for byte, except text the request sanitizer stored escaped, which
-    // comes back as it was typed (the client form's own save stored the notes
-    // of the test above two levels deep)
-    const unescaped = (row) => ({ ...row, name: escaping.unescapeStored(row.name), notes: escaping.unescapeStored(row.notes) });
-    assert.deepEqual(after.clients, stored.clients.map(unescaped));
-    const repaired = stored.clients.filter((row, i) => JSON.stringify(row) !== JSON.stringify(after.clients[i]));
-    assert.deepEqual(repaired.map((row) => row.notes), ['R&amp;amp;D &amp;lt; 5% of &quot;budget&quot;']);
+    // Byte for byte: since WP5 nothing is stored escaped. Until WP5 the client
+    // form's save in the test above stored its notes two levels deep, and the
+    // round trip wrote them back as typed.
+    const changed = stored.clients.filter((row, i) => JSON.stringify(row) !== JSON.stringify(after.clients[i]));
+    assert.deepEqual(changed.map((row) => row.notes), []);
+    assert.deepEqual(after.clients, stored.clients);
 
     // Downloaded again, the same text; imported again, every byte the same
     const again = await bookSheet();
@@ -1417,7 +1438,8 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
 
       // A transition plan: the client's id as text (an integer on production's
       // tables, a uuid here) and its name unescaped, although the client form
-      // stored it escaped and the route's sanitizer escapes it again
+      // stored it escaped before WP5 (as set below; until WP5 the route's
+      // sanitizer escaped it once more)
       const NAME = "Smith & O'Brien Holdings";
       const paula = (await db.query("SELECT id FROM people WHERE name = 'Paula'")).rows[0].id;
       const created = await call('POST', '/api/data/clients', {
@@ -1427,7 +1449,8 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       });
       assert.equal(created.status, 201, JSON.stringify(created.body));
       clientId = created.body.client.id;
-      assert.equal(created.body.client.name, 'Smith &amp; O&#x27;Brien Holdings', 'stored escaped by the sanitizer');
+      assert.equal(created.body.client.name, NAME, 'stored as typed (escaped by the sanitizer until WP5)');
+      await db.query('UPDATE clients SET name = $1 WHERE id::text = $2', [validator.escape(NAME), String(clientId)]);
       const { body: clients } = await call('GET', '/api/data/clients');
       const client = clients.clients.find((c) => String(c.id) === String(clientId));
       const { body: everyone } = await call('GET', '/api/people');

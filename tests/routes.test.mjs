@@ -152,7 +152,7 @@ const TOO_MANY = { success: false, error: 'Too many requests. Try again later.' 
 const MISSING_TOKEN = { error: 'Missing token' };
 const INVALID_TOKEN = { error: 'Invalid token' };
 const NOT_CONFIGURED = { success: false, error: 'AI is not configured on the server (missing API key).' };
-const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream'];
+const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text'];
 // The seed people init-db.sql adds to a new database (docs/plans/people-and-second-chair.md, P1)
 const SEED = { Brendan: 'partner', Jeff: 'partner', Joe: 'partner', Kevin: 'partner', Mike: 'partner', Paula: 'partner', Jay: 'emeritus' };
 const PERSON_KEYS = ['active', 'id', 'lead_count', 'name', 'originator_count', 'role', 'second_chair_count'];
@@ -196,6 +196,10 @@ const FIELD_REFUSALS = {
     ['a name with a ;', { name: 'Acme; Inc' }, detail('name', 'Client name contains invalid characters')],
     ['a name with a #', { name: 'Acme #1' }, detail('name', 'Client name contains invalid characters')],
     ['a name with a <', { name: 'Acme <b>' }, detail('name', 'Client name contains invalid characters')],
+    // As a client saved before WP5 is stored until the repair, sent back by a
+    // direct request: checked as sent since WP5 (accepted and escaped once
+    // more until then)
+    ['a name as stored escaped before WP5', { name: 'Barnes &amp; Noble' }, detail('name', 'Client name contains invalid characters')],
   ],
   vocabularies: [
     ['a practice area off the list', { practice_area: ['Tax'] }, detail('practice_area', `Practice area "Tax" is not on the list: ${PRACTICE_AREA_LIST}.`)],
@@ -225,10 +229,10 @@ const FIELD_REFUSALS = {
     ['revenue null', { revenues: null }, detail('revenues', 'Revenue must be a list of { year, revenue_amount } entries.')],
   ],
 };
-// A name the client form allows (70 characters) that is 270 once
-// sanitizeRequestBody has escaped it, over clients.name's VARCHAR(255)
+// A name the client form allows (70 characters) that was 270 once the request
+// sanitizer had escaped it, over clients.name's VARCHAR(255): refused with how
+// much to cut from WP4 (500 until then), stored as typed from WP5
 const LONG_ONCE_ESCAPED = `${'&'.repeat(50)}${'A'.repeat(20)}`;
-const LONG_ONCE_ESCAPED_DETAIL = detail('name', "Client name is too long to save: each &, ' and / in it is saved as 5 or 6 characters, which makes it 270, over the limit of 255. Shorten it by 15.");
 const NOT_AN_OBJECT = detail('body', "The request body must be a JSON object of the client's fields.");
 const failed = (details) => ({ success: false, error: 'Validation failed', details });
 
@@ -684,6 +688,9 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         [{ csvData: 'CLIENT\nx' }, 'csvData', 'CSV data must be a non-empty array'],
         [{ csvData: [{ '2026 Contracts': '$1' }] }, 'csvData', 'Row 2: CLIENT is required and must be a non-empty string'],
         [{ csvData: [{ CLIENT: 'Fine Client' }], dryRun: 'true' }, 'dryRun', 'dryRun must be true or false'],
+        // An entity typed in CLIENT: decoded before the pattern until WP5 (and
+        // imported as O'Brien Trust); checked as typed since, like the form
+        [{ csvData: [{ CLIENT: 'O&#x27;Brien Trust' }] }, 'csvData', 'Row 2: CLIENT contains invalid characters'],
       ];
       for (const [body, field, message] of refusals) {
         const res = await call('POST', '/api/data/process-csv', body);
@@ -694,6 +701,26 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         for (const detail of res.body.details) assert.deepEqual(keysOf(detail), ['field', 'message', 'value'], JSON.stringify(detail));
       }
       assert.equal(await clientCount(), before);
+    });
+
+    // Until WP5 every cell arrived escaped by the request sanitizer and was
+    // decoded again (decodeHTMLEntities), which also decoded an entity typed
+    // in a cell (`&#169;` became ©), and CLIENT's length was checked escaped
+    // (docs/plans/tier-2.md, WP5)
+    test('a sheet\'s cells are stored as typed: &, \' and / in CLIENT, < and a literal entity in Notes, trimmed; a CLIENT the form allows imports up to 255 characters however many & it holds', async () => {
+      const name = uniqueName("Smith & O'Brien /");
+      const long = `${'&'.repeat(50)}${letters(20)}`;
+      const notes = 'Copyright &#169; 2026, R&D < 5% of "budget"';
+      const res = await call('POST', '/api/data/process-csv', { csvData: [
+        { CLIENT: ` ${name} `, '2026 Contracts': '$1,000', Notes: `  ${notes} ` },
+        { CLIENT: long, '2026 Contracts': '$500', Notes: '' },
+      ] });
+      assert.equal(res.status, 200, res.text);
+      // Sorted here, not by ORDER BY: the database's collation decides where
+      // `&` sorts (C puts it first, glibc's en_US, CI's, ignores it)
+      const byName = (a, b) => (a.name < b.name ? -1 : 1);
+      const { rows } = await db.query('SELECT name, notes FROM clients WHERE name = ANY($1)', [[name, long]]);
+      assert.deepEqual(rows.sort(byName), [{ name: long, notes: '' }, { name, notes }].sort(byName));
     });
 
     // The page lists errors by row (src/DataUploadManager.jsx)
@@ -809,24 +836,41 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(await clientCount(), before);
     });
 
-    test('400 "Validation failed" for a name the form allows that is over 255 characters once escaped, where PostgreSQL refused it (500); nothing written', async () => {
-      const before = await clientCount();
-      const res = await call('POST', '/api/data/clients', formBody({ name: LONG_ONCE_ESCAPED, lead_id: (await seed('Kevin')).id }));
-      assert.deepEqual([res.status, res.body], [400, failed(LONG_ONCE_ESCAPED_DETAIL)]);
-      assert.equal(await clientCount(), before);
+    test('a name the form allows is stored as typed up to 255 characters, however many &, \' and / it holds (400 over 255 once escaped until WP5, 500 until WP4)', async () => {
+      const lead = await seed('Kevin');
+      for (const name of [`${LONG_ONCE_ESCAPED}${letters(8)}`, `${'&'.repeat(246)}${letters(9)}`]) {
+        const res = await call('POST', '/api/data/clients', formBody({ name, lead_id: lead.id }));
+        assert.equal(res.status, 201, res.text);
+        assert.equal(res.body.client.name, name);
+        assert.equal((await storedClient(res.body.client.id)).name, name);
+      }
     });
 
-    test('a name with &, \' and / is read as typed, whether it arrives as typed or already escaped; stored as the sanitizer leaves it, as before', async () => {
+    test('a name with &, \' and /, a note with < and every text field are stored exactly as typed, trimmed as before; sent escaped, as stored before WP5, the name is refused and nothing written', async () => {
       const lead = await seed('Kevin');
       const typed = `Smith & O'Brien / ${letters(8)}`;
-      let res = await call('POST', '/api/data/clients', formBody({ name: typed, lead_id: lead.id }));
+      const note = 'R&D < 5% of "budget"; <b>not a tag</b> \\ `x`';
+      let res = await call('POST', '/api/data/clients', formBody({ name: typed, notes: note, lead_id: lead.id }));
       assert.equal(res.status, 201, res.text);
-      assert.equal((await storedClient(res.body.client.id)).name, `Smith &amp; O&#x27;Brien &#x2F; ${typed.slice(-8)}`);
-      // As a direct request can send it: the stored text, which the sanitizer escapes again
+      const row = await storedClient(res.body.client.id);
+      assert.deepEqual([row.name, row.notes], [typed, note], 'stored as typed (escaped until WP5)');
+      assert.deepEqual([res.body.client.name, res.body.client.notes], [typed, note]);
+      // Every string trimmed before the checks, as the request sanitizer trimmed it
+      const padded = `  ${uniqueName('Padded Client')} `;
+      res = await call('POST', '/api/data/clients', formBody({
+        name: padded, notes: `  ${note}\n`, lead_id: lead.id,
+        practice_area: [' Healthcare '], conflict_risk: ' Low', interaction_frequency: 'Weekly ',
+      }));
+      assert.equal(res.status, 201, res.text);
+      const trimmed = await storedClient(res.body.client.id);
+      assert.deepEqual([trimmed.name, trimmed.notes, trimmed.practice_area, trimmed.conflict_risk, trimmed.interaction_frequency],
+        [padded.trim(), note, ['Healthcare'], 'Low', 'Weekly']);
+      // As a direct request can send it: the text as stored before WP5
+      const before = await clientCount();
       const escaped = `Smith &amp; O&#x27;Brien &#x2F; ${letters(8)}`;
       res = await call('POST', '/api/data/clients', formBody({ name: escaped, lead_id: lead.id }));
-      assert.equal(res.status, 201, res.text);
-      assert.equal((await storedClient(res.body.client.id)).name, `Smith &amp;amp; O&amp;#x27;Brien &amp;#x2F; ${escaped.slice(-8)}`);
+      assert.deepEqual([res.status, res.body], [400, failed(detail('name', 'Client name contains invalid characters'))]);
+      assert.equal(await clientCount(), before);
       // 255 characters, the most the form and the column allow
       const longest = `${letters(1).toUpperCase()}${letters(254)}`;
       res = await call('POST', '/api/data/clients', formBody({ name: longest, lead_id: lead.id }));
@@ -1014,8 +1058,6 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, ...fields }));
         assert.deepEqual([res.status, res.body], [400, failed(details)], what);
       }
-      const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: LONG_ONCE_ESCAPED, lead_id: kevin.id }));
-      assert.deepEqual([res.status, res.body], [400, failed(LONG_ONCE_ESCAPED_DETAIL)], 'over 255 characters once escaped (500 until WP4)');
       assert.deepEqual(await storedClient(created.id), before);
       assert.deepEqual(await revenueRows(created.id), [{ year: 2025, amount: 3000 }, { year: 2026, amount: 4000 }]);
     });
@@ -1039,17 +1081,33 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
     });
 
-    test('a name with &, \' and / saves as typed and as stored, the second escaped once more, as before', async () => {
+    test('a name with &, \' and / and a note with < save as typed, and sent back as stored they save unchanged; a name as stored escaped before WP5 is refused and nothing written', async () => {
       const kevin = await seed('Kevin');
       const created = await addClient({ lead: kevin });
       const tail = letters(8);
-      let res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: `Smith & O'Brien / ${tail}`, lead_id: kevin.id }));
+      const name = `Smith & O'Brien / ${tail}`;
+      const note = 'R&D < 5% of "budget"';
+      let res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name, notes: note, lead_id: kevin.id }));
       assert.equal(res.status, 200, res.text);
-      const stored = (await storedClient(created.id)).name;
-      assert.equal(stored, `Smith &amp; O&#x27;Brien &#x2F; ${tail}`);
-      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: stored, lead_id: kevin.id }));
+      const stored = await storedClient(created.id);
+      assert.deepEqual([stored.name, stored.notes], [name, note], 'as typed (escaped until WP5)');
+      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: stored.name, notes: stored.notes, lead_id: kevin.id }));
       assert.equal(res.status, 200, res.text);
-      assert.equal((await storedClient(created.id)).name, `Smith &amp;amp; O&amp;#x27;Brien &amp;#x2F; ${tail}`);
+      const again = await storedClient(created.id);
+      assert.deepEqual([again.name, again.notes], [name, note], 'unchanged (escaped once more until WP5)');
+      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: `${LONG_ONCE_ESCAPED}${tail}`, lead_id: kevin.id }));
+      assert.equal(res.status, 200, res.text);
+      assert.equal((await storedClient(created.id)).name, `${LONG_ONCE_ESCAPED}${tail}`, 'over 255 once escaped: stored as typed (400 until WP5)');
+      // A client saved before WP5 holds its name escaped until the repair; a
+      // direct request sending that back is refused (the page sends it unescaped)
+      await db.query('UPDATE clients SET name = $1 WHERE id::text = $2', [`Smith &amp; O&#x27;Brien &#x2F; ${tail}`, String(created.id)]);
+      const escapedRow = await storedClient(created.id);
+      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: escapedRow.name, lead_id: kevin.id }));
+      assert.deepEqual([res.status, res.body], [400, failed(detail('name', 'Client name contains invalid characters'))]);
+      assert.deepEqual(await storedClient(created.id), escapedRow);
+      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name, lead_id: kevin.id }));
+      assert.equal(res.status, 200, res.text);
+      assert.equal((await storedClient(created.id)).name, name, 'the name as the form shows it repairs the stored text');
     });
   });
 

@@ -26,10 +26,12 @@
 // (successionRisk, transitionComplexity, relationshipType) come from the
 // request, since the server has no copy of src/utils/successionUtils.js.
 
-// sanitizeRequestBody HTML-escapes every string in the request with
-// validator.escape, so a name with an apostrophe (O'Brien, which the People
-// list allows) arrives as O&#x27;Brien. unescapeText (utils/escaping.cjs)
-// undoes exactly that set.
+// Until WP5 the route's request sanitizer HTML-escaped every string in the
+// request with validator.escape, so a name with an apostrophe (O'Brien, which
+// the People list allows) arrived as O&#x27;Brien; unescapeText
+// (utils/escaping.cjs) undoes exactly that set. Names now arrive as the page
+// holds them, plain for people, and one level of decoding leaves plain text
+// as it is; WP5's second PR removes these calls.
 const { unescapeText } = require('./escaping.cjs');
 const { systemBlocks, firmDate } = require('./askPrompts.cjs');
 const {

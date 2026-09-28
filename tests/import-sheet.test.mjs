@@ -382,7 +382,8 @@ describe('processCSVData and checkSheet', () => {
   });
 
   test('stored clients are keyed by their name unescaped, as the sheet spells it', () => {
-    // As sanitizeRequestBody stores a name saved through the form: escaped once per save
+    // As the request sanitizer stored a name saved through the form before
+    // WP5, escaped once per save, until the repair (scripts/unescape-book.cjs)
     const barnes = { id: 1, name: 'Barnes &amp; Noble Education Fund' };
     const obrien = { id: 2, name: 'O&amp;#x27;Brien Trust' };
     const acme = { id: 3, name: 'Acme' };

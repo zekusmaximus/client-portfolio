@@ -55,8 +55,8 @@ function processCSVData(csvData) {
     .map((row, index) => ({ row, rowNumber: rowNumberOf(index) }))
     .filter(({ row }) => row.CLIENT && row.CLIENT.trim()) // Filter out empty rows
     .map(({ row, rowNumber }) => {
-      // As the sheet spells it: data.cjs has already decoded every cell the
-      // request sanitizer escaped
+      // As the sheet spells it: cells arrive as sent, trimmed, and are
+      // neither escaped nor decoded (docs/plans/tier-2.md, WP5)
       const clientName = row.CLIENT.trim();
       
       // Revenue for exactly the years the file covers

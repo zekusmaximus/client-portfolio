@@ -16,8 +16,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import validator from 'validator';
 import schemaCheck from '../utils/schemaCheck.cjs';
 import aiAnswers from '../utils/aiAnswers.cjs';
+import escaping from '../utils/escaping.cjs';
+import { PRODUCTION_TABLES_SQL } from './helpers/server.mjs';
 
 const { USER_FOREIGN_KEYS_SQL, CLIENT_FOREIGN_KEYS_SQL, checkUserForeignKeys, checkClientForeignKeys, checkBookReset } = schemaCheck;
 const { answerRow, insertParams, INSERT_ANSWER_SQL } = aiAnswers;
@@ -872,3 +875,236 @@ describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     });
   });
 });
+
+// --- unescape-book (docs/plans/tier-2.md, S8, WP5) ---------------------------
+//
+// The repair of the client text the request sanitizer stored HTML-escaped
+// before WP5 (scripts/unescape-book.cjs). Its pure half is
+// tests/unescape-book.test.mjs; these run the script on PostgreSQL, on
+// init-db.sql's tables and on production's older ones (integer ids), because
+// CI's schema job runs this file.
+
+test('unescape-book: any argument but --confirm and a count prints the usage and exits 1 without a database', async () => {
+  const env = { ...process.env };
+  delete env.DATABASE_URL;
+  for (const args of [['--confirm'], ['--confirm', 'x'], ['--confirm', '-1'], ['--confirm', '1.5'], ['--confirm', '3', 'extra'], ['--yes'], ['3'], ['--confirm=3']]) {
+    const result = await execFileAsync(process.execPath, ['scripts/unescape-book.cjs', ...args], { cwd: repo, env })
+      .then(({ stdout, stderr }) => ({ code: 0, stdout, stderr }))
+      .catch((error) => ({ code: error.code, stdout: error.stdout, stderr: error.stderr }));
+    assert.equal(result.code, 1, args.join(' '));
+    assert.match(result.stderr, /^Usage: node scripts\/unescape-book\.cjs \[--confirm <clients>\]$/m);
+    assert.doesNotMatch(result.stderr, /DATABASE_URL|Repair failed/);
+  }
+});
+
+// validator.escape applied `times` times: a save before WP5 stored text so,
+// once per save that sent the stored text back
+const esc = (text, times = 1) => Array.from({ length: times }).reduce((out) => validator.escape(out), text);
+
+// Clients as the client form and the request sanitizer stored them before
+// WP5, one typed since (plain), and a note whose `&nbsp;` (DOMPurify's, for a
+// non-breaking space in a note with `<`) is no escape unescapeStored undoes
+const ESCAPED_CLIENTS = [
+  { name: esc('Barnes & Noble Education Fund'), notes: esc('R&amp;D &lt; 5% of "budget"'), primary_lobbyist: 'Kevin', client_originator: 'Firm', lobbyist_team: ['Kevin', esc("O'Brien")] },
+  { name: esc("O'Brien Trust", 2), notes: null, primary_lobbyist: esc("O'Brien"), client_originator: esc("O'Brien"), lobbyist_team: null },
+  { name: esc('Health / Human Services'), notes: esc('A&B', 3), primary_lobbyist: '', client_originator: null, lobbyist_team: ['Jeff'] },
+  { name: 'Plain & Simple', notes: 'R&D < 5%', primary_lobbyist: 'Jeff', client_originator: 'Jeff', lobbyist_team: [] },
+  { name: 'Nbsp Co', notes: esc('a&nbsp;b &lt; c'), primary_lobbyist: 'Joe', client_originator: '', lobbyist_team: ['Joe'] },
+];
+const REPAIR_FIELDS = ['name', 'notes', 'primary_lobbyist', 'client_originator', 'lobbyist_team'];
+const repaired = (client) => ({
+  ...client,
+  ...Object.fromEntries(REPAIR_FIELDS.map((f) => [f, Array.isArray(client[f]) ? client[f].map(escaping.unescapeStored) : escaping.unescapeStored(client[f])])),
+});
+
+// seed()'s accounts, clients and revenue, the clients above with a revenue
+// row each, three saved answers, and entity-like text in columns the repair
+// never touches: a person's name, a client's retired status, an answer. Every
+// client's updated_at is set to one fixed time.
+async function seedEscapedBook(db, extra = []) {
+  await seed(db);
+  for (const client of [...ESCAPED_CLIENTS, ...extra]) {
+    const { rows: [{ id }] } = await db.query(
+      'INSERT INTO clients (name, notes, primary_lobbyist, client_originator, lobbyist_team) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      REPAIR_FIELDS.map((f) => client[f] ?? null));
+    await db.query('INSERT INTO client_revenues (client_id, year, revenue_amount) VALUES ($1, 2026, 5000)', [id]);
+  }
+  await db.query(`
+    UPDATE clients SET updated_at = '2026-01-02 03:04:05';
+    UPDATE clients SET status = 'Former &amp; Co' WHERE name = 'Plain & Simple';
+    INSERT INTO people (name, role) VALUES ('Weird &amp; Name', 'associate');`);
+  await saveAnswers(db);
+  await db.query("UPDATE ai_answers SET answer = 'Revenue &lt; $50,000' WHERE kind = 'brief'");
+}
+
+async function repairSnapshot(db) {
+  return {
+    ...(await bookSnapshot(db)),
+    answers: (await db.query('SELECT to_jsonb(a) AS row FROM ai_answers a ORDER BY id')).rows,
+  };
+}
+
+// Every client as stored, by name after the repair: its five columns and the
+// rest, updated_at included
+async function clientsByName(db) {
+  const { rows } = await db.query("SELECT to_jsonb(c) - 'id' AS row FROM clients c");
+  return Object.fromEntries(rows.map(({ row }) => [escaping.unescapeStored(row.name), row]));
+}
+
+const REPAIR_PREVIEW_LAST = /^Nothing was changed\. To repair the 4 clients above, run: npm run unescape:book -- --confirm 4 {3}\(or: node scripts\/unescape-book\.cjs --confirm 4\)$/m;
+
+// Each table shape as the tests build it: init-db.sql's, and production's
+// older tables with init-db.sql applied on top, as at every start on Render
+const REPAIR_SHAPES = [
+  { name: 'init-db.sql tables', tables: null },
+  { name: "production's older tables", tables: PRODUCTION_TABLES_SQL },
+];
+
+for (const shape of REPAIR_SHAPES) {
+  const withShape = (fn) => withDatabase(async (db, url) => {
+    if (shape.tables) await db.query(shape.tables);
+    await applyInit(db);
+    await fn(db, url);
+  });
+
+  describe(`unescape-book on PostgreSQL (${shape.name})`, { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+    test('without an argument: each column\'s escaped text with a few examples, the clients to repair and the exact command; no note text; other entity-like text reported; nothing changed, exit 1', async () => {
+      await withShape(async (db, url) => {
+        await seedEscapedBook(db);
+        const before = await repairSnapshot(db);
+        const barnes = (await db.query("SELECT id::text AS id FROM clients WHERE name LIKE 'Barnes%'")).rows[0].id;
+
+        const result = await runScript('scripts/unescape-book.cjs', url);
+        assert.equal(result.code, 1, result.stdout + result.stderr);
+        const out = result.stdout;
+        assert.match(out, /^Clients: 10$/m);
+        assert.match(out, /^ {2}name: 3 clients$/m);
+        assert.match(out, new RegExp(`^ {4}${barnes}: name: "Barnes &amp; Noble Education Fund" -> "Barnes & Noble Education Fund"$`, 'm'));
+        assert.match(out, /^ {4}(\d+|[0-9a-f-]{36}): name: "O&amp;#x27;Brien Trust" -> "O'Brien Trust"$/m);
+        assert.match(out, /^ {2}notes: 3 clients \(the text is not printed\)$/m);
+        assert.match(out, new RegExp(`^ {4}${barnes} "Barnes & Noble Education Fund": notes: 45 characters -> 20$`, 'm'));
+        assert.match(out, /^ {2}primary_lobbyist: 1 client$/m);
+        assert.match(out, /: primary_lobbyist: "O&#x27;Brien" -> "O'Brien"$/m);
+        assert.match(out, /^ {2}client_originator: 1 client$/m);
+        assert.match(out, /^ {2}lobbyist_team: 1 client$/m);
+        assert.match(out, new RegExp(`^ {4}${barnes}: lobbyist_team: \\["Kevin","O&#x27;Brien"\\] -> \\["Kevin","O'Brien"\\]$`, 'm'));
+        assert.match(out, /^Clients to repair: 4$/m);
+        assert.match(out, /^Names two or more clients share regardless of case: none\.$/m);
+        assert.match(out, /^Entity-like text the repair leaves as it is \(not an escape it can undo\): 1 value$/m);
+        assert.match(out, /^ {2}\S+ "Nbsp Co": notes$/m);
+        assert.match(out, /^Other text columns holding entity-like text \(never changed\):\n {2}ai_answers\.answer: 1 row\n {2}clients\.status: 1 row\n {2}people\.name: 1 row$/m);
+        assert.match(out, REPAIR_PREVIEW_LAST);
+        assert.doesNotMatch(out, /budget|A&amp;amp;B|&amp;nbsp;/, 'no note text');
+        assert.deepEqual(await repairSnapshot(db), before);
+      });
+    });
+
+    test('--confirm with the preview\'s count repairs exactly those clients, once and several levels deep, a note with < and a lobbyist_team; every other column, updated_at, revenue, person and answer unchanged; a second run changes nothing', async () => {
+      await withShape(async (db, url) => {
+        await seedEscapedBook(db);
+        const before = await repairSnapshot(db);
+        const storedBefore = await clientsByName(db);
+
+        let result = await runScript('scripts/unescape-book.cjs', url, '--confirm', '4');
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /^Repaired 4 clients \(name 3, notes 3, primary_lobbyist 1, client_originator 1, lobbyist_team 1\); updated_at left as it was\.$/m);
+        assert.match(result.stdout, /^ {2}\S+ "Barnes & Noble Education Fund": name: "Barnes &amp; Noble Education Fund" -> "Barnes & Noble Education Fund"; notes: 45 characters -> 20; lobbyist_team: \["Kevin","O&#x27;Brien"\] -> \["Kevin","O'Brien"\]$/m);
+        assert.match(result.stdout, /^ {2}\S+ "O'Brien Trust": name: "O&amp;#x27;Brien Trust" -> "O'Brien Trust"; primary_lobbyist: "O&#x27;Brien" -> "O'Brien"; client_originator: "O&#x27;Brien" -> "O'Brien"$/m);
+        assert.doesNotMatch(result.stdout, /budget/);
+
+        // Each client: its five columns repaired, everything else as it was
+        const after = await clientsByName(db);
+        assert.deepEqual(Object.keys(after).sort(), Object.keys(storedBefore).sort());
+        for (const [name, row] of Object.entries(storedBefore)) {
+          assert.deepEqual(after[name], repaired(row), name);
+        }
+        assert.deepEqual(
+          ['Barnes & Noble Education Fund', "O'Brien Trust", 'Health / Human Services', 'Plain & Simple', 'Nbsp Co'].map((n) => REPAIR_FIELDS.map((f) => after[n][f])),
+          [
+            ['Barnes & Noble Education Fund', 'R&D < 5% of "budget"', 'Kevin', 'Firm', ['Kevin', "O'Brien"]],
+            ["O'Brien Trust", null, "O'Brien", "O'Brien", null],
+            ['Health / Human Services', 'A&B', '', null, ['Jeff']],
+            ['Plain & Simple', 'R&D < 5%', 'Jeff', 'Jeff', []],
+            ['Nbsp Co', 'a&nbsp;b < c', 'Joe', '', ['Joe']],
+          ]);
+        assert.ok(Object.values(after).every((row) => row.updated_at === '2026-01-02T03:04:05'), 'updated_at left as it was');
+        assert.equal(after['Plain & Simple'].status, 'Former &amp; Co', 'a column outside the repair');
+        const now = await repairSnapshot(db);
+        assert.deepEqual([now.users, now.people, now.revenues, now.answers], [before.users, before.people, before.revenues, before.answers]);
+
+        // A second run: nothing to repair, and nothing changes
+        result = await runScript('scripts/unescape-book.cjs', url);
+        assert.equal(result.code, 1);
+        assert.match(result.stdout, /^Clients to repair: 0$/m);
+        assert.match(result.stdout, /^ {2}name: 0 clients$/m);
+        assert.match(result.stdout, /^Nothing was changed, and nothing is left to repair\.$/m);
+        result = await runScript('scripts/unescape-book.cjs', url, '--confirm', '4');
+        assert.equal(result.code, 1, result.stdout + result.stderr);
+        assert.match(result.stderr, /^Refused: 0 clients hold escaped text now, not the 4 confirmed\. Nothing was changed\. Run the preview again and confirm its count\.$/m);
+        result = await runScript('scripts/unescape-book.cjs', url, '--confirm', '0');
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.match(result.stdout, /^Repaired 0 clients \(name 0, notes 0, primary_lobbyist 0, client_originator 0, lobbyist_team 0\); updated_at left as it was\.$/m);
+        assert.deepEqual(await repairSnapshot(db), now);
+      });
+    });
+
+    test('a count other than the preview\'s is refused and nothing is written', async () => {
+      await withShape(async (db, url) => {
+        await seedEscapedBook(db);
+        const before = await repairSnapshot(db);
+        for (const count of ['3', '5', '0']) {
+          const result = await runScript('scripts/unescape-book.cjs', url, '--confirm', count);
+          assert.equal(result.code, 1, result.stdout + result.stderr);
+          assert.match(result.stderr, new RegExp(`^Refused: 4 clients hold escaped text now, not the ${count} confirmed\\. Nothing was changed\\.`, 'm'));
+          assert.doesNotMatch(result.stdout, /^Repaired/m);
+        }
+        assert.deepEqual(await repairSnapshot(db), before);
+      });
+    });
+
+    test('a name two clients would share regardless of case refuses the repair with nothing written, and is listed; once one is deleted it runs', async () => {
+      await withShape(async (db, url) => {
+        // Typed after WP5 in lower case, beside the escaped one; and two plain
+        // names that already differ only in case
+        await seedEscapedBook(db, [
+          { name: 'barnes & noble education fund', notes: 'typed since' },
+          { name: 'Acme' },
+          { name: 'ACME' },
+        ]);
+        const before = await repairSnapshot(db);
+
+        let result = await runScript('scripts/unescape-book.cjs', url);
+        assert.equal(result.code, 1);
+        assert.match(result.stdout, /^Clients to repair: 4$/m);
+        assert.match(result.stdout, /^Names two or more clients share regardless of case \(the import's rule, counting the repair\): 2$/m);
+        // Each group once, both clients in it, labelled with its first client's
+        // name (clients are read by id, and uuids fall in any order)
+        const group = (pattern) => result.stdout.split('\n').filter((line) => pattern.test(line));
+        const barnes = group(/^ {2}"(Barnes & Noble Education Fund|barnes & noble education fund)": /);
+        assert.equal(barnes.length, 1, result.stdout);
+        assert.match(barnes[0], /\S+ "Barnes &amp; Noble Education Fund"(;|$)/);
+        assert.match(barnes[0], /\S+ "barnes & noble education fund"(;|$)/);
+        const acme = group(/^ {2}"(Acme|ACME)": /);
+        assert.equal(acme.length, 1, result.stdout);
+        assert.match(acme[0], /\S+ "Acme"(;|$)/);
+        assert.match(acme[0], /\S+ "ACME"(;|$)/);
+        assert.match(result.stdout, /^Nothing was changed\. --confirm refuses while any name above is shared: on Client Details, delete the client you do not want, then run this again\.$/m);
+        assert.doesNotMatch(result.stdout, /--confirm 4/);
+
+        result = await runScript('scripts/unescape-book.cjs', url, '--confirm', '4');
+        assert.equal(result.code, 1, result.stdout + result.stderr);
+        assert.match(result.stderr, /^Refused: two or more clients share a name regardless of case, so the import could not tell them apart\. On Client Details, delete the client you do not want, then run the preview again\. Nothing was changed\.$/m);
+        assert.match(result.stderr, /^ {2}"(Barnes & Noble Education Fund|barnes & noble education fund)": /m);
+        assert.deepEqual(await repairSnapshot(db), before);
+
+        // A partner deletes the duplicates (Client Details deletes by id)
+        await db.query("DELETE FROM clients WHERE name IN ('barnes & noble education fund', 'ACME')");
+        result = await runScript('scripts/unescape-book.cjs', url);
+        assert.match(result.stdout, REPAIR_PREVIEW_LAST);
+        result = await runScript('scripts/unescape-book.cjs', url, '--confirm', '4');
+        assert.equal(result.code, 0, result.stdout + result.stderr);
+        assert.equal((await db.query("SELECT count(*)::int AS n FROM clients WHERE name = 'Barnes & Noble Education Fund'")).rows[0].n, 1);
+      });
+    });
+  });
+}
