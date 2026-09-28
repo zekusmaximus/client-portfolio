@@ -2,9 +2,10 @@
 // PUT /api/data/clients apply, the vocabularies the import reads from the same
 // module, the page's copy of the lists and the name pattern
 // (src/utils/validation.js) held equal to them, and the page's own save path
-// (src/utils/clientForm.js) passing them, both as sanitizeRequestBody leaves a
-// body today and as the partner typed it, which is what the server receives
-// once WP5 removes the sanitizer.
+// (src/utils/clientForm.js) passing them. Since WP5 (S8) the route receives a
+// body as the partner typed it, trimmed by trimRequestBody
+// (middleware/validation.cjs) and not escaped; a name holding an escape, as a
+// client saved before WP5 is stored until the repair, is checked as sent.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import validator from 'validator';
@@ -12,6 +13,7 @@ import rules from '../utils/clientRules.cjs';
 import csvImport from '../utils/csvImport.cjs';
 import strategic from '../utils/strategic.cjs';
 import middleware from '../middleware/validation.cjs';
+import escaping from '../utils/escaping.cjs';
 import { VALIDATION_RULES, validateClientForm, validateField, validateRevenueEntry, sanitizeFormData } from '../src/utils/validation.js';
 import { clientFormData, clientRequestBody, revenuesToSend, formErrors, SEE_ABOVE } from '../src/utils/clientForm.js';
 import { toPersonId } from '../src/utils/people.js';
@@ -21,11 +23,20 @@ const {
   REVENUE_AMOUNT_MAX, isObjectBody, isRevenueYear, checkClient,
 } = rules;
 
-// A body as sanitizeRequestBody hands it to the route: every string trimmed and escaped
-const sanitized = (body) => {
+// A body as trimRequestBody hands it to the route: every string trimmed
+const asRouteSees = (body) => {
   const req = { body: structuredClone(body) };
-  middleware.sanitizeRequestBody(req, {}, () => {});
+  middleware.trimRequestBody(req, {}, () => {});
   return req.body;
+};
+
+// The request sanitizer the routes ran until WP5 (middleware/validation.cjs at
+// efef19d), frozen: every string trimmed, then escaped
+const oldSanitizer = (value) => {
+  if (typeof value === 'string') return validator.escape(value.trim());
+  if (Array.isArray(value)) return value.map(oldSanitizer);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, oldSanitizer(v)]));
+  return value;
 };
 
 // A body the rules accept, as the client form sends one
@@ -44,10 +55,10 @@ const VALID = {
   revenues: [{ year: 2025, revenue_amount: 50000 }, { year: 2026, revenue_amount: 60000.5 }],
 };
 const detailsFor = (overrides) => checkClient({ ...VALID, ...overrides });
-// The details as the route answers them today (sanitized) and once WP5 lands (as typed): the same
-const bothWays = (body) => {
+// The details for a body as typed, the same once trimRequestBody has passed it on
+const routeSees = (body) => {
   const typed = checkClient(body);
-  assert.deepEqual(checkClient(sanitized(body)), typed, `sanitized and typed agree: ${JSON.stringify(body)}`);
+  assert.deepEqual(checkClient(asRouteSees(body)), typed, `as typed and as the route sees it agree: ${JSON.stringify(body)}`);
   return typed;
 };
 
@@ -108,19 +119,19 @@ describe('the page\'s copy (src/utils/validation.js) equals the server\'s', () =
     );
   });
 
-  test('a name the form accepts, the server accepts, sent as typed or as the sanitizer leaves it; and the reverse but for text that is itself an escape', () => {
+  test('a name the form accepts, the server accepts, and the reverse; sent escaped, as stored before WP5, it is refused once escaping changed it', () => {
     const next = random(20260927);
     const alphabet = "abcXYZ019 -.,&'()/;#<>\"@é\t";
     for (let i = 0; i < 3000; i++) {
       const typed = Array.from({ length: 1 + Math.floor(next() * 40) }, () => alphabet[Math.floor(next() * alphabet.length)]).join('');
       const page = validateField('name', typed) === null;
-      for (const sent of [typed, validator.escape(typed.trim())]) {
-        const server = !detailsFor({ name: sent }).some((d) => d.field === 'name');
-        if (page) assert.ok(server, `the form accepts ${JSON.stringify(typed)}; the server refuses ${JSON.stringify(sent)}`);
-        // The server reads the name through unescapeStored, which also undoes
-        // an entity the partner typed; the form's pattern refuses its `;`
-        if (server && !page) assert.match(typed, /&(amp|#x27|quot|lt|gt|#x2F|#x5C|#96);/, JSON.stringify(typed));
-      }
+      const server = (sent) => !detailsFor({ name: sent }).some((d) => d.field === 'name');
+      assert.equal(server(typed), page, JSON.stringify(typed));
+      assert.equal(server(asRouteSees({ name: typed }).name), page, `${JSON.stringify(typed)}, trimmed`);
+      // A direct request sending the text as the sanitizer stored it: checked
+      // as sent, so an escape's `;` is refused as the form refuses it
+      const escaped = validator.escape(typed.trim());
+      assert.equal(server(escaped), page && escaped === typed.trim(), JSON.stringify(escaped));
     }
   });
 
@@ -145,8 +156,8 @@ describe('the page\'s copy (src/utils/validation.js) equals the server\'s', () =
 });
 
 describe('checkClient', () => {
-  test('a body as the form sends it has no details, as typed and as the sanitizer leaves it', () => {
-    assert.deepEqual(bothWays(VALID), []);
+  test('a body as the form sends it has no details, as typed and as the route sees it', () => {
+    assert.deepEqual(routeSees(VALID), []);
   });
 
   test('a body that is not an object: one detail, `body`', () => {
@@ -173,50 +184,53 @@ describe('checkClient', () => {
       ['Acme <b>', 'Client name contains invalid characters'],
       ['Café Society', 'Client name contains invalid characters'],
     ]) {
-      assert.deepEqual(bothWays({ ...VALID, name: value }), name(message), JSON.stringify(value));
+      assert.deepEqual(routeSees({ ...VALID, name: value }), name(message), JSON.stringify(value));
     }
-    assert.deepEqual(bothWays({ ...VALID, name: 'A'.repeat(255) }), []);
+    assert.deepEqual(routeSees({ ...VALID, name: 'A'.repeat(255) }), []);
     for (const ok of ["O'Brien Trust", 'Barnes & Noble Education Fund', 'Health / Human Services', 'St. Mary (North), Inc-1']) {
-      assert.deepEqual(bothWays({ ...VALID, name: ok }), [], ok);
+      assert.deepEqual(routeSees({ ...VALID, name: ok }), [], ok);
     }
   });
 
-  test('a name stored escaped and sent back is read as typed, however many times it was escaped', () => {
+  // Until WP5 the name was read through unescapeStored, since the request
+  // sanitizer had escaped it, and a stored escaped name sent back passed and
+  // was stored escaped once more. The page sends names unescaped
+  // (clientFormData); only a direct request sends the stored text.
+  test('a name stored escaped before WP5 and sent back as stored is refused, as the form refuses its `;`; unescaped, as the page sends it, it passes', () => {
     for (const stored of ['Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust', 'O&amp;#x27;Brien Trust', 'Health &#x2F; Human Services']) {
-      assert.deepEqual(detailsFor({ name: stored }), [], stored);
-      assert.deepEqual(detailsFor({ name: validator.escape(stored) }), [], `${stored}, escaped again by the sanitizer`);
+      assert.deepEqual(routeSees({ ...VALID, name: stored }), [{ field: 'name', message: 'Client name contains invalid characters' }], stored);
+      assert.equal(validateField('name', stored), 'Client name contains invalid characters');
+      assert.deepEqual(routeSees({ ...VALID, name: escaping.unescapeStored(stored) }), [], `${stored}, unescaped`);
     }
   });
 
-  test('a name the form allows that is over 255 characters once escaped: refused with how much to cut, instead of failing in PostgreSQL', () => {
-    const typed = `${'&'.repeat(50)}${'A'.repeat(20)}`;
-    assert.equal(validateField('name', typed), null, 'the form allows it');
-    const escaped = validator.escape(typed);
-    assert.equal(escaped.length, 270);
-    assert.deepEqual(checkClient({ ...VALID, name: escaped }), [{
-      field: 'name',
-      message: "Client name is too long to save: each &, ' and / in it is saved as 5 or 6 characters, which makes it 270, over the limit of 255. Shorten it by 15.",
-    }]);
-    assert.deepEqual(checkClient({ ...VALID, name: typed }), [], 'as typed (after WP5) it fits');
-    const fits = `${'&'.repeat(47)}${'A'.repeat(20)}`;
-    assert.equal(validator.escape(fits).length, 255);
-    assert.deepEqual(checkClient({ ...VALID, name: validator.escape(fits) }), []);
+  // Until WP5 clients.name (VARCHAR(255)) held the name escaped, each &, ' and
+  // / as 5 or 6 characters, and a second rule refused a name over 255 once
+  // escaped. The name is stored as typed now, and 255 is the form's limit and
+  // the column's.
+  test('a name the form allows passes up to 255 characters, however many &, \' and / it holds; the stored-length rule is gone', () => {
+    for (const typed of [`${'&'.repeat(50)}${'A'.repeat(20)}`, '&'.repeat(255), `${"'/".repeat(127)}A`]) {
+      assert.equal(validateField('name', typed), null, 'the form allows it');
+      assert.ok(validator.escape(typed).length > NAME_MAX, 'over 255 once escaped');
+      assert.deepEqual(routeSees({ ...VALID, name: typed }), [], typed);
+    }
+    assert.deepEqual(routeSees({ ...VALID, name: '&'.repeat(256) }), [{ field: 'name', message: 'Client name must not exceed 255 characters' }]);
   });
 
   test('practice areas: a list from the twelve; blank is no practice areas', () => {
-    for (const blank of [undefined, null, []]) assert.deepEqual(bothWays({ ...VALID, practice_area: blank }), [], JSON.stringify(blank));
+    for (const blank of [undefined, null, []]) assert.deepEqual(routeSees({ ...VALID, practice_area: blank }), [], JSON.stringify(blank));
     const list = PRACTICE_AREAS.join(', ');
-    assert.deepEqual(bothWays({ ...VALID, practice_area: ['Tax'] }), [{ field: 'practice_area', message: `Practice area "Tax" is not on the list: ${list}.` }]);
-    assert.deepEqual(bothWays({ ...VALID, practice_area: ['healthcare', 'Energy', 'Tax & Estate', 7] }), [{
+    assert.deepEqual(routeSees({ ...VALID, practice_area: ['Tax'] }), [{ field: 'practice_area', message: `Practice area "Tax" is not on the list: ${list}.` }]);
+    assert.deepEqual(routeSees({ ...VALID, practice_area: ['healthcare', 'Energy', 'Tax & Estate', 7] }), [{
       field: 'practice_area', message: `Practice areas "healthcare", "Tax & Estate", 7 are not on the list: ${list}.`,
     }]);
     for (const notList of ['Healthcare', { 0: 'Healthcare' }, 5]) {
-      assert.deepEqual(bothWays({ ...VALID, practice_area: notList }), [{ field: 'practice_area', message: `Practice areas must be a list from: ${list}.` }]);
+      assert.deepEqual(routeSees({ ...VALID, practice_area: notList }), [{ field: 'practice_area', message: `Practice areas must be a list from: ${list}.` }]);
     }
   });
 
   test('conflict risk: Low, Medium or High, required', () => {
-    for (const risk of CONFLICT_RISKS) assert.deepEqual(bothWays({ ...VALID, conflict_risk: risk }), []);
+    for (const risk of CONFLICT_RISKS) assert.deepEqual(routeSees({ ...VALID, conflict_risk: risk }), []);
     for (const [risk, message] of [
       [undefined, 'Conflict risk must be Low, Medium or High.'],
       [null, 'Conflict risk must be Low, Medium or High.'],
@@ -225,14 +239,14 @@ describe('checkClient', () => {
       ['Severe', 'Conflict risk "Severe" must be Low, Medium or High.'],
       [3, 'Conflict risk 3 must be Low, Medium or High.'],
     ]) {
-      assert.deepEqual(bothWays({ ...VALID, conflict_risk: risk }), [{ field: 'conflict_risk', message }], JSON.stringify(risk));
+      assert.deepEqual(routeSees({ ...VALID, conflict_risk: risk }), [{ field: 'conflict_risk', message }], JSON.stringify(risk));
     }
   });
 
   test('cadence: one of the five, or blank', () => {
-    for (const cadence of [...CADENCES, '', null, undefined]) assert.deepEqual(bothWays({ ...VALID, interaction_frequency: cadence }), [], String(cadence));
+    for (const cadence of [...CADENCES, '', null, undefined]) assert.deepEqual(routeSees({ ...VALID, interaction_frequency: cadence }), [], String(cadence));
     for (const cadence of ['Hourly', 'weekly', 'As Needed', 2]) {
-      assert.deepEqual(bothWays({ ...VALID, interaction_frequency: cadence }), [{
+      assert.deepEqual(routeSees({ ...VALID, interaction_frequency: cadence }), [{
         field: 'interaction_frequency',
         message: `Interaction frequency ${JSON.stringify(cadence)} must be one of Daily, Weekly, Monthly, Quarterly, As-Needed, or blank.`,
       }], String(cadence));
@@ -240,21 +254,21 @@ describe('checkClient', () => {
   });
 
   test('stickiness: a whole number from 1 to 5, or not rated; high-maintenance: true or false, false when left out', () => {
-    for (const stickiness of [...STICKINESS, null, undefined]) assert.deepEqual(bothWays({ ...VALID, stickiness }), []);
+    for (const stickiness of [...STICKINESS, null, undefined]) assert.deepEqual(routeSees({ ...VALID, stickiness }), []);
     for (const stickiness of [0, 6, 3.5, '3', '', true, [3]]) {
-      assert.deepEqual(bothWays({ ...VALID, stickiness }), [{
+      assert.deepEqual(routeSees({ ...VALID, stickiness }), [{
         field: 'stickiness', message: 'Stickiness must be a whole number from 1 to 5, or null for not rated.',
       }], JSON.stringify(stickiness));
     }
-    for (const handful of [true, false, undefined]) assert.deepEqual(bothWays({ ...VALID, high_maintenance: handful }), []);
+    for (const handful of [true, false, undefined]) assert.deepEqual(routeSees({ ...VALID, high_maintenance: handful }), []);
     for (const handful of [null, 'true', 1, 'Y']) {
-      assert.deepEqual(bothWays({ ...VALID, high_maintenance: handful }), [{ field: 'high_maintenance', message: 'High-maintenance must be true or false.' }]);
+      assert.deepEqual(routeSees({ ...VALID, high_maintenance: handful }), [{ field: 'high_maintenance', message: 'High-maintenance must be true or false.' }]);
     }
   });
 
   test('revenue: whole years the import reads, amounts from 0 to 1,000,000,000, each year once; each detail named for its entry', () => {
     for (const revenues of [undefined, [], [{ year: 1900, revenue_amount: 0 }, { year: 2099, revenue_amount: 1e9 }]]) {
-      assert.deepEqual(bothWays({ ...VALID, revenues }), [], JSON.stringify(revenues));
+      assert.deepEqual(routeSees({ ...VALID, revenues }), [], JSON.stringify(revenues));
     }
     const amount = (label) => `The amount for ${label} must be a number from 0 to 1,000,000,000.`;
     for (const [revenues, details] of [
@@ -280,16 +294,65 @@ describe('checkClient', () => {
         { field: 'revenue_3', message: '2025 is given more than once; give each year once.' },
       ]],
     ]) {
-      assert.deepEqual(bothWays({ ...VALID, revenues }), details, JSON.stringify(revenues));
+      assert.deepEqual(routeSees({ ...VALID, revenues }), details, JSON.stringify(revenues));
     }
   });
 
   test('every field\'s detail, in the body\'s order; fields it does not know are ignored', () => {
-    assert.deepEqual(bothWays({
+    assert.deepEqual(routeSees({
       status: 'Former', notes: 42, lead_id: 'nobody', originator_is_firm: 'maybe',
       revenues: [{ year: 1, revenue_amount: 1 }], high_maintenance: 'no', stickiness: 9, interaction_frequency: 'Never',
       conflict_risk: 'None', practice_area: ['Law'], name: '',
     }).map((d) => d.field), ['name', 'practice_area', 'conflict_risk', 'interaction_frequency', 'stickiness', 'high_maintenance', 'revenue_0']);
+  });
+});
+
+// WP5's trap 1: the request sanitizer trimmed every string before the route
+// saw it, and checkClient compares the vocabularies exactly. trimRequestBody
+// keeps that trim and drops only the escape.
+describe('trimRequestBody (middleware/validation.cjs): the sanitizer\'s trim, without its escape', () => {
+  test('every string at any depth trimmed, nothing escaped: the old sanitizer\'s output with its one escape undone, on 2,000 seeded random bodies', () => {
+    const next = random(55);
+    const chars = " \t\n&<>\"'/\\`;#aZ9é\u00a0";
+    const text = () => Array.from({ length: Math.floor(next() * 12) }, () => chars[Math.floor(next() * chars.length)]).join('');
+    const value = (depth) => {
+      const r = next();
+      if (depth > 2 || r < 0.4) return text();
+      if (r < 0.5) return [null, 7, 2.5, true, false][Math.floor(next() * 5)];
+      if (r < 0.75) return Array.from({ length: Math.floor(next() * 4) }, () => value(depth + 1));
+      return Object.fromEntries(Array.from({ length: Math.floor(next() * 4) }, (_, i) => [`k${i}`, value(depth + 1)]));
+    };
+    const undoOne = (v) => {
+      if (typeof v === 'string') return escaping.unescapeText(v);
+      if (Array.isArray(v)) return v.map(undoOne);
+      if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, undoOne(x)]));
+      return v;
+    };
+    for (let i = 0; i < 2000; i++) {
+      const body = { body: value(0) };
+      assert.deepEqual(asRouteSees(body), undoOne(oldSanitizer(body)), JSON.stringify(body));
+      assert.deepEqual(middleware.trimStrings(body), asRouteSees(body));
+    }
+    assert.deepEqual(asRouteSees({ notes: '  R&D < 5% of "budget"  ', name: " O'Brien / Co\t" }), { notes: 'R&D < 5% of "budget"', name: "O'Brien / Co" });
+    for (const empty of [undefined, null]) {
+      const req = { body: empty };
+      middleware.trimRequestBody(req, {}, () => {});
+      assert.equal(req.body, empty);
+    }
+  });
+
+  test('a padded name, vocabulary value or note is trimmed before the check, as the sanitizer trimmed it; as sent, the exact comparison refuses it', () => {
+    const padded = {
+      ...VALID,
+      name: '  Smith & Co  ',
+      practice_area: [' Healthcare', 'Real Estate '],
+      conflict_risk: ' Low ',
+      interaction_frequency: 'Weekly\t',
+      notes: '\n R&D < 5% \n',
+    };
+    assert.deepEqual(checkClient(asRouteSees(padded)), []);
+    assert.deepEqual(asRouteSees(padded), { ...padded, name: 'Smith & Co', practice_area: ['Healthcare', 'Real Estate'], conflict_risk: 'Low', interaction_frequency: 'Weekly', notes: 'R&D < 5%' });
+    assert.deepEqual(checkClient(padded).map((d) => d.field), ['practice_area', 'conflict_risk', 'interaction_frequency'], 'the rules compare exactly; the trim comes first');
   });
 });
 
@@ -308,7 +371,9 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
     });
   };
 
-  test('stored clients opened in the form and saved unchanged: escaped names and notes, no rating, no cadence, a note with <', () => {
+  // Clients the form saved before WP5 are stored escaped until the repair
+  // (scripts/unescape-book.cjs); the form opens them unescaped
+  test('stored clients opened in the form and saved unchanged: names and notes stored escaped before WP5, no rating, no cadence, a note with <', () => {
     const stored = [
       {
         id: 7, name: 'Barnes &amp; Noble Education Fund', practiceArea: ['Education'], conflict_risk: 'Low', lead_id: 3,
@@ -326,19 +391,21 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
       const form = clientFormData(client, new Date('2026-09-27T12:00:00Z'));
       assert.deepEqual(validateClientForm(form), {}, client.name);
       const body = pageBody(form);
-      assert.deepEqual(checkClient(sanitized(body)), [], `${client.name}, as the sanitizer leaves it`);
+      assert.deepEqual(checkClient(asRouteSees(body)), [], `${client.name}, as the route sees it`);
       assert.deepEqual(checkClient(body), [], `${client.name}, as typed`);
+      // The text the form shows goes out as it is: nothing escaped
+      assert.deepEqual([body.name, body.notes], [escaping.unescapeStored(client.name), escaping.unescapeStored(client.notes || '')]);
     }
   });
 
-  test('3,000 random forms the form accepts: the server accepts every one, sanitized and as typed', () => {
+  test('3,000 random forms the form accepts: the server accepts every one, as typed and as the route sees it, and each text goes out as typed, trimmed', () => {
     const next = random(4);
     const pick = (list) => list[Math.floor(next() * list.length)];
     const nameChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -.,&'()/";
     const noteChars = 'ab <>&"\'/\\`;#\n';
     for (let i = 0; i < 3000; i++) {
-      // At most 42 characters: 252 once each is escaped to six
-      const name = `N${Array.from({ length: Math.floor(next() * 42) }, () => pick(nameChars)).join('')}`;
+      // Up to the form's 255 characters, whatever they are: stored as typed
+      const name = `N${Array.from({ length: Math.floor(next() * 255) }, () => pick(nameChars)).join('')}`;
       const years = [...new Set(Array.from({ length: Math.floor(next() * 5) }, () => 1900 + Math.floor(next() * 137)))];
       const rows = years.map((year) => ({ year: String(year), revenue_amount: String(Math.round(next() * 1e11) / 100) }));
       if (next() < 0.3) rows.splice(Math.floor(next() * (rows.length + 1)), 0, { year: '', revenue_amount: '' });
@@ -359,8 +426,10 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
       if (form.practiceArea.length === 0) form.practiceArea.push(pick(PRACTICE_AREAS));
       assert.deepEqual(validateClientForm(form), {}, JSON.stringify(form));
       const body = pageBody(form);
-      assert.deepEqual(checkClient(sanitized(body)), [], JSON.stringify(body));
+      assert.deepEqual(checkClient(asRouteSees(body)), [], JSON.stringify(body));
       assert.deepEqual(checkClient(body), [], JSON.stringify(body));
+      assert.deepEqual([body.name, body.notes], [form.name.trim(), form.notes.trim()], 'sanitizeFormData trims and nothing else');
+      assert.deepEqual(asRouteSees(body), body, 'the route sees what the page sent');
     }
   });
 
@@ -371,7 +440,7 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
     };
     assert.deepEqual(validateClientForm(form), {}, 'the form does not look for a repeated year');
     const { formRows } = revenuesToSend(sanitizeFormData(form).revenues);
-    const details = checkClient(sanitized(pageBody(form)));
+    const details = checkClient(asRouteSees(pageBody(form)));
     assert.deepEqual(details, [{ field: 'revenue_1', message: '2025 is given more than once; give each year once.' }]);
     assert.deepEqual(formErrors(details, formRows), { revenue_2: '2025 is given more than once; give each year once.', general: SEE_ABOVE });
   });

@@ -1,12 +1,13 @@
 // utils/escaping.cjs
 //
-// sanitizeRequestBody (middleware/validation.cjs) HTML-escapes every string in
-// a request body with validator.escape before the route sees it, so a client
-// saved through the client form is stored as `Barnes &amp; Noble Education
-// Fund` or `O&#x27;Brien Trust` (review 4.9). Removing the sanitizer is Tier 2
-// (docs/plans/tier-0.md section 11); until then, and for the text it has
-// already stored, these undo it. Pure: no I/O and no env, so tests can import
-// it.
+// Until Tier 2 WP5 (docs/plans/tier-2.md, S8) a request sanitizer
+// HTML-escaped every string in a client write with validator.escape before the
+// route saw it, so a client saved through the client form was stored as
+// `Barnes &amp; Noble Education Fund` or `O&#x27;Brien Trust` (review 4.9).
+// New writes are stored as typed; the text stored before stays escaped until
+// scripts/unescape-book.cjs repairs it with unescapeStored, and these undo it
+// where text is compared, shown or sent to the AI. Pure: no I/O and no env,
+// so tests can import it.
 
 // validator.escape's replacements (validator 13), in the order unescapeText
 // undoes them: `&amp;` last, so one call undoes exactly one escape.
@@ -27,17 +28,23 @@ function unescapeText(text) {
   return ESCAPES.reduce((out, [entity, char]) => out.split(entity).join(char), text);
 }
 
-// Text sent back as it is stored is escaped again: `&amp;amp;` where it had
-// `&`, `&amp;#x27;` where it had `'`. The client form did that to notes until
-// it filled its fields unescaped (src/utils/clientForm.js), a direct request
-// still can, and the form's DOMPurify pass escapes any text holding a `<`
-// before the server escapes it again. Every
+// Until WP5, text sent back as it was stored was escaped again: `&amp;amp;`
+// where it had `&`, `&amp;#x27;` where it had `'`. The client form did that to
+// notes until it filled its fields unescaped (src/utils/clientForm.js), a
+// direct request could, and the form's DOMPurify pass escaped any text holding
+// a `<` before the server escaped it again. Every
 // escape after the first only adds `amp;` after an `&`, so collapsing an `&`
 // and every `amp;` after it to `&` undoes those (and the first escape of an
 // `&`); unescapeText then undoes the first escape of everything else.
 const REPEATED_AMP = '&(amp;)+';
 
-/** Undo validator.escape however many times it was applied: the name as the sheet spells it. */
+/**
+ * Undo validator.escape however many times it was applied: the name as the
+ * sheet spells it. Idempotent: its output holds no `&amp;` (the collapse
+ * leaves none) and no other entity of ESCAPES (each replacement yields one
+ * character that cannot start or complete an entity), so a second call
+ * changes nothing; scripts/unescape-book.cjs relies on it.
+ */
 function unescapeStored(text) {
   if (typeof text !== 'string') return text;
   return unescapeText(text.replace(new RegExp(REPEATED_AMP, 'g'), '&'));

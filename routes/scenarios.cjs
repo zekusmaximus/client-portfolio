@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth.cjs');
 const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs');
-const { sanitizeRequestBody } = require('../middleware/validation.cjs');
+const { trimRequestBody } = require('../middleware/validation.cjs');
 const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs');
 const { answerRow } = require('../utils/aiAnswers.cjs');
 const { saveAnswer } = require('../models/aiAnswerModel.cjs');
@@ -20,7 +20,9 @@ const {
 router.use(auth);
 router.use(aiUserLimiter);
 router.use(aiGlobalLimiter);
-router.use(sanitizeRequestBody);
+// Every string trimmed, as the request sanitizer trimmed it until WP5, and not
+// escaped (docs/plans/tier-2.md, S8)
+router.use(trimRequestBody);
 
 /* -------------------------------------------------------------------------- */
 /*                         PER-CLIENT TRANSITION PLAN                         */
@@ -52,7 +54,8 @@ const MAX_TOKENS = 16000;
 // the page needs no change and no feature name.
 //
 // The plan is saved (WP4, T12) as a 'transition-plan' answer with the
-// client's id as text, its name with the request sanitizer's escaping undone,
+// client's id as text, its name unescaped (unescapeStored: the name the page
+// sends is the stored one, which is escaped if the form saved it before WP5),
 // the book's hash and its reporting year. The response keeps its shape (T14)
 // and adds answerId and saved beside plan: a failed save returns the plan
 // with saved: false and answerId null, never an error.

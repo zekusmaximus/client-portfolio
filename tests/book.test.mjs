@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import book from '../utils/book.cjs';
 import strategic from '../utils/strategic.cjs';
+import escaping from '../utils/escaping.cjs';
 import {
   partnershipModel,
   SECOND_CHAIR_EFFORT_SHARE as PAGE_SHARE,
@@ -315,6 +316,15 @@ test('content: names decoded (&amp; is &), and the people come from the nested l
   assert.doesNotMatch(text, /Legacy Text/);
   assert.match(text, /\| Orphan Trust \| none \| none \| Steve \(inactive\) \|/);
   assert.match(text, /\| Northern <Rail> Board \| Paula \| Anna \| Firm \(originated by Jay\) \|/);
+});
+
+// Tier 2 WP5: text saved since WP5 is stored as typed, and the book's one
+// level of decoding reads it as it is, so a book of plain names is the book of
+// their escaped copies, byte for byte
+test('content: the same book when the names are stored as typed (since WP5) as when they are stored escaped (before)', () => {
+  const plain = CONTENT_CLIENTS.map((c) => ({ ...c, name: escaping.unescapeStored(c.name) }));
+  assert.deepEqual(plain.map((c) => c.name).filter((n) => /[&<]/.test(n)), ['Smith & Co', 'Northern <Rail> Board']);
+  assert.equal(buildBook({ people: PEOPLE, clients: plain, now: NOW }).text, contentBook().text);
 });
 
 test('content: no notes, ids, dates, sign-in names, user_id or retired columns', () => {

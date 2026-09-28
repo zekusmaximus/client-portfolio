@@ -4,6 +4,7 @@
 // which hold only what the plans and the partner hold.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import validator from 'validator';
 import Papa from 'papaparse';
 import { departureModel } from '../src/utils/departure.js';
 import { revenueForYear } from '../src/utils/revenue.js';
@@ -91,7 +92,8 @@ test('the accepted plan as an import sheet: CLIENT, Lead, Second Chair, approved
 });
 
 test('a client name the form stored escaped is written as a partner would type it, so the import reads it', () => {
-  // As the API returns names sanitizeRequestBody stored (review 4.9), one of them saved twice
+  // As the API returns names the request sanitizer stored before WP5 (review
+  // 4.9), one of them saved twice, until the repair (scripts/unescape-book.cjs)
   const escaped = [
     client(21, 'Barnes &amp; Noble Education Fund', 'Kevin', 'Anna', 2, 40000),
     client(22, 'O&#x27;Brien Trust', 'Kevin', null, 1, 25000),
@@ -107,6 +109,23 @@ test('a client name the form stored escaped is written as a partner would type i
   }
   // The rows keep the client as the page holds it
   assert.deepEqual(sheet.rows.map((r) => r.client.name), ['Adams &amp;amp; Co', 'Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust']);
+});
+
+// Tier 2 WP5: a name saved since WP5 is stored as typed, and the sheet writes
+// it as it is: the same sheet as for its escaped copy
+test('a client name stored as typed (since WP5) is written as it is: the same sheet as for its escaped copy, passing the CLIENT pattern', () => {
+  const typed = [
+    client(21, 'Barnes & Noble Education Fund', 'Kevin', 'Anna', 2, 40000),
+    client(22, "O'Brien Trust", 'Kevin', null, 1, 25000),
+    client(23, 'Health / Human Services', 'Kevin', 'Ben', 1, 5000),
+  ];
+  const escaped = typed.map((c) => ({ ...c, name: validator.escape(c.name) }));
+  const sheetOf = (clients) => buildTransitionSheet(departureModel({ people: PEOPLE, clients, departingIds: [2], revenueOf, choices: {} }).decisions, approved(21, 22, 23));
+  const sheet = sheetOf(typed);
+  assert.equal(sheet.csv, sheetOf(escaped).csv);
+  const parsed = Papa.parse(sheet.csv, { header: true, skipEmptyLines: true });
+  assert.deepEqual(parsed.data.map((r) => r.CLIENT), ['Barnes & Noble Education Fund', 'Health / Human Services', "O'Brien Trust"]);
+  for (const name of parsed.data.map((r) => r.CLIENT)) assert.equal(validateField('name', name), null, name);
 });
 
 test('the sheet leaves out an approved plan the model can no longer apply, and says why', () => {

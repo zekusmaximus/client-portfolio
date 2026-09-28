@@ -2,10 +2,13 @@
 // mode). Pure, so tests/client-form.test.mjs can check it.
 //
 // The name and the notes are shown unescaped (unescapeStored): the API returns
-// them as sanitizeRequestBody stored them, `Barnes &amp; Noble Education
-// Fund`, whose `;` the form's name pattern refuses, so every later edit of the
-// client failed until the partner retyped the `&`; and notes, which have no
-// pattern, gained a level of escaping with each save.
+// a client the form saved before Tier 2 WP5 as the request sanitizer stored
+// it, `Barnes &amp; Noble Education Fund`, until the repair
+// (scripts/unescape-book.cjs); its `;` the form's name pattern refuses, so
+// every later edit of the client failed until the partner retyped the `&`, and
+// notes, which have no pattern, gained a level of escaping with each save.
+// Text saved since WP5 is stored as typed, and unescapeStored leaves it as it
+// is.
 //
 // A client nobody has rated keeps `stickiness: null` ("Not rated"): the form
 // used to fill it with 3, so saving the client for any reason rated it 3, and

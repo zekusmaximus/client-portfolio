@@ -62,7 +62,9 @@ const num = (v) => {
 };
 
 // Text as stored, with the request sanitizer's escaping undone (review 4.9:
-// names saved through the client form are stored as "Smith &amp; Co").
+// names saved through the client form before WP5 are stored as "Smith &amp;
+// Co" until scripts/unescape-book.cjs repairs them; text saved since is plain,
+// and one level of decoding reads both).
 const text = (v) => (v === null || v === undefined ? '' : String(unescapeText(String(v))).trim());
 
 // Case-insensitive, then exact, by UTF-16 code units: the same on every

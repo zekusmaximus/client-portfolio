@@ -71,8 +71,9 @@ export function sheetCell(text) {
  * is written out. An approved plan the model can no longer apply (no lead, or
  * a pinned pick that someone now leaving holds) is left out, with the reason.
  * A client's name is written unescaped: the API returns a name the client form
- * saved as sanitizeRequestBody stored it (`Barnes &amp; Noble`), and the import
- * refuses a CLIENT holding a `;`, so the sheet spells it as a partner would.
+ * saved before WP5 as the request sanitizer stored it (`Barnes &amp; Noble`)
+ * until the repair (scripts/unescape-book.cjs), and the import refuses a
+ * CLIENT holding a `;`, so the sheet spells it as a partner would.
  * @returns {{ csv: string, rows: Array<{ client, lead, secondChair }>, skipped: Array<{ client, reason }> }}
  */
 export function buildTransitionSheet(decisions = [], plans = {}) {

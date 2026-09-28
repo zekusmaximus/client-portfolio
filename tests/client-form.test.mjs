@@ -1,9 +1,10 @@
 // src/utils/clientForm.js: the client form's fields for a stored client. A
-// name or notes the form saved are stored HTML-escaped by sanitizeRequestBody;
-// the form shows them unescaped, so an edit saves without retyping the name
-// and a save no longer adds a level of escaping. The save is modelled as the
-// page and the server do it: the form's sanitizeFormData (DOMPurify), then the
-// server's validator.escape after a trim.
+// name or notes the form saved before Tier 2 WP5 are stored HTML-escaped (the
+// request sanitizer, and DOMPurify for a note with `<`) until the repair
+// (scripts/unescape-book.cjs); the form shows them unescaped, so an edit saves
+// without retyping the name. Since WP5 the save is modelled as the page and
+// the server do it: the form's sanitizeFormData, which trims, then the
+// server's trimRequestBody, which trims; nothing is escaped.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import validator from 'validator';
@@ -13,7 +14,7 @@ import { validateField, sanitizeFormData } from '../src/utils/validation.js';
 // What the database holds after the form saves `form`
 const stored = (form) => {
   const sent = sanitizeFormData(form);
-  return { name: validator.escape(sent.name.trim()), notes: validator.escape(sent.notes.trim()) };
+  return { name: sent.name.trim(), notes: sent.notes.trim() };
 };
 
 const CLIENT = {
@@ -62,16 +63,19 @@ test('a name stored escaped passes the form\'s name pattern, so an edit saves wi
   }
 });
 
-test('saving a client again stores the same text: the name and notes no longer gain a level per save', () => {
+test('a save stores the name and notes exactly as typed, and saving again stores the same text', () => {
   const cases = [
     { name: 'Barnes & Noble Education Fund', notes: 'R&D and Q&A' },
     { name: "O'Brien Trust", notes: "Sen. O'Brien; follow up" },
-    // A `<` makes DOMPurify serialize the text, escaping `&` itself before the server does
+    // Until WP5 a `<` made DOMPurify serialize the text, escaping `&` itself before the server did
     { name: 'Health / Human Services', notes: 'R&D < 5% of "budget"' },
+    // and dropped anything shaped like a tag
+    { name: 'Tag Co', notes: 'x <b>bold</b> y, a\u00a0b < c' },
   ];
   for (const typed of cases) {
     let db = stored(typed);
     const first = { ...db };
+    assert.deepEqual(first, typed, 'stored as typed');
     for (let save = 0; save < 3; save += 1) {
       const form = clientFormData(db);
       assert.deepEqual({ name: form.name, notes: form.notes }, typed, `save ${save + 1}: the form shows what was typed`);
@@ -80,12 +84,19 @@ test('saving a client again stores the same text: the name and notes no longer g
     }
   }
 
-  // Notes a save escaped several levels deep before this fix: shown as typed, then stored one level deep
+  // Notes a save escaped several levels deep before the form filled its
+  // fields unescaped: shown as typed, then, since WP5, stored as typed
   const deep = { name: 'Acme', notes: validator.escape(validator.escape(validator.escape('A&B'))) };
   assert.equal(deep.notes, 'A&amp;amp;amp;B');
   const form = clientFormData(deep);
   assert.equal(form.notes, 'A&B');
-  assert.equal(stored(form).notes, 'A&amp;B');
+  assert.equal(stored(form).notes, 'A&B');
+
+  // As the form stored a name and a note with `<` before WP5 (DOMPurify, then
+  // the sanitizer): opened as typed, saved as typed
+  const before = { name: validator.escape('Barnes & Noble'), notes: validator.escape('R&amp;D &lt; 5% of "budget"') };
+  assert.deepEqual(before, { name: 'Barnes &amp; Noble', notes: 'R&amp;amp;D &amp;lt; 5% of &quot;budget&quot;' });
+  assert.deepEqual(stored(clientFormData(before)), { name: 'Barnes & Noble', notes: 'R&D < 5% of "budget"' });
 });
 
 test('a client nobody has rated opens as Not rated, so saving it for another reason keeps it unrated; a rating stays', () => {

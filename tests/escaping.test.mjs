@@ -1,4 +1,5 @@
-// utils/escaping.cjs: undoing sanitizeRequestBody's validator.escape, once
+// utils/escaping.cjs: undoing the validator.escape the request sanitizer
+// applied to client text until Tier 2 WP5 (S8), once
 // (unescapeText) or however many times a stored text was escaped
 // (unescapeStored), and the same as a PostgreSQL expression
 // (unescapeStoredSql; tests/import-db.test.mjs runs it against a real server).

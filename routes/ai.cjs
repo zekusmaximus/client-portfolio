@@ -17,10 +17,11 @@ const { saveAnswer, listAnswers, getAnswer, monthSummary } = require('../models/
 // Sign-in for every route. The two AI rate limiters (D11, T16) only on the
 // POST routes, which call the model: opening the book or the saved answers
 // spends no AI budget.
-// No sanitizeRequestBody, as in routes/people.cjs: a question is stored and
-// sent exactly as the partner wrote it ("Smith & Co", not "Smith &amp; Co"),
+// No request pass, as in routes/people.cjs: a question is stored and sent
+// exactly as the partner wrote it ("Smith & Co", not "Smith &amp; Co"),
 // checked by checkQuestion, and rendered by React as text; the book decodes
-// names the client form stored escaped (unescapeText).
+// names the client form stored escaped before WP5 (unescapeText) until the
+// repair (scripts/unescape-book.cjs) and WP5's second PR.
 router.use(auth);
 
 // The book is built at each request from the database (loadBook,

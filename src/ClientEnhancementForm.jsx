@@ -216,7 +216,7 @@ const ClientEnhancementForm = ({ onClose }) => {
     let formRows = [];
     
     try {
-      // Sanitize form data before sending
+      // Trim the form's text before sending; it is stored as typed
       const sanitizedData = sanitizeFormData(formData);
       
       // Clean up revenues - remove empty entries
@@ -233,7 +233,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         revenues: cleanRevenues
       };
 
-      console.log('Sending sanitized client data:', clientData);
+      console.log('Sending client data:', clientData);
       console.log('Is edit mode:', isEditMode);
 
       if (isEditMode) {

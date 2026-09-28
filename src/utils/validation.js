@@ -1,12 +1,15 @@
-import DOMPurify from 'isomorphic-dompurify';
-
-// Sanitization helper
+// A text field as the form sends it: trimmed, and otherwise as the partner
+// typed it (docs/plans/tier-2.md, S8, WP5). Until WP5 this ran the text
+// through DOMPurify, which dropped anything shaped like a tag (`<b>`) and
+// serialized any text holding a `<`, so `R&D < 5%` went out as
+// `R&amp;D &lt; 5%` and the server's sanitizer escaped it again. React renders
+// every field as text, and the page has no raw-HTML sink.
 export const sanitizeInput = (value) => {
   if (typeof value !== 'string') return value;
-  return DOMPurify.sanitize(value.trim(), { ALLOWED_TAGS: [] });
+  return value.trim();
 };
 
-// Sanitize array of strings
+// Trim an array of strings
 export const sanitizeArray = (array) => {
   if (!Array.isArray(array)) return [];
   return array.map(item => typeof item === 'string' ? sanitizeInput(item) : item);
@@ -222,18 +225,19 @@ export const validateClientForm = (formData) => {
   return errors;
 };
 
-// Sanitize form data
+// The form's data as a save sends it: each text field and list trimmed
+// (sanitizeInput), nothing escaped or removed
 export const sanitizeFormData = (formData) => {
   const sanitized = { ...formData };
   
-  // Sanitize string fields
+  // Trim string fields
   Object.keys(VALIDATION_RULES).forEach(fieldName => {
     if (typeof sanitized[fieldName] === 'string') {
       sanitized[fieldName] = sanitizeInput(sanitized[fieldName]);
     }
   });
   
-  // Sanitize arrays
+  // Trim arrays
   if (sanitized.practiceArea) {
     sanitized.practiceArea = sanitizeArray(sanitized.practiceArea);
   }

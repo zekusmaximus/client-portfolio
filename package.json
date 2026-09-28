@@ -17,7 +17,8 @@
     "reset:password": "node scripts/reset-password.cjs",
     "check:schema": "node scripts/check-schema.cjs",
     "delete:user": "node scripts/delete-user.cjs",
-    "reset:book": "node scripts/reset-book.cjs"
+    "reset:book": "node scripts/reset-book.cjs",
+    "unescape:book": "node scripts/unescape-book.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

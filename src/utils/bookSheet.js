@@ -6,8 +6,10 @@
 // Each cell holds what the import reads back into the stored value: people as
 // the People list spells them, `Firm` and `Y` where the import expects them,
 // blank where the book has nothing. Client names and notes are unescaped
-// (unescapeStored): the API returns text the client form saved as
-// sanitizeRequestBody stored it, and the import refuses a CLIENT holding a `;`.
+// (unescapeStored): the API returns text the client form saved before WP5 as
+// the request sanitizer stored it, HTML-escaped, until the repair
+// (scripts/unescape-book.cjs), and the import refuses a CLIENT holding a `;`.
+// Text saved since is plain, and unescapeStored leaves it as it is.
 //
 // A client whose lead is missing or not an active partner, or whose second
 // chair is inactive, is written as the book has it, so Check file refuses

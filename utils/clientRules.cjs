@@ -9,7 +9,6 @@
 // imports server modules), held equal by tests/client-rules.test.mjs.
 
 const { EFFORT_BY_CADENCE } = require('./strategic.cjs');
-const { unescapeStored } = require('./escaping.cjs');
 
 // The vocabularies. Cadence is the scorer's own list; the practice areas are
 // the client form's twelve.
@@ -22,8 +21,12 @@ const CONFLICT_RISKS = ['Low', 'Medium', 'High'];
 const STICKINESS = [1, 2, 3, 4, 5];
 
 // The client form's name rules and messages (VALIDATION_RULES.name). A name is
-// checked as the partner typed it: sanitizeRequestBody has HTML-escaped it
-// before the route sees it (`Barnes &amp; Noble`), and the pattern has no `;`.
+// checked as it arrives, which since WP5 is as the partner typed it (trimmed,
+// not escaped) and is what clients.name stores. The pattern has no `;`, so a
+// name holding an HTML entity (`Barnes &amp; Noble`, as a client saved before
+// WP5 is stored until scripts/unescape-book.cjs repairs it) is refused: the
+// page sends names unescaped (clientFormData), and only a direct request
+// sends the stored text back.
 const NAME_MAX = 255;
 const NAME_PATTERN = /^[a-zA-Z0-9\s\-.,&'()/]+$/;
 const NAME_MESSAGES = {
@@ -44,21 +47,20 @@ const isObjectBody = (body) => body !== null && typeof body === 'object' && !Arr
 const isRevenueYear = (year) => Number.isInteger(year) && REVENUE_YEAR_ONLY.test(String(year));
 const isAmount = (amount) => typeof amount === 'number' && Number.isFinite(amount) && amount >= 0 && amount <= REVENUE_AMOUNT_MAX;
 const blank = (value) => value === undefined || value === null;
-// A value as a message quotes it: text as the partner typed it
-const shown = (value) => (typeof value === 'string' ? `"${unescapeStored(value)}"` : JSON.stringify(value));
+// A value as a message quotes it: text as it arrived
+const shown = (value) => (typeof value === 'string' ? `"${value}"` : JSON.stringify(value));
 
+// clients.name is VARCHAR(255) and holds the name as it arrives, trimmed
+// (middleware/validation.cjs), so the form's 255 is also the column's. Until
+// WP5 the name was stored escaped, each &, ' and / as 5 or 6 characters, and
+// a second rule refused a name the form allows that was over 255 once escaped.
 function checkName(name) {
   if (blank(name)) return NAME_MESSAGES.required;
   if (typeof name !== 'string') return 'Client name must be text';
-  const typed = unescapeStored(name).trim();
+  const typed = name.trim();
   if (typed === '') return NAME_MESSAGES.required;
   if (typed.length > NAME_MAX) return NAME_MESSAGES.maxLength;
   if (!NAME_PATTERN.test(typed)) return NAME_MESSAGES.pattern;
-  // clients.name is VARCHAR(255) and holds the name as it arrives, escaped
-  // (docs/plans/tier-2.md, WP4's trap 2; WP5 stores it as typed)
-  if (name.length > NAME_MAX) {
-    return `Client name is too long to save: each &, ' and / in it is saved as 5 or 6 characters, which makes it ${name.length}, over the limit of ${NAME_MAX}. Shorten it by ${name.length - NAME_MAX}.`;
-  }
   return null;
 }
 
