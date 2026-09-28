@@ -19,9 +19,10 @@ WP0's docs part merged as PR #39. WP1 (contract tests per route,
 defects) as PR #41; WP3 (bcrypt 6) merged as PR #42 and was verified on
 gbacpod.com by Jeff on 2026-09-27; WP4 (validation on the live write path)
 merged as PR #43 and was verified on gbacpod.com by Jeff on 2026-09-28; WP5
-(stop escaping; repair stored text) merged its first PR as PR #44, Jeff's
-repair preview found nothing to repair (2026-09-28), and its second PR (the
-display decoders go) is under way. Run the rest in order, and
+(stop escaping; repair stored text) merged as PR #44 and PR #45, Jeff's
+repair preview between them finding nothing to repair, and was verified on
+gbacpod.com by Jeff on 2026-09-28. WP6 (who changed what, and edit
+conflicts) is next. Run the rest in order, and
 update its status table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
