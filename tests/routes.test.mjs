@@ -178,6 +178,60 @@ const CLIENT_KEYS_THE_PAGE_READS = [
   'strategicValue',
 ];
 
+// The field rules POST and PUT /api/data/clients apply (utils/clientRules.cjs,
+// docs/plans/tier-2.md, WP4): [what, the body's fields over a valid form body,
+// the 400's details]. Each detail's field is the body's, or `revenue_<n>` for
+// the n-th revenue entry (the client form's key for its row).
+const PRACTICE_AREA_LIST = 'Healthcare, Municipal, Corporate, Energy, Financial, Education, Transportation, Environmental, Technology, Real Estate, Non-Profit, Other';
+const detail = (field, message) => [{ field, message }];
+const yearDetail = (year, n = 0) => detail(`revenue_${n}`, `Revenue year ${year} must be a whole year from 1900 to 2099.`);
+const amountDetail = (year) => detail('revenue_0', `The amount for ${year} must be a number from 0 to 1,000,000,000.`);
+const FIELD_REFUSALS = {
+  name: [
+    ['no name', { name: undefined }, detail('name', 'Client name is required')],
+    ['a null name', { name: null }, detail('name', 'Client name is required')],
+    ['a blank name', { name: '   ' }, detail('name', 'Client name is required')],
+    ['a name that is not text', { name: 42 }, detail('name', 'Client name must be text')],
+    ['a name over 255 characters', { name: 'A'.repeat(256) }, detail('name', 'Client name must not exceed 255 characters')],
+    ['a name with a ;', { name: 'Acme; Inc' }, detail('name', 'Client name contains invalid characters')],
+    ['a name with a #', { name: 'Acme #1' }, detail('name', 'Client name contains invalid characters')],
+    ['a name with a <', { name: 'Acme <b>' }, detail('name', 'Client name contains invalid characters')],
+  ],
+  vocabularies: [
+    ['a practice area off the list', { practice_area: ['Tax'] }, detail('practice_area', `Practice area "Tax" is not on the list: ${PRACTICE_AREA_LIST}.`)],
+    ['a practice area in the wrong case', { practice_area: ['healthcare', 'Energy'] }, detail('practice_area', `Practice area "healthcare" is not on the list: ${PRACTICE_AREA_LIST}.`)],
+    ['practice areas that are not a list', { practice_area: 'Healthcare' }, detail('practice_area', `Practice areas must be a list from: ${PRACTICE_AREA_LIST}.`)],
+    ['a conflict risk off the list', { conflict_risk: 'Severe' }, detail('conflict_risk', 'Conflict risk "Severe" must be Low, Medium or High.')],
+    ['a blank conflict risk', { conflict_risk: '' }, detail('conflict_risk', 'Conflict risk must be Low, Medium or High.')],
+    ['no conflict risk', { conflict_risk: undefined }, detail('conflict_risk', 'Conflict risk must be Low, Medium or High.')],
+    ['a cadence off the list', { interaction_frequency: 'Hourly' }, detail('interaction_frequency', 'Interaction frequency "Hourly" must be one of Daily, Weekly, Monthly, Quarterly, As-Needed, or blank.')],
+    ['stickiness 0', { stickiness: 0 }, detail('stickiness', 'Stickiness must be a whole number from 1 to 5, or null for not rated.')],
+    ['stickiness 6', { stickiness: 6 }, detail('stickiness', 'Stickiness must be a whole number from 1 to 5, or null for not rated.')],
+    ['stickiness as text', { stickiness: '3' }, detail('stickiness', 'Stickiness must be a whole number from 1 to 5, or null for not rated.')],
+    ['high-maintenance as text', { high_maintenance: 'yes' }, detail('high_maintenance', 'High-maintenance must be true or false.')],
+    ['high-maintenance null', { high_maintenance: null }, detail('high_maintenance', 'High-maintenance must be true or false.')],
+  ],
+  revenue: [
+    ['a year before 1900', { revenues: [{ year: 1899, revenue_amount: 1000 }] }, yearDetail(1899)],
+    ['a year after 2099', { revenues: [{ year: 2100, revenue_amount: 1000 }] }, yearDetail(2100)],
+    ['a year as text', { revenues: [{ year: '2026', revenue_amount: 1000 }] }, yearDetail('"2026"')],
+    ['a negative amount', { revenues: [{ year: 2026, revenue_amount: -1 }] }, amountDetail(2026)],
+    ['an amount over 1,000,000,000', { revenues: [{ year: 2026, revenue_amount: 1e9 + 1 }] }, amountDetail(2026)],
+    ['an amount NUMERIC(12, 2) cannot hold', { revenues: [{ year: 2026, revenue_amount: 1e10 }] }, amountDetail(2026)],
+    ['an amount as text', { revenues: [{ year: 2026, revenue_amount: '5000' }] }, amountDetail(2026)],
+    ['a year given twice', { revenues: [{ year: 2025, revenue_amount: 1 }, { year: 2025, revenue_amount: 2 }] },
+      detail('revenue_1', '2025 is given more than once; give each year once.')],
+    ['revenue that is not a list', { revenues: { 2026: 1000 } }, detail('revenues', 'Revenue must be a list of { year, revenue_amount } entries.')],
+    ['revenue null', { revenues: null }, detail('revenues', 'Revenue must be a list of { year, revenue_amount } entries.')],
+  ],
+};
+// A name the client form allows (70 characters) that is 270 once
+// sanitizeRequestBody has escaped it, over clients.name's VARCHAR(255)
+const LONG_ONCE_ESCAPED = `${'&'.repeat(50)}${'A'.repeat(20)}`;
+const LONG_ONCE_ESCAPED_DETAIL = detail('name', "Client name is too long to save: each &, ' and / in it is saved as 5 or 6 characters, which makes it 270, over the limit of 255. Shorten it by 15.");
+const NOT_AN_OBJECT = detail('body', "The request body must be a JSON object of the client's fields.");
+const failed = (details) => ({ success: false, error: 'Validation failed', details });
+
 // A saved answer's columns, as GET /api/ai/answers/:id returns them
 // (ONE_ANSWER_SQL in utils/aiAnswers.cjs)
 const ANSWER_KEYS = [
@@ -700,7 +754,8 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
 
   route('POST /api/data/clients', () => {
     // The page reads client (src/portfolioStore.js, addClient) and, on a 400,
-    // details[].field and details[].message (src/ClientEnhancementForm.jsx)
+    // details[].field and details[].message (src/ClientEnhancementForm.jsx,
+    // through formErrors in src/utils/clientForm.js)
     test('201 { success, client }: the client as GET lists it, its people from the ids and the legacy text written from them', async () => {
       const paula = await seed('Paula');
       const jay = await seed('Jay');
@@ -740,13 +795,105 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(await clientCount(), before);
     });
 
-    // Pinned: only the people are checked (docs/plans/tier-2.md, section 3
-    // item 6), so a body without a name reaches the INSERT and fails there.
-    // WP4 (S7) makes this a 400 with details.
-    test('a body without a name answers 500 { error: "Failed to create client" } (WP4 makes it 400); nothing written', async () => {
+    // Until Tier 2 WP4 only the people were checked (docs/plans/tier-2.md,
+    // section 3 item 6): a body without a name reached the INSERT and failed
+    // there (500), and every other field was stored as sent. The fields are
+    // checked now (utils/clientRules.cjs), before the people.
+    test('400 "Validation failed" with details for each rule on the name: missing, blank, not text, too long, outside the form\'s pattern; nothing written', async () => {
+      const lead = await seed('Kevin');
       const before = await clientCount();
-      const res = await call('POST', '/api/data/clients', formBody({ name: undefined, lead_id: (await seed('Kevin')).id }));
-      assert.deepEqual([res.status, res.body.error], [500, 'Failed to create client']);
+      for (const [what, fields, details] of FIELD_REFUSALS.name) {
+        const res = await call('POST', '/api/data/clients', formBody({ lead_id: lead.id, ...fields }));
+        assert.deepEqual([res.status, res.body], [400, failed(details)], what);
+      }
+      assert.equal(await clientCount(), before);
+    });
+
+    test('400 "Validation failed" for a name the form allows that is over 255 characters once escaped, where PostgreSQL refused it (500); nothing written', async () => {
+      const before = await clientCount();
+      const res = await call('POST', '/api/data/clients', formBody({ name: LONG_ONCE_ESCAPED, lead_id: (await seed('Kevin')).id }));
+      assert.deepEqual([res.status, res.body], [400, failed(LONG_ONCE_ESCAPED_DETAIL)]);
+      assert.equal(await clientCount(), before);
+    });
+
+    test('a name with &, \' and / is read as typed, whether it arrives as typed or already escaped; stored as the sanitizer leaves it, as before', async () => {
+      const lead = await seed('Kevin');
+      const typed = `Smith & O'Brien / ${letters(8)}`;
+      let res = await call('POST', '/api/data/clients', formBody({ name: typed, lead_id: lead.id }));
+      assert.equal(res.status, 201, res.text);
+      assert.equal((await storedClient(res.body.client.id)).name, `Smith &amp; O&#x27;Brien &#x2F; ${typed.slice(-8)}`);
+      // As a direct request can send it: the stored text, which the sanitizer escapes again
+      const escaped = `Smith &amp; O&#x27;Brien &#x2F; ${letters(8)}`;
+      res = await call('POST', '/api/data/clients', formBody({ name: escaped, lead_id: lead.id }));
+      assert.equal(res.status, 201, res.text);
+      assert.equal((await storedClient(res.body.client.id)).name, `Smith &amp;amp; O&amp;#x27;Brien &amp;#x2F; ${escaped.slice(-8)}`);
+      // 255 characters, the most the form and the column allow
+      const longest = `${letters(1).toUpperCase()}${letters(254)}`;
+      res = await call('POST', '/api/data/clients', formBody({ name: longest, lead_id: lead.id }));
+      assert.equal(res.status, 201, res.text);
+      assert.equal((await storedClient(res.body.client.id)).name, longest);
+    });
+
+    test('400 "Validation failed" for a practice area, conflict risk, cadence, stickiness or high-maintenance outside its vocabulary; nothing written', async () => {
+      const lead = await seed('Kevin');
+      const before = await clientCount();
+      for (const [what, fields, details] of FIELD_REFUSALS.vocabularies) {
+        const res = await call('POST', '/api/data/clients', formBody({ lead_id: lead.id, ...fields }));
+        assert.deepEqual([res.status, res.body], [400, failed(details)], what);
+      }
+      assert.equal(await clientCount(), before);
+    });
+
+    test('201 for a blank the book holds (no practice areas, no cadence, not rated) and for a field left out, stored as before', async () => {
+      const lead = await seed('Kevin');
+      for (const [fields, stored] of [
+        [{ practice_area: [], interaction_frequency: '', stickiness: null }, { practice_area: [], interaction_frequency: '', stickiness: null, high_maintenance: false }],
+        [{ practice_area: undefined, interaction_frequency: undefined, stickiness: undefined, high_maintenance: undefined, revenues: undefined },
+          { practice_area: null, interaction_frequency: null, stickiness: null, high_maintenance: false }],
+      ]) {
+        const res = await call('POST', '/api/data/clients', formBody({ lead_id: lead.id, ...fields }));
+        assert.equal(res.status, 201, res.text);
+        const row = await storedClient(res.body.client.id);
+        assert.deepEqual({ practice_area: row.practice_area, interaction_frequency: row.interaction_frequency, stickiness: row.stickiness, high_maintenance: row.high_maintenance }, stored);
+        if (!('revenues' in fields)) assert.deepEqual(await revenueRows(res.body.client.id), [{ year: 2025, amount: 50000 }, { year: 2026, amount: 60000 }]);
+        else assert.deepEqual(await revenueRows(res.body.client.id), []);
+      }
+    });
+
+    test('400 "Validation failed" for a revenue year the import would not read, an amount below 0, over 1,000,000,000 or not a number, a year given twice, or revenue that is not a list; nothing written', async () => {
+      const lead = await seed('Kevin');
+      const before = await clientCount();
+      for (const [what, fields, details] of FIELD_REFUSALS.revenue) {
+        const res = await call('POST', '/api/data/clients', formBody({ lead_id: lead.id, ...fields }));
+        assert.deepEqual([res.status, res.body], [400, failed(details)], what);
+      }
+      assert.equal(await clientCount(), before);
+      // The edges are accepted: 1900 and 2099, 0 and 1,000,000,000
+      const res = await call('POST', '/api/data/clients', formBody({ lead_id: lead.id, revenues: [{ year: 1900, revenue_amount: 0 }, { year: 2099, revenue_amount: 1e9 }] }));
+      assert.equal(res.status, 201, res.text);
+      assert.deepEqual(await revenueRows(res.body.client.id), [{ year: 1900, amount: 0 }, { year: 2099, amount: 1e9 }]);
+      // Gone again, so the book's reporting year stays this one's for the other tests
+      await db.query('DELETE FROM clients WHERE id::text = $1', [String(res.body.client.id)]);
+    });
+
+    test('400 "Validation failed" with the one detail `body` for a body that is not an object; nothing written', async () => {
+      const before = await clientCount();
+      for (const body of [undefined, [], '[{"name":"Acme"}]']) {
+        const res = await call('POST', '/api/data/clients', body);
+        assert.deepEqual([res.status, res.body], [400, failed(NOT_AN_OBJECT)], JSON.stringify(body));
+      }
+      assert.equal(await clientCount(), before);
+    });
+
+    test('the fields\' and the people\'s details come back together, the fields\' first; nothing written', async () => {
+      const before = await clientCount();
+      const res = await call('POST', '/api/data/clients', formBody({ name: '', practice_area: ['Tax'], stickiness: 9, lead_id: null }));
+      assert.deepEqual([res.status, res.body], [400, failed([
+        ...detail('name', 'Client name is required'),
+        ...detail('practice_area', `Practice area "Tax" is not on the list: ${PRACTICE_AREA_LIST}.`),
+        ...detail('stickiness', 'Stickiness must be a whole number from 1 to 5, or null for not rated.'),
+        ...detail('lead_id', 'Choose a lead partner.'),
+      ])]);
       assert.equal(await clientCount(), before);
     });
 
@@ -771,8 +918,9 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
   });
 
   route('PUT /api/data/clients/:id', () => {
-    // The page reads client (src/portfolioStore.js, updateClient) and, on a
-    // 400, details[].field and details[].message (src/ClientEnhancementForm.jsx)
+    // The page reads client (src/portfolioStore.js, updateClient) and, on a 400,
+    // details[].field and details[].message (src/ClientEnhancementForm.jsx,
+    // through formErrors in src/utils/clientForm.js)
     test('200 { success, client }: the edited fields and exactly the revenue rows sent', async () => {
       const kevin = await seed('Kevin');
       const joe = await seed('Joe');
@@ -843,15 +991,65 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
     });
 
-    // Pinned defect: a PUT is a full overwrite, and one without `revenues`
-    // deletes every revenue row the client has (docs/plans/tier-2.md, S7).
-    // WP4 makes it leave revenue as it is.
-    test('a PUT without revenues deletes the client\'s revenue rows (WP4 keeps them)', async () => {
+    // Until Tier 2 WP4 a PUT without `revenues` deleted every revenue row the
+    // client had (docs/plans/tier-2.md, S7): the handler defaulted it to []
+    test('a PUT without revenues leaves the client\'s revenue rows as they are; with revenues: [] it clears them', async () => {
       const kevin = await seed('Kevin');
       const created = await addClient({ lead: kevin, revenues: { 2025: 3000, 2026: 4000 } });
-      const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, revenues: undefined }));
+      let res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, notes: 'Kept', revenues: undefined }));
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2025, amount: 3000 }, { year: 2026, amount: 4000 }]);
+      assert.deepEqual(res.body.client.revenue, { 2025: 3000, 2026: 4000 });
+      assert.equal((await storedClient(created.id)).notes, 'Kept', 'the rest of the client is written');
+      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, revenues: [] }));
       assert.equal(res.status, 200, res.text);
       assert.deepEqual(await revenueRows(created.id), []);
+    });
+
+    test('400 "Validation failed" for each field rule POST applies, with the same details; the client and its revenue unchanged', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin, revenues: { 2025: 3000, 2026: 4000 } });
+      const before = await storedClient(created.id);
+      for (const [what, fields, details] of [...FIELD_REFUSALS.name, ...FIELD_REFUSALS.vocabularies, ...FIELD_REFUSALS.revenue]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, ...fields }));
+        assert.deepEqual([res.status, res.body], [400, failed(details)], what);
+      }
+      const res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: LONG_ONCE_ESCAPED, lead_id: kevin.id }));
+      assert.deepEqual([res.status, res.body], [400, failed(LONG_ONCE_ESCAPED_DETAIL)], 'over 255 characters once escaped (500 until WP4)');
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2025, amount: 3000 }, { year: 2026, amount: 4000 }]);
+    });
+
+    test('a body the rules refuse answers 400 before the client is looked up, and one that is not an object answers its one detail; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      let res = await call('PUT', `/api/data/clients/${missingId}`, formBody({ lead_id: kevin.id, conflict_risk: 'Severe' }));
+      assert.deepEqual([res.status, res.body], [400, failed(detail('conflict_risk', 'Conflict risk "Severe" must be Low, Medium or High.'))]);
+      for (const body of [undefined, [], '[{"name":"Acme"}]']) {
+        res = await call('PUT', `/api/data/clients/${created.id}`, body);
+        assert.deepEqual([res.status, res.body], [400, failed(NOT_AN_OBJECT)], JSON.stringify(body));
+      }
+      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, interaction_frequency: 'Hourly', lead_id: null }));
+      assert.deepEqual([res.status, res.body], [400, failed([
+        ...detail('interaction_frequency', 'Interaction frequency "Hourly" must be one of Daily, Weekly, Monthly, Quarterly, As-Needed, or blank.'),
+        ...detail('lead_id', 'Choose a lead partner.'),
+      ])], 'the fields\' and the people\'s details together, the fields\' first');
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
+    });
+
+    test('a name with &, \' and / saves as typed and as stored, the second escaped once more, as before', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const tail = letters(8);
+      let res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: `Smith & O'Brien / ${tail}`, lead_id: kevin.id }));
+      assert.equal(res.status, 200, res.text);
+      const stored = (await storedClient(created.id)).name;
+      assert.equal(stored, `Smith &amp; O&#x27;Brien &#x2F; ${tail}`);
+      res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: stored, lead_id: kevin.id }));
+      assert.equal(res.status, 200, res.text);
+      assert.equal((await storedClient(created.id)).name, `Smith &amp;amp; O&amp;#x27;Brien &amp;#x2F; ${tail}`);
     });
   });
 

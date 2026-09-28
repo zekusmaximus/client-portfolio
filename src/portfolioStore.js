@@ -6,6 +6,7 @@ import { computeReportingYear, revenueForYear } from './utils/revenue';
 import { toggleId, withChoice } from './utils/departure';
 import { approvalBlocker, pinnedChoice, syncTransitions } from './utils/transitionPlans';
 import { appendAnswers } from './utils/recentAnswers';
+import { clientRequestBody } from './utils/clientForm';
 
 // The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
 // brief. They start empty and go back to empty on logout.
@@ -273,30 +274,10 @@ const usePortfolioStore = create(
       
       setSelectedClient: (client) => set({ selectedClient: client }),
 
-      // Helper function to format client data for API
-      formatClientForAPI: (clientData) => {
-        // The three legacy retention fields (relationship_strength,
-        // relationship_intensity, renewal_probability) and the phantom
-        // strategic_fit_score have been retired — succession now derives from
-        // stickiness/effort, and the score from stickiness. No longer sent.
-        // People go as ids (docs/plans/people-and-second-chair.md, P3, P4); the
-        // server writes the legacy primary_lobbyist, lobbyist_team and
-        // client_originator text from them.
-        return {
-          name: clientData.name || '',
-          practice_area: clientData.practiceArea || [],
-          conflict_risk: clientData.conflict_risk || 'Medium',
-          notes: clientData.notes || '',
-          lead_id: clientData.lead_id ?? null,
-          second_chair_id: clientData.second_chair_id ?? null,
-          originator_id: clientData.originator_id ?? null,
-          originator_is_firm: clientData.originator_is_firm === true,
-          interaction_frequency: clientData.interaction_frequency || '',
-          stickiness: clientData.stickiness ?? null,
-          high_maintenance: clientData.high_maintenance === true,
-          revenues: clientData.revenues || []
-        };
-      },
+      // Helper function to format client data for API: clientRequestBody
+      // (src/utils/clientForm.js, pure, so tests can check the body against
+      // the server's rules)
+      formatClientForAPI: (clientData) => clientRequestBody(clientData),
       
       // Modal helpers for unified Client interface
       // Passing `null` opens the modal in "create" mode.

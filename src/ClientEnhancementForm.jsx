@@ -39,7 +39,8 @@ import {
 } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
-import { clientFormData } from './utils/clientForm';
+import { clientFormData, formErrors, revenuesToSend } from './utils/clientForm';
+import { apiErrorBody } from './api';
 import { enhanceClientWithSuccessionMetrics, getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 
 const ClientEnhancementForm = ({ onClose }) => {
@@ -211,18 +212,17 @@ const ClientEnhancementForm = ({ onClose }) => {
     }
     
     setIsSaving(true);
+    // The form row of each revenue entry sent, for a 400 about one of them
+    let formRows = [];
     
     try {
       // Sanitize form data before sending
       const sanitizedData = sanitizeFormData(formData);
       
       // Clean up revenues - remove empty entries
-      const cleanRevenues = sanitizedData.revenues.filter(rev => 
-        rev.year && rev.revenue_amount
-      ).map(rev => ({
-        year: parseInt(rev.year),
-        revenue_amount: parseFloat(rev.revenue_amount)
-      }));
+      const sent = revenuesToSend(sanitizedData.revenues);
+      const cleanRevenues = sent.revenues;
+      formRows = sent.formRows;
 
       const clientData = {
         ...sanitizedData,
@@ -250,21 +250,12 @@ const ClientEnhancementForm = ({ onClose }) => {
     } catch (error) {
       console.error('Error saving client:', error);
       
-      // Handle validation errors from backend
-      if (error.message.includes('Validation failed') || error.message.includes('400')) {
-        try {
-          const errorData = JSON.parse(error.message.split(' – ')[1]);
-          if (errorData.details) {
-            const backendErrors = {};
-            errorData.details.forEach(detail => {
-              backendErrors[detail.field] = detail.message;
-            });
-            setErrors(backendErrors);
-            return;
-          }
-        } catch (parseError) {
-          // If we can't parse the error, fall back to general error
-        }
+      // Validation errors from the backend (400 "Validation failed"): each
+      // beside its field, or under general where the form has no place for it
+      const errorData = apiErrorBody(error);
+      if (errorData && Array.isArray(errorData.details) && errorData.details.length > 0) {
+        setErrors(formErrors(errorData.details, formRows));
+        return;
       }
       
       setErrors({ general: `Failed to save client data: ${error.message}` });
