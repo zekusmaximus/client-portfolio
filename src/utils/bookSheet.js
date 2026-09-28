@@ -5,11 +5,12 @@
 //
 // Each cell holds what the import reads back into the stored value: people as
 // the People list spells them, `Firm` and `Y` where the import expects them,
-// blank where the book has nothing. Client names and notes are unescaped
-// (unescapeStored): the API returns text the client form saved before WP5 as
-// the request sanitizer stored it, HTML-escaped, until the repair
-// (scripts/unescape-book.cjs), and the import refuses a CLIENT holding a `;`.
-// Text saved since is plain, and unescapeStored leaves it as it is.
+// blank where the book has nothing. Client names and notes are written as
+// stored, which since Tier 2 WP5 is as typed, so a literal entity a partner
+// typed in a note round-trips unchanged. Until WP5's second PR they were
+// unescaped here, because the request sanitizer stored them HTML-escaped and
+// the import refuses a CLIENT holding a `;`; the repair
+// (scripts/unescape-book.cjs) found nothing left escaped on 2026-09-28.
 //
 // A client whose lead is missing or not an active partner, or whose second
 // chair is inactive, is written as the book has it, so Check file refuses
@@ -18,7 +19,6 @@
 // make a master sheet that silently lacks clients, and a revenue import that
 // silently skips them.
 
-import { unescapeStored } from './escaping.js';
 import { sheetCell } from './transitionPlans.js';
 import { revenueForYear } from './revenue.js';
 
@@ -63,7 +63,7 @@ export function buildBookSheet(clients = [], people = [], years = revenueYearsOn
   const person = (id, nested) => (id === null || id === undefined ? nested || null : byId.get(String(id)) || nested || null);
 
   const rows = clients.map((client) => {
-    const name = unescapeStored(text(client.name));
+    const name = text(client.name);
     const lead = person(client.lead_id, client.lead);
     const secondChair = person(client.second_chair_id, client.secondChair);
     const originator = person(client.originator_id, client.originator);
@@ -88,7 +88,7 @@ export function buildBookSheet(clients = [], people = [], years = revenueYearsOn
       client.high_maintenance === true ? 'Y' : '',
       text(client.conflict_risk),
       areas.join(';'),
-      unescapeStored(text(client.notes)),
+      text(client.notes),
     ];
     return { name, id: text(client.id), cells, reasons };
   });

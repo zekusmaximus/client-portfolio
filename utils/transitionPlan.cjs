@@ -26,13 +26,11 @@
 // (successionRisk, transitionComplexity, relationshipType) come from the
 // request, since the server has no copy of src/utils/successionUtils.js.
 
-// Until WP5 the route's request sanitizer HTML-escaped every string in the
-// request with validator.escape, so a name with an apostrophe (O'Brien, which
-// the People list allows) arrived as O&#x27;Brien; unescapeText
-// (utils/escaping.cjs) undoes exactly that set. Names now arrive as the page
-// holds them, plain for people, and one level of decoding leaves plain text
-// as it is; WP5's second PR removes these calls.
-const { unescapeText } = require('./escaping.cjs');
+// Names are read as the page sends them. Until Tier 2 WP5 the route's request
+// sanitizer HTML-escaped every string in the request (O'Brien arrived as
+// O&#x27;Brien), and each name here went through unescapeText
+// (utils/escaping.cjs); the route only trims now, and the People list's names,
+// which the roster is checked against, were never escaped.
 const { systemBlocks, firmDate } = require('./askPrompts.cjs');
 const {
   formatMoney,
@@ -47,7 +45,7 @@ const {
 const ROSTER_MAX = 50;
 const ROLE_NAMES = { partner: 'Partner', emeritus: 'Emeritus', associate: 'Associate' };
 
-const nameKey = (name) => (typeof name === 'string' ? unescapeText(name).trim().replace(/\s+/g, ' ').toLowerCase() : '');
+const nameKey = (name) => (typeof name === 'string' ? name.trim().replace(/\s+/g, ' ').toLowerCase() : '');
 const isLoad = (load) =>
   !!load && typeof load === 'object' &&
   Number.isInteger(load.count) && load.count >= 0 &&
@@ -59,7 +57,7 @@ function departingNames(stage1Data = {}) {
   return list
     .map((d) => (typeof d === 'string' ? d : d?.name))
     .filter((n) => typeof n === 'string' && n.trim())
-    .map((n) => unescapeText(n).trim());
+    .map((n) => n.trim());
 }
 
 /**
@@ -91,7 +89,7 @@ function checkRoster(roster, people = [], departing = []) {
       continue;
     }
     const person = byName.get(key);
-    const shown = unescapeText(entry.name).trim();
+    const shown = entry.name.trim();
     if (!person) unknown.push(shown);
     else if (!person.active) inactive.push(person.name);
     else if (leaving.has(key)) leavingOnRoster.push(person.name);
@@ -188,8 +186,8 @@ function createTransitionPlanPrompt(client, stage1Data = {}, roster = [], book, 
 
   const departing = Array.isArray(data.departing) && data.departing.length > 0
     ? data.departing
-      .map((d) => (typeof d === 'string' ? unescapeText(d).trim() : `${unescapeText(String(d?.name ?? '')).trim()} (${ROLE_NAMES[d?.role] || d?.role || 'role not given'})`))
-    : Array.isArray(data.selectedPartners) ? data.selectedPartners.map((n) => unescapeText(String(n)).trim()) : [];
+      .map((d) => (typeof d === 'string' ? d.trim() : `${String(d?.name ?? '').trim()} (${ROLE_NAMES[d?.role] || d?.role || 'role not given'})`))
+    : Array.isArray(data.selectedPartners) ? data.selectedPartners.map((n) => String(n).trim()) : [];
   const leaving = new Set(departingNames(data).map(nameKey));
   const seat = (p) => (p ? `${p.name}${leaving.has(nameKey(p.name)) ? ' (leaving)' : ''}${p.active ? '' : ' (inactive)'}` : 'none');
   const atRisk = Number(data.impactData?.totalRevenueAtRisk);
@@ -227,7 +225,7 @@ As the book lists it (its row in the Clients table):
 - **Strategic Value**: ${entry.strategicValue.toFixed(1)}
 
 From the page's succession analysis, which the book does not hold:
-- **Relationship Type**: ${client.relationshipType ? unescapeText(String(client.relationshipType)) : 'not given'}
+- **Relationship Type**: ${client.relationshipType ? String(client.relationshipType) : 'not given'}
 - **Succession Risk**: ${metric(client.successionRisk)}
 - **Transition Complexity**: ${metric(client.transitionComplexity)}
 
@@ -445,7 +443,6 @@ module.exports = {
   checkPlanRequest,
   checkRoster,
   departingNames,
-  unescapeText,
   rosterNamesIn,
   resolveRecommendation,
   rosterLine,

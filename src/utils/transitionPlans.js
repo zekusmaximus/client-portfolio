@@ -10,7 +10,6 @@
 // later pick on another client cannot move them.
 
 import { personLabel } from './people.js';
-import { unescapeStored } from './escaping.js';
 
 const key = (id) => String(id);
 
@@ -70,10 +69,10 @@ export function sheetCell(text) {
  * applies them. A blank Second Chair clears the seat, so a kept second chair
  * is written out. An approved plan the model can no longer apply (no lead, or
  * a pinned pick that someone now leaving holds) is left out, with the reason.
- * A client's name is written unescaped: the API returns a name the client form
- * saved before WP5 as the request sanitizer stored it (`Barnes &amp; Noble`)
- * until the repair (scripts/unescape-book.cjs), and the import refuses a
- * CLIENT holding a `;`, so the sheet spells it as a partner would.
+ * A client's name is written as stored, which since Tier 2 WP5 is as typed;
+ * until WP5's second PR it was unescaped here, because the request sanitizer
+ * stored names escaped (`Barnes &amp; Noble`) and the import refuses a CLIENT
+ * holding a `;`.
  * @returns {{ csv: string, rows: Array<{ client, lead, secondChair }>, skipped: Array<{ client, reason }> }}
  */
 export function buildTransitionSheet(decisions = [], plans = {}) {
@@ -88,7 +87,7 @@ export function buildTransitionSheet(decisions = [], plans = {}) {
     }
     rows.push({ client: d.client, lead: d.lead.after, secondChair: d.secondChair.after });
   }
-  const clientName = (r) => unescapeStored(String(r.client.name ?? ''));
+  const clientName = (r) => String(r.client.name ?? '');
   rows.sort((a, b) => clientName(a).localeCompare(clientName(b), undefined, { sensitivity: 'base' }));
   const lines = [
     'CLIENT,Lead,Second Chair',

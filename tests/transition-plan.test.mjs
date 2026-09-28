@@ -23,7 +23,6 @@ const {
   checkPlanRequest,
   checkRoster,
   departingNames,
-  unescapeText,
   rosterNamesIn,
   resolveRecommendation,
   createTransitionPlanPrompt,
@@ -53,9 +52,9 @@ const ROSTER_IN = [
   { name: 'Paula', role: 'partner', lead: load(3, 195000, 9.5), second: load(3, 250000, 1.6) },
   { name: 'Jay', role: 'emeritus', lead: load(0, 0, 0), second: load(2, 127000, 1.5) },
   { name: 'Ben', role: 'associate', lead: load(0, 0, 0), second: load(4, 205000, 1.6) },
-  // escaped by the request sanitizer on the way in until WP5; the route's
-  // one-level decoding (which WP5's second PR removes) still reads it
-  { name: 'Mary O&#x27;Brien', role: 'associate', lead: load(0, 0, 0), second: load(0, 0, 0) },
+  // As the page sends it; until Tier 2 WP5 the request sanitizer escaped it
+  // (Mary O&#x27;Brien) and the route decoded it
+  { name: "Mary O'Brien", role: 'associate', lead: load(0, 0, 0), second: load(0, 0, 0) },
   { name: 'Mary', role: 'associate', lead: load(0, 0, 0), second: load(0, 0, 0) },
 ];
 const DEPARTING = [{ name: 'Kevin', role: 'partner' }, { name: 'Anna', role: 'associate' }];
@@ -156,8 +155,8 @@ const BOOK_CLIENTS = [
     high_maintenance: true, effort: 4.5, strategicValue: 7.2,
   }),
   stored('c5', 'Old Mill Co', 2, 7, { practiceArea: ['Municipal'], revenues: years({ 2025: 30000 }), stickiness: 3, interaction_frequency: 'As-Needed', effort: 0.5, strategicValue: 3 }),
-  // Production's integer id; a name the client form stored escaped
-  stored(42, 'Smith &amp; O&#x27;Brien', 2, null, { revenues: years({ 2026: 25000 }), effort: 1, strategicValue: 1 }),
+  // Production's integer id; a name with & and ', stored as typed
+  stored(42, "Smith & O'Brien", 2, null, { revenues: years({ 2026: 25000 }), effort: 1, strategicValue: 1 }),
   // Nothing set: no lead, no revenue, not rated, no cadence, no conflict risk
   stored('c6', 'Bare Client', null, null, { conflict_risk: null }),
 ];
@@ -224,10 +223,10 @@ test('createTransitionPlanPrompt: the client\'s facts come from the book, not th
   assert.doesNotMatch(prompt, /[Rr]etention/, 'no retention estimate, even when a caller still sends one');
   assert.doesNotMatch(prompt, /undefined|NaN|average_revenue|relationshipStrength/);
 
-  // A name the client form stored escaped reads as the book writes it; an integer id finds its client
-  const escaped = createTransitionPlanPrompt({ id: 42, name: 'Smith &amp;amp; O&amp;#x27;Brien' }, stage1Data, ROSTER, BOOK, at).prompt;
-  assert.ok(escaped.includes("- **Name**: Smith & O'Brien\n"), escaped);
-  assert.ok(escaped.includes("the transition plan for one client they hold a seat on, Smith & O'Brien:"));
+  // A name with & and ' reads as the book writes it; an integer id finds its client
+  const typed = createTransitionPlanPrompt({ id: 42, name: "Smith & O'Brien" }, stage1Data, ROSTER, BOOK, at).prompt;
+  assert.ok(typed.includes("- **Name**: Smith & O'Brien\n"), typed);
+  assert.ok(typed.includes("the transition plan for one client they hold a seat on, Smith & O'Brien:"));
 
   // Every section the parser reads is asked for, as a heading of its own
   for (const heading of ['TRANSITION STRATEGY', 'RECOMMENDED LEAD', 'RECOMMENDED SECOND CHAIR', 'TIMELINE', 'KEY RISKS & MITIGATION', 'ACTION ITEMS', 'CLIENT COMMUNICATION TEMPLATE']) {
@@ -279,7 +278,7 @@ test('createTransitionPlanPrompt: the roster, with roles, and the rule to recomm
   assert.match(prompt, /\n## ROSTER\n/);
   assert.match(prompt, /Recommend people only from this roster, by name exactly as written here: nobody else can take a seat\./);
   assert.match(prompt, /their revenue in 2026 and their effort/);
-  assert.ok(prompt.includes("- Mary O'Brien (Associate):"), 'the People list\'s own spelling, unescaped');
+  assert.ok(prompt.includes("- Mary O'Brien (Associate):"), 'the People list\'s own spelling');
   // Nobody leaving is on it
   const roster = section(prompt, '## ROSTER', 'Write the plan');
   assert.doesNotMatch(roster, /Kevin|Anna|Steve/);
@@ -360,11 +359,15 @@ test('checkRoster: active people on the People list, not leaving, once each, nam
   assert.deepEqual(refused(Array.from({ length: ROSTER_MAX + 1 }, () => entry('Joe'))).errors, [tooLong]);
 });
 
-test('unescapeText and departingNames undo the request sanitizer', () => {
-  assert.equal(unescapeText('O&#x27;Brien &amp; &lt;Co&gt; &quot;x&quot; a&#x2F;b'), `O'Brien & <Co> "x" a/b`);
-  assert.equal(unescapeText('&amp;lt;'), '&lt;', 'one level only');
-  assert.deepEqual(departingNames({ departing: [{ name: 'Mary O&#x27;Brien' }, 'Kevin', { role: 'x' }] }), ["Mary O'Brien", 'Kevin']);
+// Tier 2 WP5's second PR: names are read as sent. Until then each went through
+// unescapeText, since the route's request sanitizer escaped them; the page
+// sends the People list's own spelling, which was never escaped.
+test('departingNames and checkRoster read names as sent, trimmed: an escaped name is no longer decoded', () => {
+  assert.deepEqual(departingNames({ departing: [{ name: " Mary O'Brien " }, 'Kevin', { role: 'x' }] }), ["Mary O'Brien", 'Kevin']);
   assert.deepEqual(departingNames({}), []);
+  assert.deepEqual(departingNames({ departing: [{ name: 'Mary O&#x27;Brien' }] }), ['Mary O&#x27;Brien']);
+  const { errors } = checkRoster([{ name: 'Mary O&#x27;Brien', role: 'associate', lead: load(0, 0, 0), second: load(0, 0, 0) }], PEOPLE, []);
+  assert.deepEqual(errors, ['Not on the People list: Mary O&#x27;Brien.']);
 });
 
 test('parseTransitionPlanResponse: extracts every section, and resolves the lead and second chair against the roster', () => {

@@ -4,7 +4,6 @@
 // which hold only what the plans and the partner hold.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import validator from 'validator';
 import Papa from 'papaparse';
 import { departureModel } from '../src/utils/departure.js';
 import { revenueForYear } from '../src/utils/revenue.js';
@@ -91,41 +90,30 @@ test('the accepted plan as an import sheet: CLIENT, Lead, Second Chair, approved
   assert.equal(sheetCell(null), '');
 });
 
-test('a client name the form stored escaped is written as a partner would type it, so the import reads it', () => {
-  // As the API returns names the request sanitizer stored before WP5 (review
-  // 4.9), one of them saved twice, until the repair (scripts/unescape-book.cjs)
-  const escaped = [
-    client(21, 'Barnes &amp; Noble Education Fund', 'Kevin', 'Anna', 2, 40000),
-    client(22, 'O&#x27;Brien Trust', 'Kevin', null, 1, 25000),
-    client(23, 'Adams &amp;amp; Co', 'Kevin', 'Ben', 1, 5000),
-  ];
-  const m = departureModel({ people: PEOPLE, clients: escaped, departingIds: [2], revenueOf, choices: {} });
-  const sheet = buildTransitionSheet(m.decisions, approved(21, 22, 23));
-  const parsed = Papa.parse(sheet.csv, { header: true, skipEmptyLines: true });
-  assert.deepEqual(parsed.data.map((r) => r.CLIENT), ['Adams & Co', 'Barnes & Noble Education Fund', "O'Brien Trust"], 'unescaped, and sorted as spelled');
-  assert.ok(!sheet.csv.includes(';'), 'no entity left for the import to refuse');
-  for (const name of parsed.data.map((r) => r.CLIENT)) {
-    assert.equal(validateField('name', name), null, `${name}: passes the CLIENT pattern the import applies`);
-  }
-  // The rows keep the client as the page holds it
-  assert.deepEqual(sheet.rows.map((r) => r.client.name), ['Adams &amp;amp; Co', 'Barnes &amp; Noble Education Fund', 'O&#x27;Brien Trust']);
-});
-
-// Tier 2 WP5: a name saved since WP5 is stored as typed, and the sheet writes
-// it as it is: the same sheet as for its escaped copy
-test('a client name stored as typed (since WP5) is written as it is: the same sheet as for its escaped copy, passing the CLIENT pattern', () => {
+// Tier 2 WP5: names are stored as typed, and the sheet writes them as stored.
+// Until WP5's second PR it unescaped them (`Barnes &amp; Noble`), because the
+// request sanitizer stored them escaped; the repair found none left.
+test('a client name is written as stored, which is as typed: &, \' and / pass the CLIENT pattern the import applies', () => {
   const typed = [
     client(21, 'Barnes & Noble Education Fund', 'Kevin', 'Anna', 2, 40000),
     client(22, "O'Brien Trust", 'Kevin', null, 1, 25000),
     client(23, 'Health / Human Services', 'Kevin', 'Ben', 1, 5000),
   ];
-  const escaped = typed.map((c) => ({ ...c, name: validator.escape(c.name) }));
-  const sheetOf = (clients) => buildTransitionSheet(departureModel({ people: PEOPLE, clients, departingIds: [2], revenueOf, choices: {} }).decisions, approved(21, 22, 23));
-  const sheet = sheetOf(typed);
-  assert.equal(sheet.csv, sheetOf(escaped).csv);
+  const m = departureModel({ people: PEOPLE, clients: typed, departingIds: [2], revenueOf, choices: {} });
+  const sheet = buildTransitionSheet(m.decisions, approved(21, 22, 23));
   const parsed = Papa.parse(sheet.csv, { header: true, skipEmptyLines: true });
-  assert.deepEqual(parsed.data.map((r) => r.CLIENT), ['Barnes & Noble Education Fund', 'Health / Human Services', "O'Brien Trust"]);
-  for (const name of parsed.data.map((r) => r.CLIENT)) assert.equal(validateField('name', name), null, name);
+  assert.deepEqual(parsed.data.map((r) => r.CLIENT), ['Barnes & Noble Education Fund', 'Health / Human Services', "O'Brien Trust"], 'sorted as spelled');
+  for (const name of parsed.data.map((r) => r.CLIENT)) {
+    assert.equal(validateField('name', name), null, `${name}: passes the CLIENT pattern the import applies`);
+  }
+  assert.deepEqual(sheet.rows.map((r) => r.client.name), ['Barnes & Noble Education Fund', 'Health / Human Services', "O'Brien Trust"]);
+
+  // A name holding an entity, which only an old backup could bring back, is
+  // written as stored, and the import refuses it rather than guessing
+  const old = [client(24, 'Adams &amp; Co', 'Kevin', 'Ben', 1, 5000)];
+  const oldSheet = buildTransitionSheet(departureModel({ people: PEOPLE, clients: old, departingIds: [2], revenueOf, choices: {} }).decisions, approved(24));
+  assert.deepEqual(Papa.parse(oldSheet.csv, { header: true, skipEmptyLines: true }).data.map((r) => r.CLIENT), ['Adams &amp; Co']);
+  assert.match(validateField('name', 'Adams &amp; Co') || '', /invalid characters/);
 });
 
 test('the sheet leaves out an approved plan the model can no longer apply, and says why', () => {

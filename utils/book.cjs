@@ -26,9 +26,6 @@
 // commitment). A default is labelled as one: an unrated client reads "not
 // rated" and a missing cadence "not set", never a value.
 
-// From utils/escaping.cjs directly: utils/transitionPlan.cjs re-exports it,
-// and itself requires this module for the transition plan's figures (WP6).
-const { unescapeText } = require('./escaping.cjs');
 const { getEffort, calculateStrategicValue, EFFORT_BY_CADENCE, HANDFUL_MULTIPLIER, UNRATED_STICKINESS } = require('./strategic.cjs');
 
 /**
@@ -61,11 +58,10 @@ const num = (v) => {
   return Number.isNaN(n) ? null : n;
 };
 
-// Text as stored, with the request sanitizer's escaping undone (review 4.9:
-// names saved through the client form before WP5 are stored as "Smith &amp;
-// Co" until scripts/unescape-book.cjs repairs them; text saved since is plain,
-// and one level of decoding reads both).
-const text = (v) => (v === null || v === undefined ? '' : String(unescapeText(String(v))).trim());
+// Text as stored, trimmed. Until Tier 2 WP5 this undid one level of the
+// request sanitizer's escaping (review 4.9: "Smith &amp; Co"); the API stores
+// text as typed since, and the repair found nothing escaped (2026-09-28).
+const text = (v) => (v === null || v === undefined ? '' : String(v).trim());
 
 // Case-insensitive, then exact, by UTF-16 code units: the same on every
 // machine, unlike localeCompare.

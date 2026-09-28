@@ -24,9 +24,8 @@ const STICKINESS = [1, 2, 3, 4, 5];
 // checked as it arrives, which since WP5 is as the partner typed it (trimmed,
 // not escaped) and is what clients.name stores. The pattern has no `;`, so a
 // name holding an HTML entity (`Barnes &amp; Noble`, as a client saved before
-// WP5 is stored until scripts/unescape-book.cjs repairs it) is refused: the
-// page sends names unescaped (clientFormData), and only a direct request
-// sends the stored text back.
+// WP5 was stored until scripts/unescape-book.cjs repaired the book) is
+// refused, as the form refuses it.
 const NAME_MAX = 255;
 const NAME_PATTERN = /^[a-zA-Z0-9\s\-.,&'()/]+$/;
 const NAME_MESSAGES = {

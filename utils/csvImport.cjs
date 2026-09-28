@@ -430,8 +430,9 @@ function checkSheet(clients = [], { headerErrors = [], roster = [], existingByNa
 
 /**
  * Index the stored clients an import may update by their name as a sheet
- * spells it: unescapeStored (a name saved through the client form is stored
- * HTML-escaped, once per save) and lower case, as the sheet's names are
+ * spells it: unescapeStored (a name the client form saved before Tier 2 WP5
+ * was stored HTML-escaped, once per save; the repair found none left, and
+ * this stays as a guard) and lower case, as the sheet's names are
  * matched. data.cjs selects the rows with the same key in SQL
  * (unescapeStoredSql), so `Barnes &amp; Noble` and `O&amp;#x27;Brien` are
  * found by, and updated from, `Barnes & Noble` and `O'Brien`.

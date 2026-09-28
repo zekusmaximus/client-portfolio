@@ -1,6 +1,7 @@
 // src/utils/bookSheet.js: the book as an import sheet (Data Upload's
-// "Download the book as a sheet"). Every column and vocabulary, text the
-// request sanitizer stored escaped before WP5 written unescaped, quoting, blank cells,
+// "Download the book as a sheet"). Every column and vocabulary, names and
+// notes written as stored (as typed since Tier 2 WP5, a literal entity
+// included), quoting, blank cells,
 // the revenue years, a missing or inactive lead, and the sheet read back by
 // the import's own parsing (processCSVData, checkSheet) into the stored
 // values. tests/import-db.test.mjs imports it through server.cjs.
@@ -9,7 +10,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import Papa from 'papaparse';
 import { buildBookSheet, revenueYearsOnFile, BOOK_SHEET_COLUMNS } from '../src/utils/bookSheet.js';
-import { unescapeStored } from '../src/utils/escaping.js';
 import csvImport from '../utils/csvImport.cjs';
 import analyzer from '../clientAnalyzer.cjs';
 
@@ -38,17 +38,18 @@ const seats = (lead, second = null, originator = null) => ({
   originator_id: originator?.id ?? null, originator,
 });
 
-const BARNES = client('b1', 'Barnes &amp; Noble Education Fund', {
+// Stored as typed (Tier 2 WP5); the repair found nothing stored escaped
+const BARNES = client('b1', 'Barnes & Noble Education Fund', {
   ...seats(KEVIN, JAY, JAY), originator_is_firm: true, stickiness: 5, interaction_frequency: 'Weekly',
   conflict_risk: 'Low', practice_area: ['Healthcare', 'Education'],
-  notes: 'O&#x27;Brien said &quot;renew&quot;, R&amp;amp;D\nsecond line',
+  notes: 'O\'Brien said "renew", R&D\nsecond line',
   revenues: [{ year: 2024, revenue_amount: 60000 }, { year: 2026, revenue_amount: 72000.5 }],
 });
 const ENERGY = client('e1', 'Energy, Inc', {
   ...seats(PAULA), originator_is_firm: true, high_maintenance: true, conflict_risk: 'High',
   revenues: [{ year: 2025, revenue_amount: '40000.00' }, { year: 2023, revenue_amount: 0 }],
 });
-const OBRIEN = client('o1', 'O&#x27;Brien Trust', {
+const OBRIEN = client('o1', "O'Brien Trust", {
   ...seats(PAULA, MARY, STEVE), stickiness: 1, interaction_frequency: 'As-Needed',
   practice_area: ['Non-Profit', 'Real Estate'], notes: 'Formula-looking =SUM(A1)',
   revenues: [{ year: 2026, revenue_amount: 1 }],
@@ -78,7 +79,7 @@ test('each cell: people as the People list spells them, Firm and Y, the vocabula
   const { data } = parse(buildBookSheet(BOOK, PEOPLE).csv);
   const row = Object.fromEntries(data.map((r) => [r.CLIENT, r]));
   assert.deepEqual(data.map((r) => r.CLIENT), ['Barnes & Noble Education Fund', 'Energy, Inc', 'Leadless Client', "O'Brien Trust", 'Old Lead Client'],
-    'unescaped, and sorted by name as spelled');
+    'sorted by name as spelled');
 
   assert.deepEqual(row['Barnes & Noble Education Fund'], {
     CLIENT: 'Barnes & Noble Education Fund', '2024 Contracts': '60000', '2025 Contracts': '', '2026 Contracts': '72000.50',
@@ -140,14 +141,13 @@ test('read back by the import\'s own parsing, every cell gives the stored value,
   for (const c of [BARNES, ENERGY, OBRIEN]) {
     const read = parsed.find((p) => stored.byName.get(p.name.toLowerCase()) === c);
     assert.ok(read, c.name);
-    const expectedNotes = c === BARNES ? 'O\'Brien said "renew", R&D\nsecond line' : c.notes;
     assert.deepEqual(read.sheet.values, {
       stickiness: c.stickiness,
       interaction_frequency: c.interaction_frequency,
       high_maintenance: c.high_maintenance,
       conflict_risk: c.conflict_risk,
       practice_area: c.practice_area,
-      notes: expectedNotes,
+      notes: c.notes,
     }, c.name);
     assert.deepEqual(check.people.get(read.rowNumber).values, {
       lead_id: c.lead_id, second_chair_id: c.second_chair_id, originator_id: c.originator_id, originator_is_firm: c.originator_is_firm,
@@ -157,18 +157,12 @@ test('read back by the import\'s own parsing, every cell gives the stored value,
   }
 });
 
-// Tier 2 WP5: text saved since WP5 is stored as typed. The sheet unescapes
-// what was stored escaped before, so a book of plain text writes the same
-// sheet as its escaped copy, and a literal entity typed since (which is no
-// escape) is written as it is and read back as it is; until WP5 the import
-// decoded it (`&#169;` became ©)
-test('text stored as typed: the same sheet as for its escaped copy; a note with < and a literal entity written and read back as typed', () => {
-  const plain = (c) => ({ ...c, name: unescapeStored(c.name), notes: unescapeStored(c.notes) });
-  const book = [BARNES, ENERGY, OBRIEN];
-  assert.equal(buildBookSheet(book.map(plain), PEOPLE).csv, buildBookSheet(book, PEOPLE).csv);
-
+// Tier 2 WP5's second PR: names and notes are written as stored, which is as
+// typed. Until then the sheet unescaped them, so a literal entity a partner
+// typed in a note (`&lt;b&gt;`) came back as `<b>` after a round trip.
+test('names and notes are written as stored: a literal entity a partner typed is written and read back as it is', () => {
   const TYPED = client('t1', "Smith & O'Brien / Co", {
-    ...seats(KEVIN), notes: 'Copyright &#169; 2026, R&D < 5% of "budget"', revenues: [{ year: 2026, revenue_amount: 100 }],
+    ...seats(KEVIN), notes: 'Copyright &#169; 2026; write &lt;b&gt; for bold; R&D < 5% of "budget"', revenues: [{ year: 2026, revenue_amount: 100 }],
   });
   const sheet = buildBookSheet([TYPED], PEOPLE);
   const { data } = parse(sheet.csv);

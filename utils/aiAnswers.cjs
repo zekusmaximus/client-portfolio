@@ -39,9 +39,10 @@ const whole = (n) => {
  * and otherwise as written; null for the brief and a transition plan).
  * `client` ({ id, name }) is a transition plan's client: the id as text, the
  * name unescaped (unescapeStored): the page sends names as the API stores
- * them, and a name the client form saved before WP5 is stored HTML-escaped
- * until scripts/unescape-book.cjs repairs it (until WP5 the route's own
- * request sanitizer escaped it once more). `user` is the JWT payload
+ * them, which since Tier 2 WP5 is as typed; a name the client form saved
+ * before WP5 was stored HTML-escaped (and the route's own request sanitizer
+ * escaped it once more), and this stays as a guard for text restored from an
+ * old backup. `user` is the JWT payload
  * ({ userId, username }). `bookText` is the book the answer was given on,
  * stored as its hash (a transition plan's since WP6, when it moved onto the
  * book; before that it stored none).
