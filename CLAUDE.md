@@ -23,7 +23,8 @@ merged as PR #43 and was verified on gbacpod.com by Jeff on 2026-09-28; WP5
 repair preview between them finding nothing to repair, and was verified on
 gbacpod.com by Jeff on 2026-09-28. WP6 (who changed what, and edit
 conflicts) merged as PR #47 (`e9b176f`) on 2026-09-29 at Jeff's instruction;
-his after-deploy checks and the green backup PR #47 asked for are open. WP7
+the nightly backup since is green and counts `client_changes` (Jeff,
+2026-09-29), and his other after-deploy checks are open. WP7
 (succession metrics on the server) is in progress: PR #48 is open from
 `claude/practical-fermi-izuz9g`, and it adds no table or column, so no
 backup gate. Run the rest in order, and
