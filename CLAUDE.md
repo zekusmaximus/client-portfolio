@@ -36,8 +36,10 @@ packages as PR #49 (a page-only change). WP8 (saved scenarios: the
 `scenarios` table, its five routes and the Scenarios list behind
 `saved-scenarios`) merged as PR #50 (`9e07c8d`) on 2026-09-29 at Jeff's
 instruction, the nightly backup green before the merge; his after-deploy
-checks are open. WP9 (an associate in Scenarios, S18 and S19) is in
-progress on `claude/beautiful-lamport-od05ol`. Run the rest in
+checks are open. WP9 (an associate in Scenarios, S18 and S19: the
+"Add an associate" kind of scenario behind `hire-scenarios`, no schema
+change) is open as PR #51 from `claude/beautiful-lamport-od05ol`; Jeff
+merges it, or says to. Run the rest in
 order, and
 update its status table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
