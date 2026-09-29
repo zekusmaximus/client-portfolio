@@ -41,9 +41,10 @@ checks are open. WP9 (an associate in Scenarios, S18 and S19: the
 change) merged as PR #51 (`e114c50`) on 2026-09-29 at Jeff's instruction;
 his after-deploy checks are open. WP10 (follow-up questions, the
 earlier-book mark and hiding answers, S14 and S15: five nullable columns on
-`ai_answers`, two routes, `ai-threads`) is open as PR #52 from
-`claude/zealous-ptolemy-mjv59t`; Jeff merges it, or says to, once the
-nightly backup is green (section 17). Run the rest in
+`ai_answers`, two routes, `ai-threads`) merged as PR #52 (`993af86`) on
+2026-09-29 at Jeff's instruction, the nightly backup green before the
+merge; his after-deploy checks are open. WP11 (model and effort from real
+answers, S16) is in progress on `claude/gifted-ride-7t64o0`. Run the rest in
 order, and
 update its status table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
