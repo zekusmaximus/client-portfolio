@@ -1596,6 +1596,9 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
         assert.deepEqual([unsavedPlan.body.saved, unsavedPlan.body.answerId], [false, null]);
         assert.match(unsavedPlan.body.plan.strategy || JSON.stringify(unsavedPlan.body.plan), /Fake Anthropic plan/);
         assert.equal(await count(), lost);
+        // The log line reaches the server's output on its own pipe, which can
+        // arrive after the HTTP answer: wait for it (as for ai_stream_closed)
+        await waitFor(() => saveLines().length >= 2, 'the two ai_answer_save_failed lines');
         const lines = saveLines().map((line) => JSON.parse(line.slice(line.indexOf('{'))));
         assert.deepEqual(lines.map((l) => [l.label, l.kind, l.code]), [['ask', 'ask', '23514'], ['transition-plan', 'transition-plan', '23514']]);
       } finally {
@@ -1876,6 +1879,9 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
         assert.deepEqual([done.data.saved, done.data.answerId], [false, null]);
         assert.equal(done.data.answer, textOf(unsaved.events));
         assert.ok(done.data.answer.startsWith('**Fake Anthropic answer.**'));
+        // The log line reaches the server's output on its own pipe, which can
+        // arrive after done (it failed CI once on PR #48): wait for it
+        await waitFor(() => logLines(aiServer, 'ai_answer_save_failed').length >= 1, 'the ai_answer_save_failed line');
         assert.deepEqual(logLines(aiServer, 'ai_answer_save_failed').map((l) => [l.label, l.kind, l.code]), [['ask', 'ask', '23514']]);
       } finally {
         await db.query('ALTER TABLE ai_answers DROP CONSTRAINT wp5_refuse_every_row');
