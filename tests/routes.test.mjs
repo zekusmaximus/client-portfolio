@@ -1110,6 +1110,22 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(await clientCount(), before);
     });
 
+    // Pinned, found in WP7's end-to-end run (docs/plans/tier-2.md, section 2,
+    // WP7's candidates): the form's POST takes a name another client already
+    // has, in any case, and the import then refuses every sheet row naming it
+    // until one is deleted
+    test('201 for a name another client already has, in any case; the import then refuses a row naming it', async () => {
+      const kevin = await seed('Kevin');
+      const existing = await addClient({ lead: kevin });
+      const res = await call('POST', '/api/data/clients', formBody({ name: existing.name.toUpperCase(), lead_id: kevin.id }));
+      assert.equal(res.status, 201, res.text);
+      const check = await call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: existing.name, '2026 Contracts': '$9' }], dryRun: true });
+      assert.equal(check.status, 400, check.text);
+      assert.deepEqual(check.body.errors.map((e) => e.message), [
+        `The book has 2 clients named "${existing.name}", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.`,
+      ]);
+    });
+
     // Tier 2 WP7 (S11): the client form's live preview (src/utils/successionUtils.js
     // on the form's state) shows what the save then returns, a new client and
     // an edit, as POST and PUT answer them and as GET then lists them
