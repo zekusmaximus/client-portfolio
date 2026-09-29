@@ -219,5 +219,28 @@ CREATE TABLE IF NOT EXISTS client_changes (
 CREATE INDEX IF NOT EXISTS idx_client_changes_client ON client_changes (client_id, created_at DESC);
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 
+-- Saved Scenarios (docs/plans/tier-2.md, S12, WP8): what partners entered,
+-- never what the departure engine derives from the book, which a scenario
+-- re-derives each time it is opened. No key to clients: the state names
+-- clients by id as text (production's ids are integers and this file's
+-- uuids), and reset-book refuses a key that does not cascade. created_by and
+-- updated_by never cascade (check-schema); the usernames are copied so a
+-- scenario reads the same after its account is gone. version counts saves: a
+-- save names the version it read and fails (409) if another came first. A
+-- rollback start runs an older file, which does not name the table and
+-- leaves it and its rows in place.
+CREATE TABLE IF NOT EXISTS scenarios (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    state JSONB NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_by_username VARCHAR(255),
+    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by_username VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- No default users are created for security reasons
 -- Use the create-admin.cjs script to create your first administrator account

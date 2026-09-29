@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { ArrowLeft, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import ImpactAnalysisWorkbench from './ImpactAnalysisWorkbench';
 import ClientReviewInterface from './ClientReviewInterface';
 import TransitionPlanManager from './TransitionPlanManager';
+import ScenarioBar from './ScenarioBar';
 import usePortfolioStore from '../../portfolioStore';
 import { departureModel } from '../../utils/departure';
 import { revenueForYear } from '../../utils/revenue';
@@ -24,6 +25,12 @@ interface SuccessionScenarioProps {
 // (docs/plans/people-and-second-chair.md, Phase 5, P11), so switching tabs
 // keeps the scenario. The departure engine (src/utils/departure.js) turns them
 // into the clients that need a decision and everyone's load before and after.
+//
+// Saved Scenarios (docs/plans/tier-2.md, S12, WP8): with an API that lists
+// saved-scenarios in /api/health, asked each time the tab opens, the scenario
+// bar above the stepper names, saves and opens shared scenarios; the store's
+// scenario state is then the open scenario's. Without it the tab works in the
+// browser only, as before.
 const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
   const clients = usePortfolioStore((s: any) => s.clients);
   const people = usePortfolioStore((s: any) => s.people);
@@ -35,7 +42,14 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
   const startExecution = usePortfolioStore((s: any) => s.startExecution);
   const resetSuccessionWorkflow = usePortfolioStore((s: any) => s.resetSuccessionWorkflow);
   const hasPlans = usePortfolioStore((s: any) => Object.keys(s.transitionPlans).length > 0);
+  const scenarioFeature = usePortfolioStore((s: any) => s.scenarioFeature);
+  const savedScenario = usePortfolioStore((s: any) => s.savedScenario);
+  const checkScenarioFeature = usePortfolioStore((s: any) => s.checkScenarioFeature);
   const currentStage: Stage = workflow.currentStage;
+
+  useEffect(() => {
+    checkScenarioFeature();
+  }, [checkScenarioFeature]);
 
   const revenueOf = useMemo(() => (client: any) => revenueForYear(client, reportingYear), [reportingYear]);
   const departure = useMemo(
@@ -60,7 +74,8 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
 
   // A new scenario: nobody leaving, no picks, no plans, no transitions
   const handleStartOver = () => {
-    if (window.confirm('Start over? This clears who is leaving, every pick and plan, and Stage 3. The book is not changed.')) {
+    const saved = savedScenario ? ' The saved scenario changes only if you save.' : '';
+    if (window.confirm(`Start over? This clears who is leaving, every pick and plan, and Stage 3. The book is not changed.${saved}`)) {
       resetSuccessionWorkflow();
     }
   };
@@ -115,6 +130,9 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
 
   return (
     <div className="space-y-6">
+      {/* Saved Scenarios (WP8) */}
+      {scenarioFeature === true && <ScenarioBar />}
+
       {/* Progress Stepper */}
       {renderProgressStepper()}
 
