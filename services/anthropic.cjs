@@ -8,10 +8,14 @@
 // The request carries model, max_tokens, system and one user turn, streamed
 // (client.beta.messages.stream, then finalMessage()); plus, only on the models
 // in FALLBACK_MODELS, the server-side refusal fallback (T10); plus, only when
-// AI_EFFORT is set, output_config.effort (T11). Nothing else: no sampling
-// parameters, no thinking configuration (the current model thinks by default,
-// and max_tokens caps the thinking and the answer together), no tools, no
-// prefill.
+// AI_EFFORT is set, output_config.effort (T11). A follow-up (Tier 2 WP10, S14)
+// also carries its thread's earlier turns before the new one, exactly as
+// utils/aiThreads.cjs builds them from the saved answers, and the automatic
+// cache marker (a top-level cache_control), so the next follow-up reads the
+// history from the prompt cache; the book keeps its own marker. Nothing else:
+// no sampling parameters, no thinking configuration (the current model thinks
+// by default, and max_tokens caps the thinking and the answer together), no
+// tools, no prefill.
 //
 // createService() builds one service. The module exports the default
 // instance, built from the environment when the server starts, so require()
@@ -189,7 +193,13 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
 
   // One Messages API call. `system` is optional: a string, or text blocks
   // ({ type: 'text', text, cache_control? }) passed through unchanged.
-  // `prompt` becomes the single user turn. `onStart`, when given, is called
+  // `prompt` becomes the last user turn; `history`, when given (a follow-up,
+  // WP10), is the thread's earlier user and assistant messages, sent before
+  // it unchanged (threadHistory, utils/aiThreads.cjs), and the request then
+  // asks for automatic caching, whose marker the API places on the last block
+  // and moves forward as the thread grows. The result carries `content`, the
+  // message's content blocks as returned, which a later follow-up replays.
+  // `onStart`, when given, is called
   // once, when Anthropic's stream produces its first event (message_start;
   // the SDK's retries of an HTTP error happen before it, and an error before
   // it throws without calling it), so a route can open its own stream then
@@ -198,8 +208,9 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
   // throws is logged once and never stops the call (T15). Writes one
   // structured log line per call, success or failure, so cost is visible in
   // the server log.
-  async function complete({ system, prompt, maxTokens = DEFAULT_MAX_TOKENS, userId, label, onStart, onText } = {}) {
+  async function complete({ system, prompt, history = [], maxTokens = DEFAULT_MAX_TOKENS, userId, label, onStart, onText } = {}) {
     if (!client) throw notConfiguredError();
+    const thread = Array.isArray(history) && history.length > 0;
 
     // A route's callback: an error it throws is logged once, as `event`, and
     // the callback is not called again
@@ -222,7 +233,8 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
         model,
         max_tokens: maxTokens,
         ...(system ? { system } : {}),
-        messages: [{ role: 'user', content: prompt }],
+        messages: [...(thread ? history : []), { role: 'user', content: prompt }],
+        ...(thread ? { cache_control: { type: 'ephemeral' } } : {}),
         ...(fallbacks ? { betas: [FALLBACK_BETA], fallbacks: 'default' } : {}),
         ...(effort ? { output_config: { effort } } : {}),
       });
@@ -253,7 +265,7 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
         costUsd: cost.usd,
         ms: Date.now() - started,
       }));
-      return { ...out, costUsd: cost.usd, pricesReadOn: PRICES_READ_ON };
+      return { ...out, content: Array.isArray(message?.content) ? message.content : [], costUsd: cost.usd, pricesReadOn: PRICES_READ_ON };
     } catch (err) {
       console.error(JSON.stringify({
         event: 'ai_error',

@@ -4,13 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, Brain, ChevronDown, ChevronUp, FileText, History, Loader2, MessageSquare } from 'lucide-react';
+import { AlertCircle, Brain, ChevronDown, ChevronUp, CornerDownRight, EyeOff, FileText, History, Loader2, MessageSquare } from 'lucide-react';
 import Markdown from 'react-markdown';
 import usePortfolioStore from './portfolioStore';
 import { apiClient } from './api';
 import AIBookPanel from './components/AIBookPanel';
 import { EXAMPLE_QUESTIONS, QUESTION_MAX, ratedForStickiness } from './utils/askTheBook';
-import { answerTitle, formatCost, monthLine } from './utils/recentAnswers';
+import {
+  answerTitle, FOLLOW_UP_MAX, followUpLine, formatCost, monthLine, rowNotes, savedTurnsBefore, turnsBefore,
+} from './utils/recentAnswers';
 
 // The AI tab (docs/plans/tier-1.md, WP3): Ask the book and the brief, both
 // answered on the whole book as the server renders it (utils/book.cjs), which
@@ -22,6 +24,12 @@ import { answerTitle, formatCost, monthLine } from './utils/recentAnswers';
 // With ai-stream (WP5) an answer shows as it is written, "Thinking… n s"
 // until its first words; without it the tab asks for JSON as before. The
 // store owns the request either way (askStream), so a tab switch keeps it.
+// With ai-threads (Tier 2 WP10, S14, S15) an answer that can be followed up
+// offers "Ask a follow-up" (up to five in a thread; the card then shows the
+// thread's earlier turns above the answer), a saved answer can be followed
+// up from the list too, and any partner can hide an answer from the list,
+// see the hidden ones and show one again; the list marks an answer given on
+// an earlier book. Without it, none of these show.
 
 const NOT_UPDATED = 'The API has not been updated yet; try again in a few minutes.';
 const count = (n) => Number(n || 0).toLocaleString('en-US');
@@ -52,6 +60,87 @@ const AIAnswer = ({ text, truncated, refused, refusalCategory }) => (
 );
 
 const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+// A question as the tab quotes it above its answer
+const Question = ({ text, testId }) => (
+  <p className="whitespace-pre-wrap rounded-md border-l-4 border-muted bg-muted/30 px-3 py-2 text-sm" data-testid={testId}>
+    {text}
+  </p>
+);
+
+// A thread's earlier turns (WP10), oldest first, above the answer being shown:
+// each question (the brief has none) and its answer
+const ThreadTurns = ({ turns, testId }) => (
+  <div className="space-y-4 border-b pb-4" data-testid={`${testId}-thread`}>
+    {turns.map((turn, i) => (
+      <div key={turn.id ?? i} className="space-y-2" data-testid={`${testId}-turn`}>
+        {turn.question ? <Question text={turn.question} /> : <p className="text-xs font-medium text-muted-foreground">Brief</p>}
+        <AIAnswer text={turn.answer} truncated={turn.truncated} refused={turn.refused} />
+      </div>
+    ))}
+  </div>
+);
+
+// "Ask a follow-up" under an answer that can be followed up (WP10): a box and
+// a button, which the store sends with the answer's id as parentId. The
+// answer shows in the Ask card (in the brief's card for the brief's own
+// thread), with the thread above it. A new answer in the card closes the box.
+const FollowUp = ({ slot, parentId, turns, stream, testId, note }) => {
+  const { aiStreaming, askStream } = usePortfolioStore();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  useEffect(() => {
+    setOpen(false);
+    setText('');
+  }, [parentId]);
+  const pending = Boolean(aiStreaming[slot]);
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" data-testid={`${testId}-followup`} onClick={() => setOpen(true)} disabled={pending}>
+        <CornerDownRight className="mr-2 h-4 w-4" />
+        Ask a follow-up
+      </Button>
+    );
+  }
+  const send = () => {
+    const asked = text.trim();
+    if (asked) askStream(slot, asked, { stream, parentId, turns });
+  };
+  return (
+    <div className="space-y-2" data-testid={`${testId}-followup-form`}>
+      <Textarea
+        data-testid={`${testId}-followup-question`}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        maxLength={QUESTION_MAX}
+        rows={2}
+        placeholder="Ask about this answer. The AI sees the thread's earlier questions and answers."
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" data-testid={`${testId}-followup-submit`} onClick={send} disabled={pending || !text.trim()}>
+          {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CornerDownRight className="mr-2 h-4 w-4" />}
+          {pending ? 'Asking…' : 'Ask the follow-up'}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={pending}>Cancel</Button>
+        {note && <span className="text-xs text-muted-foreground">{note}</span>}
+      </div>
+    </div>
+  );
+};
+
+// Under an answer, in a thread (WP10): the follow-up box when it can be
+// followed up, or why not when the thread is full
+const FollowUpOrLimit = ({ canFollowUp, followUp, ...props }) => {
+  if (canFollowUp) return <FollowUp {...props} />;
+  if (Number.isInteger(followUp) && followUp >= FOLLOW_UP_MAX) {
+    return (
+      <p className="text-xs text-muted-foreground" data-testid={`${props.testId}-followup-limit`}>
+        This thread has its {FOLLOW_UP_MAX} follow-ups. Ask a new question to go on.
+      </p>
+    );
+  }
+  return null;
+};
 
 // Seconds since `startedAt`, ticking once a second while `active`
 const useSeconds = (startedAt, active) => {
@@ -86,11 +175,8 @@ const LiveAnswer = ({ title, icon: Icon, live, testId }) => {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {live.question && (
-          <p className="whitespace-pre-wrap rounded-md border-l-4 border-muted bg-muted/30 px-3 py-2 text-sm">
-            {live.question}
-          </p>
-        )}
+        {live.turns?.length > 0 && <ThreadTurns turns={live.turns} testId={testId} />}
+        {live.question && <Question text={live.question} />}
         {thinking ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid={`${testId}-thinking`}>
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -106,79 +192,154 @@ const LiveAnswer = ({ title, icon: Icon, live, testId }) => {
   );
 };
 
-const AnswerCard = ({ title, icon: Icon, result, testId }) => (
-  <Card data-testid={testId}>
-    <CardHeader>
-      <CardTitle className="flex flex-wrap items-center gap-2">
-        <Icon className="h-5 w-5" />
-        {title}
-        <Badge variant="outline" className="text-xs font-normal">
-          {new Date(result.timestamp).toLocaleString()}
-        </Badge>
-      </CardTitle>
-    </CardHeader>
-    <CardContent className="space-y-4">
-      {result.question && (
-        <p className="whitespace-pre-wrap rounded-md border-l-4 border-muted bg-muted/30 px-3 py-2 text-sm" data-testid={`${testId}-question`}>
-          {result.question}
-        </p>
-      )}
-      <AIAnswer
-        text={result.answer}
-        truncated={result.truncated}
-        refused={result.refused}
-        refusalCategory={result.refusalCategory}
-      />
-      {result.saved === false && (
-        <p className="text-xs text-amber-700" data-testid={`${testId}-not-saved`}>
-          This answer could not be saved, so it will not appear under Recent answers. Copy anything you need from it now.
-        </p>
-      )}
-    </CardContent>
-  </Card>
-);
+// `slot` is the card ('ask' or 'brief'); `threads` whether the API takes
+// follow-ups (ai-threads); `stream` whether it streams (ai-stream)
+const AnswerCard = ({ title, icon: Icon, result, testId, slot, threads, stream }) => {
+  const line = followUpLine(result.followUp);
+  return (
+    <Card data-testid={testId}>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          <Icon className="h-5 w-5" />
+          {title}
+          <Badge variant="outline" className="text-xs font-normal">
+            {new Date(result.timestamp).toLocaleString()}
+          </Badge>
+          {line && (
+            <Badge variant="secondary" className="text-xs font-normal" data-testid={`${testId}-followup-line`}>{line}</Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {result.turns?.length > 0 && <ThreadTurns turns={result.turns} testId={testId} />}
+        {result.question && <Question text={result.question} testId={`${testId}-question`} />}
+        <AIAnswer
+          text={result.answer}
+          truncated={result.truncated}
+          refused={result.refused}
+          refusalCategory={result.refusalCategory}
+        />
+        {result.saved === false && (
+          <p className="text-xs text-amber-700" data-testid={`${testId}-not-saved`}>
+            This answer could not be saved, so it will not appear under Recent answers. Copy anything you need from it now.
+          </p>
+        )}
+        {threads && (
+          <FollowUpOrLimit
+            canFollowUp={result.canFollowUp === true && Number.isInteger(result.id)}
+            followUp={result.followUp}
+            slot={slot}
+            parentId={result.id}
+            turns={turnsBefore(result)}
+            stream={stream}
+            testId={testId}
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
+};
 
 // A saved answer opened from the list: who asked and when, the answer as the
-// tab renders one, and what it cost.
-const SavedAnswer = ({ answer }) => (
-  <div className="space-y-3 border-t px-3 py-3" data-testid="saved-answer">
-    {answer.kind === 'ask' && answer.question && (
-      <p className="whitespace-pre-wrap rounded-md border-l-4 border-muted bg-muted/30 px-3 py-2 text-sm">{answer.question}</p>
-    )}
-    <AIAnswer
-      text={answer.answer}
-      truncated={answer.truncated}
-      refused={answer.refused}
-      refusalCategory={answer.refusal_category}
-    />
-    <p className="text-xs text-muted-foreground" data-testid="saved-answer-meta">
-      Asked by {answer.asked_by_username || 'a former account'} on {when(answer.created_at)}.
-      {' '}Answered by {answer.served_by || answer.model}
-      {answer.fell_back ? ` (after a fallback from ${answer.model})` : ''}.
-      {' '}{count(answer.input_tokens)} tokens in, {count(answer.output_tokens)} out,
-      {' '}{count(answer.cache_read_tokens)} read from the cache and {count(answer.cache_write_tokens)} written to it.
-      {' '}Estimated cost: {formatCost(answer.cost_usd)}
-      {answer.prices_read_on ? ` (list prices read on ${answer.prices_read_on})` : ''}.
-    </p>
-  </div>
-);
+// tab renders one, and what it cost. With ai-threads (WP10): the thread's
+// earlier turns above it, a note when it was given on an earlier book or is
+// hidden, Hide or Show again, and "Ask a follow-up", whose answer shows in the
+// Ask card above with the thread.
+const SavedAnswer = ({ answer, threads, stream }) => {
+  const setAiAnswerHidden = usePortfolioStore((s) => s.setAiAnswerHidden);
+  const [busy, setBusy] = useState(false);
+  const toggleHidden = async () => {
+    setBusy(true);
+    try {
+      await setAiAnswerHidden(answer.id, !answer.hidden_at);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-3 border-t px-3 py-3" data-testid="saved-answer">
+      {threads && answer.thread?.length > 0 && <ThreadTurns turns={answer.thread} testId="saved-answer" />}
+      {answer.kind === 'ask' && answer.question && <Question text={answer.question} />}
+      <AIAnswer
+        text={answer.answer}
+        truncated={answer.truncated}
+        refused={answer.refused}
+        refusalCategory={answer.refusal_category}
+      />
+      <p className="text-xs text-muted-foreground" data-testid="saved-answer-meta">
+        Asked by {answer.asked_by_username || 'a former account'} on {when(answer.created_at)}.
+        {' '}Answered by {answer.served_by || answer.model}
+        {answer.fell_back ? ` (after a fallback from ${answer.model})` : ''}.
+        {' '}{count(answer.input_tokens)} tokens in, {count(answer.output_tokens)} out,
+        {' '}{count(answer.cache_read_tokens)} read from the cache and {count(answer.cache_write_tokens)} written to it.
+        {' '}Estimated cost: {formatCost(answer.cost_usd)}
+        {answer.prices_read_on ? ` (list prices read on ${answer.prices_read_on})` : ''}.
+      </p>
+      {threads && answer.earlier_book === true && (
+        <p className="text-xs text-amber-700" data-testid="saved-answer-earlier-book">
+          Given on an earlier book: the book has changed since, so this answer may not match it, and it cannot be followed up.
+        </p>
+      )}
+      {threads && answer.hidden_at && (
+        <p className="text-xs text-muted-foreground" data-testid="saved-answer-hidden">
+          Hidden by {answer.hidden_by_username || 'a former account'} on {when(answer.hidden_at)}.
+        </p>
+      )}
+      {threads && (
+        <div className="flex flex-wrap items-start gap-2">
+          <Button variant="ghost" size="sm" data-testid="saved-answer-hide" onClick={toggleHidden} disabled={busy}>
+            <EyeOff className="mr-2 h-4 w-4" />
+            {answer.hidden_at ? 'Show again' : 'Hide'}
+          </Button>
+          <div className="flex-1">
+            <FollowUpOrLimit
+              canFollowUp={answer.can_follow_up === true}
+              followUp={answer.follow_up}
+              slot="ask"
+              parentId={answer.id}
+              turns={savedTurnsBefore(answer)}
+              stream={stream}
+              testId="saved-answer"
+              note="The answer shows under Ask, above."
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // Recent answers (WP4): every partner's saved answers, newest first. A row
-// opens its answer in place; "Older answers" loads the next page.
-const RecentAnswers = () => {
-  const { aiAnswers, fetchOlderAiAnswers, toggleAiAnswer } = usePortfolioStore();
-  const { items, hasMore, loaded, loadingOlder, error, summary, details, openId } = aiAnswers;
+// opens its answer in place; "Older answers" loads the next page. With
+// ai-threads (WP10), "Show hidden" lists the answers hidden from it instead.
+const RecentAnswers = ({ threads = false, stream = false }) => {
+  const { aiAnswers, fetchOlderAiAnswers, toggleAiAnswer, showHiddenAiAnswers } = usePortfolioStore();
+  const { items, hasMore, loaded, loadingOlder, error, summary, details, openId, hidden } = aiAnswers;
+  const showingHidden = threads && hidden;
 
   return (
     <Card data-testid="recent-answers">
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           <History className="h-5 w-5" />
-          Recent answers
+          {showingHidden ? 'Hidden answers' : 'Recent answers'}
+          {threads && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto font-normal"
+              data-testid="answers-hidden-toggle"
+              onClick={() => showHiddenAiAnswers(!hidden)}
+            >
+              <EyeOff className="mr-2 h-4 w-4" />
+              {hidden ? 'Back to the answers' : 'Show hidden'}
+            </Button>
+          )}
         </CardTitle>
         {summary && (
           <p className="text-sm text-muted-foreground" data-testid="answers-month">
             {monthLine(summary)}. Estimated from list prices; the Anthropic Console is the bill.
+            {threads ? ' Hidden answers count too.' : ''}
           </p>
         )}
       </CardHeader>
@@ -193,7 +354,11 @@ const RecentAnswers = () => {
           <Alert variant="destructive" data-testid="answers-error"><AlertDescription>{error}</AlertDescription></Alert>
         )}
         {loaded && items.length === 0 && !error && (
-          <p className="text-sm text-muted-foreground">No answers yet. Every answer the AI gives is saved here for all the partners.</p>
+          <p className="text-sm text-muted-foreground">
+            {showingHidden
+              ? 'No hidden answers.'
+              : 'No answers yet. Every answer the AI gives is saved here for all the partners.'}
+          </p>
         )}
         {items.length > 0 && (
           <ul className="divide-y rounded-md border" data-testid="answers-list">
@@ -209,10 +374,8 @@ const RecentAnswers = () => {
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium" data-testid="answer-row-title">{answerTitle(item)}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {when(item.created_at)} · {item.asked_by_username || 'a former account'}
-                        {item.refused ? ' · declined' : ''}
-                        {item.truncated ? ' · cut off' : ''}
+                      <span className="block text-xs text-muted-foreground" data-testid="answer-row-meta">
+                        {[when(item.created_at), item.asked_by_username || 'a former account', ...rowNotes(item)].join(' · ')}
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
@@ -221,7 +384,7 @@ const RecentAnswers = () => {
                     </span>
                   </button>
                   {open && (details[item.id]
-                    ? <SavedAnswer answer={details[item.id]} />
+                    ? <SavedAnswer answer={details[item.id]} threads={threads} stream={stream} />
                     : (
                       <div className="flex items-center gap-2 border-t px-3 py-3 text-sm text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -262,6 +425,8 @@ const AIAdvisor = () => {
   const [answersApi, setAnswersApi] = useState(false);
   // Whether this API streams answers (ai-stream, WP5); JSON otherwise
   const [streamApi, setStreamApi] = useState(false);
+  // Whether this API takes follow-ups and hides answers (ai-threads, Tier 2 WP10)
+  const [threadsApi, setThreadsApi] = useState(false);
   const [question, setQuestion] = useState('');
   const pending = { ask: Boolean(inFlight.ask), brief: Boolean(inFlight.brief) };
 
@@ -277,6 +442,7 @@ const AIAdvisor = () => {
         setApi(features.includes('ask-the-book') ? 'ready' : 'unavailable');
         setAnswersApi(features.includes('ai-answers'));
         setStreamApi(features.includes('ai-stream'));
+        setThreadsApi(features.includes('ai-threads'));
       })
       .catch(() => { if (current) setApi('unavailable'); });
     return () => { current = false; };
@@ -321,7 +487,7 @@ const AIAdvisor = () => {
           </CardContent>
         </Card>
         {/* Answers saved on an earlier book stay readable after a reset */}
-        {answersApi && <RecentAnswers />}
+        {answersApi && <RecentAnswers threads={threadsApi} stream={streamApi} />}
       </div>
     );
   }
@@ -428,7 +594,10 @@ const AIAdvisor = () => {
               </div>
               <p className="text-xs text-muted-foreground">
                 The brief covers who's carrying what, where the exposure is, coverage, what's worth a conversation, and
-                what the book can't tell you. Each question stands alone: the AI does not see earlier answers.
+                what the book can't tell you.
+                {threadsApi
+                  ? ` A new question stands alone. "Ask a follow-up" under an answer sends the thread's earlier questions and answers with it, up to ${FOLLOW_UP_MAX} follow-ups on the same book.`
+                  : ' Each question stands alone: the AI does not see earlier answers.'}
               </p>
             </>
           )}
@@ -448,13 +617,17 @@ const AIAdvisor = () => {
 
       {inFlight.ask?.streamed
         ? <LiveAnswer title="Answer" icon={MessageSquare} live={inFlight.ask} testId="ask-answer" />
-        : results.ask && <AnswerCard title="Answer" icon={MessageSquare} result={results.ask} testId="ask-answer" />}
+        : results.ask && (
+          <AnswerCard title="Answer" icon={MessageSquare} result={results.ask} testId="ask-answer" slot="ask" threads={threadsApi} stream={streamApi} />
+        )}
       {inFlight.brief?.streamed
         ? <LiveAnswer title="Brief" icon={FileText} live={inFlight.brief} testId="brief-answer" />
-        : results.brief && <AnswerCard title="Brief" icon={FileText} result={results.brief} testId="brief-answer" />}
+        : results.brief && (
+          <AnswerCard title="Brief" icon={FileText} result={results.brief} testId="brief-answer" slot="brief" threads={threadsApi} stream={streamApi} />
+        )}
 
       {/* Every partner's saved answers (WP4), only from an API that saves them */}
-      {answersApi && <RecentAnswers />}
+      {answersApi && <RecentAnswers threads={threadsApi} stream={streamApi} />}
     </div>
   );
 };

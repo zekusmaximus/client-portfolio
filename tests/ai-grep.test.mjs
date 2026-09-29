@@ -4,7 +4,9 @@
 // anywhere in the app code (and, from WP3, no /claude/ route in the page or the
 // server's mounts); exactly one module that constructs an Anthropic
 // client or calls the Messages API (create, stream or countTokens); and the
-// one request carries only what T1 allows.
+// one request carries only what T1 allows. From Tier 2 WP10 (S14) a follow-up
+// adds its thread's earlier turns, built only by utils/aiThreads.cjs, and the
+// automatic cache marker.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -67,7 +69,7 @@ test('betas, fallbacks and output_config appear only in services/anthropic.cjs',
   assert.deepEqual(filesMatching(/output_config/, files), ['services/anthropic.cjs']);
 });
 
-test('the one request: model, max_tokens, system, one user turn, and only the allowed additions', () => {
+test('the one request: model, max_tokens, system, the user turn after a follow-up\'s earlier turns, and only the allowed additions', () => {
   const service = readFileSync(join(root, 'services/anthropic.cjs'), 'utf8');
   assert.doesNotMatch(service, /thinking:|tool_choice|tools:|stream:/);
   // output_config only as output_config: { effort } (T11).
@@ -79,8 +81,25 @@ test('the one request: model, max_tokens, system, one user turn, and only the al
   assert.match(fields, /model,/);
   assert.match(fields, /max_tokens: maxTokens/);
   assert.match(fields, /system/);
-  assert.match(fields, /messages: \[\{ role: 'user', content: prompt \}\]/);
+  // One user turn, after the thread's earlier turns on a follow-up (WP10);
+  // the automatic cache marker only then, so the next follow-up reads them
+  assert.match(fields, /messages: \[\.\.\.\(thread \? history : \[\]\), \{ role: 'user', content: prompt \}\]/);
+  assert.match(fields, /\.\.\.\(thread \? \{ cache_control: \{ type: 'ephemeral' \} \} : \{\}\)/);
+  assert.deepEqual(service.match(/cache_control: \{[^}]*\}/g), ["cache_control: { type: 'ephemeral' }"], 'the thread\'s marker, and no other');
   assert.match(fields, /betas: \[FALLBACK_BETA\], fallbacks: 'default'/);
   assert.match(service, /const FALLBACK_BETA = 'server-side-fallback-2026-07-01';/);
   assert.match(service, /const FALLBACK_MODELS = \['claude-opus-5'\];/);
+});
+
+// Tier 2 WP10 (S14): the earlier turns a follow-up sends come from the saved
+// answers through threadHistory alone, so the history is the same every time
+// it is sent (append-only) and nothing edits it on the way; and cache markers
+// are set in two places only: the book's (utils/askPrompts.cjs) and the
+// thread's (the service).
+test('a thread\'s history is built only by utils/aiThreads.cjs and passed to complete() only by routes/ai.cjs', () => {
+  assert.deepEqual(filesMatching(/threadHistory\(/, files), ['routes/ai.cjs', 'utils/aiThreads.cjs']);
+  assert.deepEqual(filesMatching(/history: threadHistory\(/, files), ['routes/ai.cjs']);
+  // The service takes it as given, and only its own file names the parameter
+  assert.deepEqual(filesMatching(/\bhistory = \[\]/, files), ['services/anthropic.cjs']);
+  assert.deepEqual(filesMatching(/cache_control/, files), ['services/anthropic.cjs', 'utils/askPrompts.cjs']);
 });

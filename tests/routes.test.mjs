@@ -34,12 +34,13 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import jwt from 'jsonwebtoken';
+import { createHash } from 'node:crypto';
 import aiAnswers from '../utils/aiAnswers.cjs';
 import clientChanges from '../utils/clientChanges.cjs';
 import scenarioState from '../utils/scenarioState.cjs';
 import { startFakeAnthropic } from './helpers/fakeAnthropic.mjs';
 import {
-  repo, serverUrl, generatedPassword, urlFor, freePort, startServer, SHAPES, addAccount, cookieOf, signIn,
+  repo, serverUrl, generatedPassword, urlFor, freePort, startServer, SHAPES, addAccount, cookieOf, signIn, waitFor,
 } from './helpers/server.mjs';
 import { createSseParser, eventJson } from '../src/utils/sse.js';
 import succession from '../utils/succession.cjs';
@@ -76,6 +77,8 @@ const CONTRACTS = {
   'GET /api/ai/answers': { signIn: true, page: 'src/portfolioStore.js (fetchAiAnswers, fetchOlderAiAnswers), src/AIAdvisor.jsx' },
   'GET /api/ai/answers/summary': { signIn: true, page: 'src/portfolioStore.js (fetchAiAnswers), src/utils/recentAnswers.js' },
   'GET /api/ai/answers/:id': { signIn: true, page: 'src/portfolioStore.js (toggleAiAnswer), src/AIAdvisor.jsx' },
+  'POST /api/ai/answers/:id/hide': { signIn: true, page: 'src/portfolioStore.js (setAiAnswerHidden), src/AIAdvisor.jsx' },
+  'POST /api/ai/answers/:id/show': { signIn: true, page: 'src/portfolioStore.js (setAiAnswerHidden), src/AIAdvisor.jsx' },
   'POST /api/scenarios/transition-plan': { signIn: true, page: 'src/components/succession/ClientReviewInterface.jsx' },
   'GET /api/scenarios': { signIn: true, page: 'src/portfolioStore.js (fetchScenarios), src/components/succession/ScenarioBar.jsx' },
   'GET /api/scenarios/:id': { signIn: true, page: 'src/portfolioStore.js (openScenario), src/utils/scenarioState.js (openState)' },
@@ -155,8 +158,8 @@ test('inventory: every registered route has a contract with tests, every contrac
   assert.equal(new Set(blocks).size, blocks.length, 'a route() block written twice');
   // The plan's count (docs/plans/tier-2.md, section 6): 21 live routes, once
   // WP2 deleted S3's three; 22 with WP6's GET /api/data/clients/:id/changes;
-  // 27 with WP8's five saved-scenario routes
-  assert.equal(routes.length, 27);
+  // 27 with WP8's five saved-scenario routes; 29 with WP10's hide and show
+  assert.equal(routes.length, 29);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -171,7 +174,7 @@ const TOO_MANY = { success: false, error: 'Too many requests. Try again later.' 
 const MISSING_TOKEN = { error: 'Missing token' };
 const INVALID_TOKEN = { error: 'Invalid token' };
 const NOT_CONFIGURED = { success: false, error: 'AI is not configured on the server (missing API key).' };
-const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios'];
+const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios', 'ai-threads'];
 // The seed people init-db.sql adds to a new database (docs/plans/people-and-second-chair.md, P1)
 const SEED = { Brendan: 'partner', Jeff: 'partner', Joe: 'partner', Kevin: 'partner', Mike: 'partner', Paula: 'partner', Jay: 'emeritus' };
 const PERSON_KEYS = ['active', 'id', 'lead_count', 'name', 'originator_count', 'role', 'second_chair_count'];
@@ -281,23 +284,30 @@ const NOT_AN_OBJECT = detail('body', "The request body must be a JSON object of 
 const failed = (details) => ({ success: false, error: 'Validation failed', details });
 
 // A saved answer's columns, as GET /api/ai/answers/:id returns them
-// (ONE_ANSWER_SQL in utils/aiAnswers.cjs)
+// (ONE_ANSWER_SQL in utils/aiAnswers.cjs), and from Tier 2 WP10 its place in
+// its thread (can_follow_up, earlier_book, follow_up, thread) and the new
+// columns but content, the stored turn, which the page never needs
 const ANSWER_KEYS = [
-  'answer', 'asked_by', 'asked_by_username', 'book_sha256', 'cache_read_tokens', 'cache_write_tokens', 'client_id',
-  'client_name', 'cost_usd', 'created_at', 'duration_ms', 'fell_back', 'id', 'input_tokens', 'kind', 'model',
-  'output_tokens', 'prices_read_on', 'question', 'refusal_category', 'refused', 'reporting_year', 'served_by',
-  'stop_reason', 'truncated',
+  'answer', 'asked_by', 'asked_by_username', 'book_sha256', 'cache_read_tokens', 'cache_write_tokens', 'can_follow_up',
+  'client_id', 'client_name', 'cost_usd', 'created_at', 'duration_ms', 'earlier_book', 'fell_back', 'follow_up',
+  'hidden_at', 'hidden_by', 'hidden_by_username', 'id', 'input_tokens', 'kind', 'model', 'output_tokens', 'parent_id',
+  'prices_read_on', 'question', 'refusal_category', 'refused', 'reporting_year', 'served_by', 'stop_reason', 'thread',
+  'truncated',
 ];
+// From WP10 a list row also carries earlier_book, hidden_at,
+// hidden_by_username and parent_id
 const LIST_ANSWER_KEYS = [
-  'asked_by_username', 'client_name', 'cost_usd', 'created_at', 'id', 'kind', 'preview', 'question', 'refused',
-  'served_by', 'truncated',
+  'asked_by_username', 'client_name', 'cost_usd', 'created_at', 'earlier_book', 'hidden_at', 'hidden_by_username', 'id',
+  'kind', 'parent_id', 'preview', 'question', 'refused', 'served_by', 'truncated',
 ];
 // Ask's and the brief's JSON answer (routes/ai.cjs); `done` carries the same but
-// success, kind and question, with answerId for id
+// success, kind and question, with answerId for id. From WP10: canFollowUp,
+// followUp and parentId
 const AI_ANSWER_KEYS = [
-  'answer', 'costUsd', 'id', 'kind', 'model', 'question', 'refusalCategory', 'refused', 'reportingYear', 'saved',
-  'servedBy', 'success', 'timestamp', 'truncated', 'usage',
+  'answer', 'canFollowUp', 'costUsd', 'followUp', 'id', 'kind', 'model', 'parentId', 'question', 'refusalCategory',
+  'refused', 'reportingYear', 'saved', 'servedBy', 'success', 'timestamp', 'truncated', 'usage',
 ];
+const THREAD_TURN_KEYS = ['answer', 'asked_by_username', 'created_at', 'id', 'kind', 'question', 'refused', 'truncated'];
 
 for (const shape of SHAPES)
 describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
@@ -465,7 +475,7 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
     ...overrides,
   });
   // A saved answer, written as saveAnswer writes one
-  const addAnswer = async ({ kind = 'ask', question = 'A saved question?', cost = '0.1234', createdAt = null } = {}) => (await db.query(`
+  const addAnswer = async ({ kind = 'ask', question = 'A saved question?', cost = '0.1234', createdAt = null, bookSha = 'a'.repeat(64) } = {}) => (await db.query(`
     INSERT INTO ai_answers (kind, question, answer, client_id, client_name, asked_by_username, model, served_by,
                             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, prices_read_on,
                             book_sha256, reporting_year, duration_ms, created_at)
@@ -473,7 +483,19 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
             $7, 2026, 1234, COALESCE($8::timestamptz, now()))
     RETURNING id`,
   [kind, kind === 'ask' ? question : null, `The answer. ${'x'.repeat(250)}`, kind === 'transition-plan' ? '42' : null,
-    kind === 'transition-plan' ? 'A client' : null, cost, 'a'.repeat(64), createdAt])).rows[0].id;
+    kind === 'transition-plan' ? 'A client' : null, cost, bookSha, createdAt])).rows[0].id;
+  // Tier 2 WP10: a partner of the test's own, whose AI budget (30 an hour,
+  // per partner) no other test spends; the SHA-256 of today's book, as the
+  // AI is given it; and the firm's AI budget left, from the limiters'
+  // RateLimit header (the daily limiter answers last, so it is its count)
+  const newPartner = async (prefix = 'thread') => {
+    const partner = { username: `${prefix}-${letters(8)}`, password: generatedPassword() };
+    await addAccount(env, partner);
+    return { ...partner, cookie: await signIn(api.base, partner) };
+  };
+  const todaysBookSha = async () => createHash('sha256').update((await call('GET', '/api/ai/book')).body.text, 'utf8').digest('hex');
+  const aiBudgetLeft = (res) => Number(/remaining=(\d+)/.exec(res.headers.get('ratelimit') || '')?.[1]);
+  const answerCount = async () => (await db.query('SELECT count(*)::int AS n FROM ai_answers')).rows[0].n;
 
   // Every contract's block: its 401 without sign-in, then the route's own tests
   const route = (key, tests) => describe(key, () => {
@@ -2082,10 +2104,10 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
   });
 
   // One streamed request, read as the page reads it (src/utils/sse.js)
-  const streamPost = async (path, body) => {
+  const streamPost = async (path, body, as = cookie) => {
     const res = await fetch(`${api.base}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Cookie: cookie },
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', Cookie: as },
       body: JSON.stringify(body),
     });
     const events = [];
@@ -2161,6 +2183,154 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       const res = await request(keyless.base, 'POST', '/api/ai/ask', { body: { question: 'Who carries the most?' } });
       assert.deepEqual([res.status, res.body], [503, NOT_CONFIGURED]);
     });
+
+    // Tier 2 WP10 (S14): follow-ups, { question, parentId }. The page reads
+    // parentId, followUp and canFollowUp (src/portfolioStore.js, askStream;
+    // src/AIAdvisor.jsx). Each test's partner is its own (newPartner).
+    const ask = (as, body) => request(api.base, 'POST', '/api/ai/ask', { as, body });
+    const storedAnswer = async (id) => (await db.query('SELECT * FROM ai_answers WHERE id = $1', [id])).rows[0];
+
+    test('a question, then two follow-ups: each saved with its parent and its turn, priced, counted once on the AI limiters; the fake received the book blocks byte-identical and the history appended, never edited', async () => {
+      const partner = await newPartner();
+      await addClient({ lead: await seed('Kevin') });
+      const from = fake.requests.length;
+      const first = await ask(partner.cookie, { question: 'Who carries the most?' });
+      assert.equal(first.status, 200, first.text);
+      const second = await ask(partner.cookie, { question: 'And after Kevin?', parentId: first.body.id });
+      assert.equal(second.status, 200, second.text);
+      const third = await ask(partner.cookie, { question: '  Why?  ', parentId: second.body.id });
+      assert.equal(third.status, 200, third.text);
+      for (const res of [first, second, third]) assert.deepEqual(keysOf(res.body), AI_ANSWER_KEYS);
+      assert.deepEqual([first, second, third].map((r) => [r.body.kind, r.body.question, r.body.parentId, r.body.followUp, r.body.canFollowUp, r.body.saved]), [
+        ['ask', 'Who carries the most?', null, 0, true, true],
+        ['ask', 'And after Kevin?', first.body.id, 1, true, true],
+        ['ask', 'Why?', second.body.id, 2, true, true],
+      ]);
+      // T16: each turn counted once on the AI limiters
+      assert.deepEqual([aiBudgetLeft(first) - aiBudgetLeft(second), aiBudgetLeft(second) - aiBudgetLeft(third)], [1, 1]);
+
+      // Saved as asked, with its parent and priced, and its turn as sent and returned
+      const rows = [await storedAnswer(first.body.id), await storedAnswer(second.body.id), await storedAnswer(third.body.id)];
+      assert.deepEqual(rows.map((r) => [r.kind, r.parent_id, r.question, r.asked_by_username, r.answer]), [
+        ['ask', null, 'Who carries the most?', partner.username, first.body.answer],
+        ['ask', first.body.id, 'And after Kevin?', partner.username, second.body.answer],
+        ['ask', second.body.id, 'Why?', partner.username, third.body.answer],
+      ]);
+      for (const row of rows) {
+        assert.ok(Number(row.cost_usd) > 0 && row.input_tokens > 0, 'priced');
+        assert.equal(row.book_sha256, await todaysBookSha());
+      }
+
+      // What the fake received: the book blocks byte for byte, and each
+      // request the one before with the answer it got (as saved) and the new question
+      const sent = fake.requests.slice(from).map((r) => r.body);
+      assert.equal(sent.length, 3);
+      for (const body of sent) assert.equal(JSON.stringify(body.system), JSON.stringify(sent[0].system));
+      assert.equal(sent[0].system[1].cache_control.type, 'ephemeral', 'the marker on the book');
+      assert.deepEqual(sent.map((b) => b.messages.length), [1, 3, 5]);
+      for (let i = 1; i < 3; i += 1) {
+        const before = sent[i - 1].messages;
+        assert.equal(JSON.stringify(sent[i].messages.slice(0, before.length)), JSON.stringify(before), `request ${i + 1} begins with request ${i}, byte for byte`);
+        assert.deepEqual(sent[i].messages[before.length], rows[i - 1].content.messages[1], 'the answer as saved');
+        assert.deepEqual(sent[i].messages[before.length].content[0], { type: 'thinking', thinking: '', signature: `fake-signature-${from + i}` },
+          'the thinking block and its signature as the fake returned them');
+        assert.deepEqual(sent[i].messages.at(-1), rows[i].content.messages[0], 'the question as sent is the turn saved');
+      }
+      assert.match(sent[2].messages.at(-1).content, /<question>\nWhy\?\n<\/question>$/);
+      assert.deepEqual(sent.map((b) => b.cache_control ?? null), [null, { type: 'ephemeral' }, { type: 'ephemeral' }]);
+
+      // The ai_call lines: the follow-ups are labelled follow-up
+      const userId = await accountId(partner.username);
+      const calls = await waitFor(() => {
+        const lines = logLines(api, 'ai_call').filter((l) => l.userId === userId);
+        return lines.length === 3 && lines;
+      }, 'three ai_call lines');
+      assert.deepEqual(calls.map((l) => l.label), ['ask', 'follow-up', 'follow-up']);
+    });
+
+    test('streamed (Accept: text/event-stream): a follow-up gives start, text events and done with parentId, followUp and canFollowUp, and is saved with its parent', async () => {
+      const partner = await newPartner();
+      await addClient({ lead: await seed('Kevin') });
+      const first = await ask(partner.cookie, { question: 'Who carries the most?' });
+      const from = fake.requests.length;
+      const res = await streamPost('/api/ai/ask', { question: 'And after Kevin?', parentId: first.body.id }, partner.cookie);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'text/event-stream; charset=utf-8');
+      assert.deepEqual([res.events[0].type, res.events.at(-1).type], ['start', 'done']);
+      assert.ok(res.events.some((e) => e.type === 'text'));
+      const done = res.events.at(-1).data;
+      assert.deepEqual([done.parentId, done.followUp, done.canFollowUp, done.saved], [first.body.id, 1, true, true]);
+      assert.equal((await storedAnswer(done.answerId)).parent_id, first.body.id);
+      assert.equal(fake.requests.slice(from)[0].body.messages.length, 3);
+    });
+
+    test('the sixth follow-up is refused 400 before any call, and nothing is saved', async () => {
+      const partner = await newPartner();
+      await addClient({ lead: await seed('Kevin') });
+      let last = await ask(partner.cookie, { question: 'Who carries the most?' });
+      for (let n = 1; n <= 5; n += 1) {
+        last = await ask(partner.cookie, { question: `Follow-up ${n}?`, parentId: last.body.id });
+        assert.equal(last.status, 200, last.text);
+        assert.deepEqual([last.body.followUp, last.body.canFollowUp], [n, n < 5]);
+      }
+      const [sent, saved] = [fake.requests.length, await answerCount()];
+      const sixth = await ask(partner.cookie, { question: 'Follow-up 6?', parentId: last.body.id });
+      assert.deepEqual([sixth.status, sixth.body], [400, { success: false, error: 'This thread already has its 5 follow-ups. Ask a new question.' }]);
+      assert.deepEqual([fake.requests.length, await answerCount()], [sent, saved]);
+    });
+
+    test('refused before any call: a parentId that is not an answer id 400, a missing answer 404, a transition plan, an answer saved before follow-ups, a declined and a cut-off one 400; nothing sent, nothing saved', async () => {
+      const partner = await newPartner();
+      await addClient({ lead: await seed('Kevin') });
+      const plan = await addAnswer({ kind: 'transition-plan' });
+      const older = await addAnswer({ kind: 'ask' });
+      const declined = await addAnswer({ kind: 'ask' });
+      const cut = await addAnswer({ kind: 'ask' });
+      await db.query("UPDATE ai_answers SET refused = true, answer = '', refusal_category = 'cyber' WHERE id = $1", [declined]);
+      await db.query('UPDATE ai_answers SET truncated = true WHERE id = $1', [cut]);
+      const [sent, saved] = [fake.requests.length, await answerCount()];
+      const cases = [
+        ['41', 400, 'parentId must be the id of an answer.'],
+        [0, 400, 'parentId must be the id of an answer.'],
+        [1.5, 400, 'parentId must be the id of an answer.'],
+        [2147483000, 404, 'No such answer.'],
+        [plan, 400, 'A transition plan cannot be followed up. Ask a new question.'],
+        [older, 400, 'This answer was saved before follow-ups were possible, so it cannot be followed up. Ask a new question.'],
+        [declined, 400, 'The AI declined this one, so it cannot be followed up. Ask a new question.'],
+        [cut, 400, 'This answer was cut off, so it cannot be followed up. Ask a new, narrower question.'],
+      ];
+      for (const [parentId, status, error] of cases) {
+        const res = await ask(partner.cookie, { question: 'And then?', parentId });
+        assert.deepEqual([res.status, res.body], [status, { success: false, error }], JSON.stringify(parentId));
+      }
+      // The question is checked first
+      const blank = await ask(partner.cookie, { question: ' ', parentId: '41' });
+      assert.deepEqual([blank.status, blank.body.error], [400, 'Type a question to ask.']);
+      assert.deepEqual([fake.requests.length, await answerCount()], [sent, saved]);
+    });
+
+    test('409 when the book has changed since the answer, before any call; an answer declined or cut off is saved without its turn and cannot be followed up', async () => {
+      const partner = await newPartner();
+      await addClient({ lead: await seed('Kevin') });
+      const first = await ask(partner.cookie, { question: 'Who carries the most?' });
+      assert.equal(first.body.canFollowUp, true);
+      await addClient({ lead: await seed('Mike') });
+      const [sent, saved] = [fake.requests.length, await answerCount()];
+      const res = await ask(partner.cookie, { question: 'And after Kevin?', parentId: first.body.id });
+      assert.deepEqual([res.status, res.body], [409, {
+        success: false,
+        error: 'The book has changed since this answer was given, so a follow-up would not read the same book. Ask a new question.',
+      }]);
+      assert.deepEqual([fake.requests.length, await answerCount()], [sent, saved]);
+
+      for (const fixture of ['refusal-before-output.sse', 'max-tokens.sse']) {
+        fake.enqueue(fixture);
+        const answered = await ask(partner.cookie, { question: 'Who carries the most?' });
+        assert.equal(answered.status, 200, answered.text);
+        assert.deepEqual([answered.body.canFollowUp, answered.body.followUp], [false, 0], fixture);
+        assert.equal((await storedAnswer(answered.body.id)).content, null, fixture);
+      }
+    });
   });
 
   route('POST /api/ai/brief', () => {
@@ -2173,6 +2343,20 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(keysOf(res.body), AI_ANSWER_KEYS);
       assert.deepEqual([res.body.success, res.body.saved, res.body.kind, res.body.question], [true, true, 'brief', null]);
       assert.ok(res.headers.get('ratelimit-policy'), 'T16: behind the AI limiters');
+    });
+
+    // Tier 2 WP10: a brief starts a thread as a question does
+    test('the brief can be followed up: canFollowUp, and the follow-up sends the brief\'s turn as sent, then the question', async () => {
+      const partner = await newPartner();
+      await addClient({ lead: await seed('Kevin') });
+      const brief = await request(api.base, 'POST', '/api/ai/brief', { as: partner.cookie, body: {} });
+      assert.deepEqual([brief.status, brief.body.parentId, brief.body.followUp, brief.body.canFollowUp], [200, null, 0, true]);
+      const from = fake.requests.length;
+      const res = await request(api.base, 'POST', '/api/ai/ask', { as: partner.cookie, body: { question: 'Say more about Kevin.', parentId: brief.body.id } });
+      assert.deepEqual([res.status, res.body.kind, res.body.parentId, res.body.followUp], [200, 'ask', brief.body.id, 1]);
+      const [{ body }] = fake.requests.slice(from);
+      assert.match(body.messages[0].content, /^Today is \d{4}-\d{2}-\d{2}\.\n\nWrite the brief:/);
+      assert.deepEqual(body.messages.map((m) => m.role), ['user', 'assistant', 'user']);
     });
 
     test('400 { success: false, error: "The book has no clients yet." } on an empty book', async () => {
@@ -2211,10 +2395,34 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
     test('400 { success: false, error } for a limit outside 1 to 50 or a before that is not an answer id', async () => {
       const limit = 'limit must be a whole number from 1 to 50.';
       const before = 'before must be the id of an answer.';
-      for (const [query, error] of [['limit=0', limit], ['limit=51', limit], ['limit=x', limit], ['before=abc', before], ['before=0', before]]) {
+      const hidden = 'hidden must be 0 or 1.';
+      for (const [query, error] of [['limit=0', limit], ['limit=51', limit], ['limit=x', limit], ['before=abc', before], ['before=0', before], ['hidden=x', hidden], ['hidden=true', hidden]]) {
         const res = await call('GET', `/api/ai/answers?${query}`);
         assert.deepEqual([res.status, res.body], [400, { success: false, error }], query);
       }
+    });
+    // Tier 2 WP10 (S15): the page reads earlier_book, parent_id, hidden_at and
+    // hidden_by_username (src/AIAdvisor.jsx, src/utils/recentAnswers.js)
+    test('a hidden answer leaves the list and hidden=1 lists the hidden ones, with who hid them; earlier_book marks an answer given on another book', async () => {
+      const today = await todaysBookSha();
+      const onToday = await addAnswer({ bookSha: today });
+      const onEarlier = await addAnswer({ bookSha: 'b'.repeat(64) });
+      const hidden = await addAnswer({ bookSha: today });
+      assert.equal((await call('POST', `/api/ai/answers/${hidden}/hide`)).status, 200);
+      const shown = (await call('GET', '/api/ai/answers?limit=50')).body.answers;
+      const byId = Object.fromEntries(shown.map((a) => [a.id, a]));
+      assert.deepEqual([byId[onToday].earlier_book, byId[onEarlier].earlier_book], [false, true]);
+      assert.equal(byId[hidden], undefined, 'not in the list');
+      assert.ok(shown.every((a) => a.hidden_at === null && a.hidden_by_username === null));
+      assert.deepEqual(keysOf(byId[onToday]), LIST_ANSWER_KEYS);
+
+      const res = await call('GET', '/api/ai/answers?hidden=1&limit=50');
+      assert.equal(res.status, 200, res.text);
+      const row = res.body.answers.find((a) => a.id === hidden);
+      assert.deepEqual([row.hidden_by_username, typeof row.hidden_at, row.earlier_book], [account.username, 'string', false]);
+      assert.ok(res.body.answers.every((a) => a.hidden_at !== null));
+      assert.deepEqual(keysOf(row), LIST_ANSWER_KEYS);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
     });
   });
 
@@ -2236,6 +2444,15 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       });
       assert.ok(sums.unpriced >= 1);
       assert.equal(res.headers.get('ratelimit-policy'), null);
+    });
+
+    // Tier 2 WP10 (S15): a hidden answer was paid for, so it still counts
+    test('a hidden answer still counts in the month', async () => {
+      const id = await addAnswer({ cost: '0.2500' });
+      const before = (await call('GET', '/api/ai/answers/summary')).body;
+      await call('POST', `/api/ai/answers/${id}/hide`);
+      const after = (await call('GET', '/api/ai/answers/summary')).body;
+      assert.deepEqual([after.answers, after.costUsd, after.unpriced], [before.answers, before.costUsd, before.unpriced]);
     });
   });
 
@@ -2261,6 +2478,93 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       const { rows: [{ max }] } = await db.query('SELECT COALESCE(max(id), 0) AS max FROM ai_answers');
       for (const id of ['abc', '0', '-1', '1.5', '99999999999', String(max + 1000)]) {
         const res = await call('GET', `/api/ai/answers/${id}`);
+        assert.deepEqual([res.status, res.body], [404, { success: false, error: 'No such answer.' }], id);
+      }
+    });
+
+    // Tier 2 WP10: the page reads thread (each turn's question, answer,
+    // kind, refused, truncated, asked_by_username and created_at),
+    // follow_up, can_follow_up, earlier_book, parent_id, hidden_at and
+    // hidden_by_username (src/AIAdvisor.jsx, SavedAnswer)
+    test('a follow-up: its thread before it, its number, whether it can be followed up now, and no stored turn; after the book changes, earlier_book and no follow-up', async () => {
+      const partner = await newPartner();
+      await addClient({ lead: await seed('Kevin') });
+      const first = await request(api.base, 'POST', '/api/ai/ask', { as: partner.cookie, body: { question: 'Who carries the most?' } });
+      const second = await request(api.base, 'POST', '/api/ai/ask', { as: partner.cookie, body: { question: 'And after Kevin?', parentId: first.body.id } });
+      let res = await call('GET', `/api/ai/answers/${second.body.id}`);
+      assert.equal(res.status, 200, res.text);
+      let a = res.body.answer;
+      assert.deepEqual(keysOf(a), ANSWER_KEYS);
+      assert.deepEqual([a.parent_id, a.follow_up, a.can_follow_up, a.earlier_book, a.hidden_at], [first.body.id, 1, true, false, null]);
+      assert.equal(a.thread.length, 1);
+      assert.deepEqual(keysOf(a.thread[0]), THREAD_TURN_KEYS);
+      assert.deepEqual([a.thread[0].id, a.thread[0].question, a.thread[0].answer, a.thread[0].asked_by_username],
+        [first.body.id, 'Who carries the most?', first.body.answer, partner.username]);
+      const root = (await call('GET', `/api/ai/answers/${first.body.id}`)).body.answer;
+      assert.deepEqual([root.follow_up, root.can_follow_up, root.thread], [0, true, []]);
+
+      await addClient({ lead: await seed('Mike') });
+      a = (await call('GET', `/api/ai/answers/${second.body.id}`)).body.answer;
+      assert.deepEqual([a.earlier_book, a.can_follow_up], [true, false]);
+      // An answer saved before follow-ups: none
+      const older = (await call('GET', `/api/ai/answers/${await addAnswer({ bookSha: await todaysBookSha() })}`)).body.answer;
+      assert.deepEqual([older.follow_up, older.can_follow_up, older.earlier_book, older.thread], [0, false, false, []]);
+    });
+  });
+
+  // Tier 2 WP10 (S15): the page reads success and answer (id, hidden_at,
+  // hidden_by_username) (src/portfolioStore.js, setAiAnswerHidden)
+  route('POST /api/ai/answers/:id/hide', () => {
+    test('200 { success, answer: { id, hidden_at, hidden_by_username } }: hidden from every partner\'s list, kept in the table; hiding again keeps who hid it first; no AI limiter', async () => {
+      const other = await newPartner('hider');
+      const id = await addAnswer();
+      const count = await answerCount();
+      const res = await call('POST', `/api/ai/answers/${id}/hide`);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['answer', 'success']);
+      assert.deepEqual(keysOf(res.body.answer), ['hidden_at', 'hidden_by_username', 'id']);
+      assert.deepEqual([res.body.answer.id, res.body.answer.hidden_by_username], [id, account.username]);
+      assert.equal(res.headers.get('ratelimit-policy'), null, 'T16');
+      const row = (await db.query('SELECT hidden_at, hidden_by, hidden_by_username FROM ai_answers WHERE id = $1', [id])).rows[0];
+      assert.deepEqual([row.hidden_by, row.hidden_by_username, row.hidden_at.toISOString()], [await accountId(), account.username, res.body.answer.hidden_at]);
+      assert.equal(await answerCount(), count, 'nothing deleted');
+      // The other partner's list no longer has it; hiding it again changes nothing
+      const listed = (await request(api.base, 'GET', '/api/ai/answers?limit=50', { as: other.cookie })).body.answers;
+      assert.equal(listed.some((a) => a.id === id), false);
+      const again = await request(api.base, 'POST', `/api/ai/answers/${id}/hide`, { as: other.cookie, body: {} });
+      assert.deepEqual([again.status, again.body], [200, res.body]);
+    });
+
+    test('404 { success: false, error: "No such answer." } for an id that is not a positive integer or not found; nothing changed', async () => {
+      const { rows: [{ max }] } = await db.query('SELECT COALESCE(max(id), 0) AS max FROM ai_answers');
+      const hiddenBefore = (await db.query('SELECT count(*)::int AS n FROM ai_answers WHERE hidden_at IS NOT NULL')).rows[0].n;
+      for (const id of ['abc', '0', '-1', '1.5', '99999999999', String(max + 1000)]) {
+        const res = await call('POST', `/api/ai/answers/${id}/hide`, {});
+        assert.deepEqual([res.status, res.body], [404, { success: false, error: 'No such answer.' }], id);
+      }
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM ai_answers WHERE hidden_at IS NOT NULL')).rows[0].n, hiddenBefore);
+    });
+  });
+
+  route('POST /api/ai/answers/:id/show', () => {
+    test('200 { success, answer }: shown again in every partner\'s list, by any partner, who hid it cleared', async () => {
+      const other = await newPartner('shower');
+      const id = await addAnswer();
+      await call('POST', `/api/ai/answers/${id}/hide`);
+      const res = await request(api.base, 'POST', `/api/ai/answers/${id}/show`, { as: other.cookie, body: {} });
+      assert.deepEqual([res.status, res.body], [200, { success: true, answer: { id, hidden_at: null, hidden_by_username: null } }]);
+      assert.equal(res.headers.get('ratelimit-policy'), null, 'T16');
+      assert.deepEqual((await db.query('SELECT hidden_at, hidden_by, hidden_by_username FROM ai_answers WHERE id = $1', [id])).rows[0],
+        { hidden_at: null, hidden_by: null, hidden_by_username: null });
+      assert.ok((await call('GET', '/api/ai/answers?limit=50')).body.answers.some((a) => a.id === id));
+      // Showing an answer that is not hidden changes nothing
+      assert.deepEqual((await call('POST', `/api/ai/answers/${id}/show`, {})).body, res.body);
+    });
+
+    test('404 { success: false, error: "No such answer." } for an id that is not a positive integer or not found', async () => {
+      const { rows: [{ max }] } = await db.query('SELECT COALESCE(max(id), 0) AS max FROM ai_answers');
+      for (const id of ['abc', '0', '-1', '1.5', '99999999999', String(max + 1000)]) {
+        const res = await call('POST', `/api/ai/answers/${id}/show`, {});
         assert.deepEqual([res.status, res.body], [404, { success: false, error: 'No such answer.' }], id);
       }
     });

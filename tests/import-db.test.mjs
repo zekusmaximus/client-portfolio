@@ -419,7 +419,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios', 'ai-threads']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -1272,9 +1272,10 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       assert.equal(asked.status, 200, JSON.stringify(asked.body));
       assert.equal(fake.requests.length, 1);
       const askRequest = fake.requests[0].body;
+      // From Tier 2 WP10 also canFollowUp, followUp and parentId
       assert.deepEqual(Object.keys(asked.body).sort(), [
-        'answer', 'costUsd', 'id', 'kind', 'model', 'question', 'refusalCategory', 'refused',
-        'reportingYear', 'saved', 'servedBy', 'success', 'timestamp', 'truncated', 'usage',
+        'answer', 'canFollowUp', 'costUsd', 'followUp', 'id', 'kind', 'model', 'parentId', 'question', 'refusalCategory',
+        'refused', 'reportingYear', 'saved', 'servedBy', 'success', 'timestamp', 'truncated', 'usage',
       ]);
       assert.equal(asked.body.success, true);
       assert.equal(asked.body.saved, true, 'WP4: the answer is saved');
@@ -1360,14 +1361,15 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.equal(saved[1].question, null);
     assert.deepEqual([saved[3].answer, saved[3].refusal_category], ['', 'cyber']);
 
-    // The list, newest first, with exactly the fields the plan names
+    // The list, newest first, with exactly the fields the plan names (and,
+    // from Tier 2 WP10, earlier_book, hidden_at, hidden_by_username and parent_id)
     const { status, body: list } = await call('GET', '/api/ai/answers');
     assert.equal(status, 200, JSON.stringify(list));
     assert.deepEqual(list.answers.map((a) => a.id), saved.map((r) => r.id).reverse());
     assert.equal(list.hasMore, false);
     assert.deepEqual(Object.keys(list.answers[0]).sort(), [
-      'asked_by_username', 'client_name', 'cost_usd', 'created_at', 'id', 'kind', 'preview',
-      'question', 'refused', 'served_by', 'truncated',
+      'asked_by_username', 'client_name', 'cost_usd', 'created_at', 'earlier_book', 'hidden_at', 'hidden_by_username',
+      'id', 'kind', 'parent_id', 'preview', 'question', 'refused', 'served_by', 'truncated',
     ]);
     assert.equal(list.answers[3].preview, saved[0].answer.slice(0, 200));
     assert.ok(saved[0].answer.length > 200, 'the preview is a prefix');
@@ -1717,9 +1719,10 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       // done: the JSON answer's fields but success, kind and question, with
       // the saved row's id as answerId
       const done = streamed.events.at(-1).data;
+      // From Tier 2 WP10 also canFollowUp, followUp and parentId
       assert.deepEqual(Object.keys(done).sort(), [
-        'answer', 'answerId', 'costUsd', 'model', 'refusalCategory', 'refused', 'reportingYear', 'saved',
-        'servedBy', 'timestamp', 'truncated', 'usage',
+        'answer', 'answerId', 'canFollowUp', 'costUsd', 'followUp', 'model', 'parentId', 'refusalCategory', 'refused',
+        'reportingYear', 'saved', 'servedBy', 'timestamp', 'truncated', 'usage',
       ]);
       assert.deepEqual([done.saved, typeof done.answerId, done.answer], [true, 'number', json.body.answer]);
       assert.ok(done.answerId > json.body.id);

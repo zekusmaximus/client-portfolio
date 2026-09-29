@@ -12,11 +12,16 @@ import aiAnswers from '../utils/aiAnswers.cjs';
 import aiCost from '../utils/aiCost.cjs';
 import ai from '../services/anthropic.cjs';
 import { fakeFetch, streamedText } from './helpers/fakeAnthropic.mjs';
-import { parseCost, formatCost, answerTitle, monthLine, appendAnswers } from '../src/utils/recentAnswers.js';
+import aiThreads from '../utils/aiThreads.cjs';
+import {
+  parseCost, formatCost, answerTitle, monthLine, appendAnswers, rowNotes, FOLLOW_UP_MAX, followUpLine, threadTurn,
+  turnsBefore, savedTurnsBefore,
+} from '../src/utils/recentAnswers.js';
 
 const {
   KINDS, ANSWER_COLUMNS, INSERT_ANSWER_SQL, LIST_ANSWERS_SQL, LIST_ANSWERS_BEFORE_SQL, ONE_ANSWER_SQL,
-  MONTH_SUMMARY_SQL, bookHash, answerRow, insertParams, readAnswerId, readListQuery, firmMonth,
+  MONTH_SUMMARY_SQL, THREAD_SQL, HIDE_ANSWER_SQL, SHOW_ANSWER_SQL, ANSWER_HIDDEN_SQL,
+  bookHash, answerRow, insertParams, readAnswerId, readListQuery, listRow, firmMonth,
 } = aiAnswers;
 
 const initSql = readFileSync(new URL('../init-db.sql', import.meta.url), 'utf8');
@@ -167,7 +172,8 @@ test('answerRow never throws; the kinds are the table\'s CHECK', async () => {
 });
 
 test('the SQL: untyped placeholders, the insert\'s columns in order, newest first, cost as stored', () => {
-  for (const sql of [INSERT_ANSWER_SQL, LIST_ANSWERS_SQL, LIST_ANSWERS_BEFORE_SQL, ONE_ANSWER_SQL, MONTH_SUMMARY_SQL]) {
+  for (const sql of [INSERT_ANSWER_SQL, LIST_ANSWERS_SQL, LIST_ANSWERS_BEFORE_SQL, ONE_ANSWER_SQL, MONTH_SUMMARY_SQL,
+    THREAD_SQL, HIDE_ANSWER_SQL, SHOW_ANSWER_SQL, ANSWER_HIDDEN_SQL]) {
     assert.doesNotMatch(sql, /\$\d+\s*::/, 'no cast on a placeholder');
     assert.doesNotMatch(sql, /CAST\s*\(\s*\$/i);
     assert.doesNotMatch(sql, /client_id\s*::|::\s*uuid/i, 'no client id cast');
@@ -182,8 +188,39 @@ test('the SQL: untyped placeholders, the insert\'s columns in order, newest firs
     assert.match(sql, /left\(answer, 200\) AS preview/);
   }
   assert.match(LIST_ANSWERS_BEFORE_SQL, /\(created_at, id\) < \(SELECT created_at, id FROM ai_answers WHERE id = \$1\)/);
+  // Tier 2 WP10: the list's last placeholder picks the shown or the hidden answers
+  assert.match(LIST_ANSWERS_SQL, /WHERE \(hidden_at IS NOT NULL\) = \$2\s/);
+  assert.match(LIST_ANSWERS_BEFORE_SQL, /AND \(hidden_at IS NOT NULL\) = \$3\s/);
+  assert.match(HIDE_ANSWER_SQL, /hidden_by = \(SELECT id FROM users WHERE id = \$2\)/, 'hidden_by only while the account exists');
+  assert.match(HIDE_ANSWER_SQL, /WHERE id = \$1 AND hidden_at IS NULL/, 'who hid it first stays');
+  assert.doesNotMatch(ONE_ANSWER_SQL, /\bcontent\b/, 'the stored turn is not sent to the page');
+  assert.match(THREAD_SQL, /WHERE t\.up < 6\b/, 'the walk up stops after FOLLOW_UP_MAX + 1 steps');
   assert.match(MONTH_SUMMARY_SQL, /created_at >= \$1 AND created_at < \$2/);
   assert.match(initSql, /CREATE INDEX IF NOT EXISTS idx_ai_answers_created_at ON ai_answers \(created_at DESC, id DESC\);/);
+});
+
+test('answerRow (Tier 2 WP10): parent_id and content, the turn stored as JSON text; null for a first answer and without a turn', async () => {
+  const result = await resultFrom('text-with-thinking.sse');
+  const first = row({ result });
+  assert.deepEqual([first.parent_id, first.content], [null, null]);
+  const turn = { system_sha256: 'a'.repeat(64), messages: [{ role: 'user', content: 'x' }, { role: 'assistant', content: result.content }] };
+  const followUp = row({ result, parentId: 41, content: turn });
+  assert.equal(followUp.parent_id, 41);
+  assert.equal(followUp.content, JSON.stringify(turn));
+  assert.deepEqual(JSON.parse(followUp.content).messages[1].content, [
+    { type: 'thinking', thinking: '', signature: 'EqQBCkYIBxgCKkDfakeSignature' },
+    { type: 'text', text: '## EXECUTIVE SUMMARY\nMike leads six clients and carries the heaviest book.' },
+  ]);
+  for (const parentId of ['41', 1.5, -0.5, undefined]) assert.equal(row({ result, parentId }).parent_id, null, String(parentId));
+  assert.deepEqual(ANSWER_COLUMNS.slice(-2), ['parent_id', 'content']);
+});
+
+test('listRow (Tier 2 WP10): earlier_book against today\'s book, book_sha256 not sent, null when none was recorded', () => {
+  const today = bookHash(BOOK);
+  const base = { id: 1, kind: 'ask', question: 'q', preview: 'p', parent_id: null, hidden_at: null, hidden_by_username: null };
+  assert.deepEqual(listRow({ ...base, book_sha256: today }, today), { ...base, earlier_book: false });
+  assert.deepEqual(listRow({ ...base, book_sha256: bookHash(`${BOOK}| Jones | Jeff |\n`) }, today), { ...base, earlier_book: true });
+  assert.deepEqual(listRow({ ...base, book_sha256: null }, today), { ...base, earlier_book: null });
 });
 
 test('readAnswerId and readListQuery: positive integers only, 20 by default, at most 50', () => {
@@ -192,8 +229,12 @@ test('readAnswerId and readListQuery: positive integers only, 20 by default, at 
   for (const bad of ['abc', '0', '-1', '1.5', '01', '12abc', '', ' 12', '2147483648', '99999999999', undefined, 12]) {
     assert.equal(readAnswerId(bad), null, String(bad));
   }
-  assert.deepEqual(readListQuery({}), { before: null, limit: 20, error: null });
-  assert.deepEqual(readListQuery({ before: '41', limit: '5' }), { before: 41, limit: 5, error: null });
+  // hidden (Tier 2 WP10): false unless 1, for "Show hidden"
+  assert.deepEqual(readListQuery({}), { before: null, limit: 20, hidden: false, error: null });
+  assert.deepEqual(readListQuery({ before: '41', limit: '5' }), { before: 41, limit: 5, hidden: false, error: null });
+  assert.deepEqual(readListQuery({ hidden: '1', before: '41' }), { before: 41, limit: 20, hidden: true, error: null });
+  assert.equal(readListQuery({ hidden: '0' }).hidden, false);
+  for (const hidden of ['', 'true', 'yes', '2', ['1', '1']]) assert.equal(readListQuery({ hidden }).error, 'hidden must be 0 or 1.', String(hidden));
   assert.equal(readListQuery({ limit: '50' }).limit, 50);
   assert.match(readListQuery({ before: 'abc' }).error, /^before must be/);
   assert.match(readListQuery({ before: ['1', '2'] }).error, /^before must be/);
@@ -247,4 +288,38 @@ test('the page: costs arrive as text and are parsed; a row\'s title; the month\'
   const page = [{ id: 9 }, { id: 8 }];
   assert.deepEqual(appendAnswers(page, [{ id: 8 }, { id: 7 }, { id: 6 }]).map((a) => a.id), [9, 8, 7, 6]);
   assert.deepEqual(appendAnswers(undefined, [{ id: 1 }]).map((a) => a.id), [1]);
+});
+
+// Tier 2 WP10 (S14, S15): the page's side of threads and hiding
+test('recentAnswers (WP10): a follow-up\'s title, a row\'s notes, the follow-up line, and FOLLOW_UP_MAX the server\'s', () => {
+  assert.equal(FOLLOW_UP_MAX, aiThreads.FOLLOW_UP_MAX);
+  assert.equal(answerTitle({ kind: 'ask', question: 'And after Mike?', parent_id: 41 }), 'Follow-up: And after Mike?');
+  assert.equal(answerTitle({ kind: 'ask', question: 'Is Mike overloaded?', parent_id: null }), 'Is Mike overloaded?');
+
+  assert.deepEqual(rowNotes({}), []);
+  assert.deepEqual(rowNotes({ refused: true, truncated: false, earlier_book: false }), ['declined']);
+  assert.deepEqual(rowNotes({ truncated: true, earlier_book: true }), ['cut off', 'on an earlier book']);
+  assert.deepEqual(rowNotes({ earlier_book: null }), [], 'no book recorded: no mark');
+  assert.deepEqual(rowNotes({ hidden_at: '2026-09-29T15:00:00Z', hidden_by_username: 'jeff' }), ['hidden by jeff']);
+  assert.deepEqual(rowNotes({ hidden_at: '2026-09-29T15:00:00Z', hidden_by_username: null }), ['hidden by a former account']);
+
+  assert.equal(followUpLine(0), null);
+  assert.equal(followUpLine(undefined), null);
+  assert.equal(followUpLine(2), 'Follow-up 2 of 5');
+});
+
+test('recentAnswers (WP10): the turns a card shows above a follow-up, from Ask\'s answer or a saved one', () => {
+  const brief = { id: 1, kind: 'brief', question: null, answer: 'The brief.', truncated: false, refused: false, usage: {}, costUsd: 1 };
+  assert.deepEqual(threadTurn(brief), { id: 1, kind: 'brief', question: null, answer: 'The brief.', truncated: false, refused: false });
+  assert.deepEqual(threadTurn({}), { id: null, kind: 'ask', question: null, answer: '', truncated: false, refused: false });
+
+  // Ask's answer after a follow-up carries the turns it showed
+  const second = { id: 2, kind: 'ask', question: 'And Mike?', answer: 'Six.', truncated: false, refused: false, turns: [threadTurn(brief)] };
+  assert.deepEqual(turnsBefore(second).map((t) => [t.id, t.question]), [[1, null], [2, 'And Mike?']]);
+  assert.deepEqual(turnsBefore({ ...brief, turns: [] }).map((t) => t.id), [1]);
+
+  // A saved answer from GET /api/ai/answers/:id carries its thread
+  const saved = { id: 3, kind: 'ask', question: 'Why?', answer: 'Load.', truncated: false, refused: false, thread: [brief, second] };
+  assert.deepEqual(savedTurnsBefore(saved).map((t) => t.id), [1, 2, 3]);
+  assert.deepEqual(savedTurnsBefore({ ...saved, thread: undefined }).map((t) => t.id), [3]);
 });

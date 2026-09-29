@@ -21,8 +21,12 @@
 // queue is empty, with a short answer naming what it received: the system
 // blocks and where the cache marker is, the book's client rows and the
 // question, when there are any (a transition plan request gets a plan in the
-// six sections, recommending people from the prompt's own roster). It records
-// every request body.
+// six sections, recommending people from the prompt's own roster), and, for a
+// follow-up (Tier 2 WP10), how many earlier messages it carried and its
+// automatic cache marker; the question is the last user turn's. That answer
+// starts with a thinking block, empty as claude-opus-5 returns one (display
+// omitted), signed `fake-signature-<n>` for the server's n-th request, so a
+// follow-up's replay of it can be seen. It records every request body.
 //
 // As a script, for driving the page end to end with server.cjs:
 //   node tests/helpers/fakeAnthropic.mjs --port 5099
@@ -115,23 +119,34 @@ export function fakeFetch(queue = []) {
 const sseEvent = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
 const tokensFor = (text) => Math.max(1, Math.ceil(String(text || '').length / 4));
 
-/** A whole streamed answer: one text block, end_turn, usage estimated at four characters a token. */
-export function streamedText(text, { model = 'claude-opus-5', inputTokens = 100 } = {}) {
+/**
+ * A whole streamed answer: one text block, end_turn, usage estimated at four
+ * characters a token; with `signature`, a thinking block first (empty text,
+ * that signature), as the current model streams one.
+ */
+export function streamedText(text, { model = 'claude-opus-5', inputTokens = 100, signature = null } = {}) {
   const usage = { input_tokens: inputTokens, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 }, output_tokens: 1 };
   const pieces = String(text).match(/[\s\S]{1,80}/g) || [''];
+  const at = signature ? 1 : 0;
   return [
     sseEvent('message_start', { message: { id: 'msg_fake_default', type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, stop_details: null, usage } }),
-    sseEvent('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }),
-    ...pieces.map((piece) => sseEvent('content_block_delta', { index: 0, delta: { type: 'text_delta', text: piece } })),
-    sseEvent('content_block_stop', { index: 0 }),
+    ...(signature ? [
+      sseEvent('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } }),
+      sseEvent('content_block_delta', { index: 0, delta: { type: 'signature_delta', signature } }),
+      sseEvent('content_block_stop', { index: 0 }),
+    ] : []),
+    sseEvent('content_block_start', { index: at, content_block: { type: 'text', text: '' } }),
+    ...pieces.map((piece) => sseEvent('content_block_delta', { index: at, delta: { type: 'text_delta', text: piece } })),
+    sseEvent('content_block_stop', { index: at }),
     sseEvent('message_delta', { delta: { stop_reason: 'end_turn', stop_sequence: null, stop_details: null }, usage: { output_tokens: tokensFor(text) } }),
     sseEvent('message_stop', {}),
   ];
 }
 
 const systemText = (system) => (Array.isArray(system) ? system.map((block) => block?.text || '').join('\n') : system || '');
+// The last user turn: the prompt of a first question, the new question of a follow-up
 const promptText = (body) => {
-  const content = body?.messages?.[0]?.content;
+  const content = Array.isArray(body?.messages) ? body.messages.at(-1)?.content : undefined;
   return Array.isArray(content) ? content.map((block) => block?.text || '').join('\n') : String(content || '');
 };
 
@@ -193,6 +208,7 @@ export function describeRequest(body) {
   const blocks = Array.isArray(body?.system) ? body.system : [];
   const rows = bookClientRows(system);
   const question = (prompt.match(/<question>\n([\s\S]*)\n<\/question>/) || [])[1];
+  const earlier = Array.isArray(body?.messages) ? body.messages.length - 1 : 0;
   return [
     '**Fake Anthropic answer.** This is what the request carried:',
     '',
@@ -203,6 +219,7 @@ export function describeRequest(body) {
     `- Prompt: ${prompt.length} characters, ${prompt.split('\n').length} lines`,
     `- First line: ${firstLine.slice(0, 160)}`,
     ...(question === undefined ? [] : [`- Question: ${question.slice(0, 300)}`]),
+    ...(earlier > 0 ? [`- Earlier turns: ${earlier} messages, cache marker ${body?.cache_control ? 'automatic' : 'none'}`] : []),
     `- Fallbacks: ${body?.fallbacks ?? 'none'}`,
     `- Effort: ${body?.output_config?.effort ?? 'not set'}`,
   ].join('\n');
@@ -252,7 +269,14 @@ export function startFakeAnthropic({ port = 0, host = '127.0.0.1', onRequest } =
 
       const item = queue.length > 0
         ? resolveItem(queue.shift())
-        : { kind: 'sse', events: streamedText(describeRequest(record.body), { model: record.body?.model, inputTokens: tokensFor(systemText(record.body?.system) + promptText(record.body)) }) };
+        : {
+          kind: 'sse',
+          events: streamedText(describeRequest(record.body), {
+            model: record.body?.model,
+            inputTokens: tokensFor(systemText(record.body?.system) + JSON.stringify(record.body?.messages ?? [])),
+            signature: `fake-signature-${requests.length}`,
+          }),
+        };
 
       if (item.kind === 'json') return sendJson(res, item.status, item.body, item.headers);
       if (item.kind === 'network') {

@@ -242,5 +242,22 @@ CREATE TABLE IF NOT EXISTS scenarios (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- AI answer threads and hiding (docs/plans/tier-2.md, S14, S15, WP10). A
+-- follow-up is an 'ask' whose parent_id is the answer it follows, so the kind
+-- CHECK is unchanged. content holds what a follow-up replays: the turn's user
+-- message as sent and the assistant's content blocks as returned, with the
+-- hash of the system blocks they followed; answers saved before this section
+-- have none and cannot be followed up. hidden_at, hidden_by and
+-- hidden_by_username say who hid an answer from the list and when; nothing
+-- deletes an answer, so parent_id needs no ON DELETE. No key to clients;
+-- hidden_by never cascades (check-schema), and the username is copied so the
+-- row reads the same after its account is gone. No backfill. A rollback start
+-- runs an older file, which names none of these and leaves them in place.
+ALTER TABLE ai_answers ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES ai_answers(id);
+ALTER TABLE ai_answers ADD COLUMN IF NOT EXISTS content JSONB;
+ALTER TABLE ai_answers ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;
+ALTER TABLE ai_answers ADD COLUMN IF NOT EXISTS hidden_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE ai_answers ADD COLUMN IF NOT EXISTS hidden_by_username VARCHAR(255);
+
 -- No default users are created for security reasons
 -- Use the create-admin.cjs script to create your first administrator account
