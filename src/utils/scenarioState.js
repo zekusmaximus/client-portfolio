@@ -19,12 +19,25 @@
 // and its checks is utils/scenarioState.cjs; tests/scenario-state.test.mjs
 // holds the two equal and checks that every state built here passes the
 // server's checks.
+//
+// A hire scenario (docs/plans/tier-2.md, section 14, WP9) holds its own keys:
+//
+//   { kind: 'hire',
+//     associates: [{ id: 'h1', label, focus: [practiceArea], target, personId }],
+//     picks: { [clientId]: { associateId, seenSecondChairId } },
+//     relief: false }
+//
+// (utils/scenarioState.cjs has the shape in full). The store keeps it apart
+// from the departure's state (hireScenario, with scenarioKind naming which is
+// open), and ./hireScenario.js derives the proposals and every load from it.
 
 import { departureModel } from './departure.js';
+import { hireScenarioModel } from './hireScenario.js';
 import { revenueForYear } from './revenue.js';
 import { syncTransitions } from './transitionPlans.js';
+import { VALIDATION_RULES } from './validation.js';
 
-export const KINDS = ['departure'];
+export const KINDS = ['departure', 'hire'];
 export const STAGES = ['impact', 'mitigation', 'implementation'];
 export const PLAN_STATUSES = ['pending', 'planned', 'approved', 'rejected'];
 export const TRANSITION_STATUSES = ['in-progress', 'at-risk', 'delayed', 'completed'];
@@ -42,6 +55,13 @@ export const PERSON_KEYS = ['id', 'name', 'role'];
 export const EXECUTION_KEYS = ['startDate', 'status'];
 export const TASK_KEYS = ['id', 'title', 'description', 'assignee', 'dueDate', 'priority', 'status', 'clientId', 'category', 'createdAt'];
 export const COMMUNICATION_KEYS = ['id', 'type', 'subject', 'content', 'date', 'outcome', 'clientId', 'timestamp'];
+export const HIRE_STATE_KEYS = ['kind', 'associates', 'picks', 'relief'];
+export const ASSOCIATE_KEYS = ['id', 'label', 'focus', 'target', 'personId'];
+export const TARGET_KINDS = ['count', 'average'];
+export const PICK_KEYS = ['associateId', 'seenSecondChairId'];
+export const HYPOTHETICAL_ID = /^h[1-9]\d{0,3}$/;
+// The client form's twelve practice areas (utils/clientRules.cjs on the server)
+export const PRACTICE_AREAS = VALIDATION_RULES.practiceArea.allowedValues;
 export const LIMITS = {
   name: 120,
   stateBytes: 1000000,
@@ -53,6 +73,8 @@ export const LIMITS = {
   text: 64000,
   short: 500,
   timelineDays: 36500,
+  associates: 20,
+  label: 120,
 };
 
 const PERSON_ID = /^[1-9]\d{0,9}$/;
@@ -87,6 +109,12 @@ export const emptyState = () => ({
   tasks: [],
   communications: [],
 });
+
+/** A new hire scenario: no associates, no picks, the toggle off. */
+export const emptyHireState = () => ({ kind: 'hire', associates: [], picks: {}, relief: false });
+
+/** A new scenario of either kind. */
+export const emptyStateOf = (kind) => (kind === 'hire' ? emptyHireState() : emptyState());
 
 /* --------------------------------- plans --------------------------------- */
 
@@ -239,6 +267,7 @@ const record = (value, keys) => {
  */
 export function canonicalState(state) {
   const input = isPlainObject(state) ? state : {};
+  if (input.kind === 'hire') return canonicalHire(input);
   const out = emptyState();
   out.currentStage = STAGES.includes(input.currentStage) ? input.currentStage : 'impact';
 
@@ -292,12 +321,51 @@ export function canonicalState(state) {
   return out;
 }
 
+// The label a hypothetical associate is saved with when a partner cleared it
+const DEFAULT_LABEL = 'New associate';
+
+// canonicalState for a hire scenario: associates with scenario-local ids
+// (each once, at most LIMITS.associates), a label (the default when blank),
+// the focus in the vocabulary's order, a target, a person linked once at
+// most; picks naming one of them, or null; the toggle as a boolean
+function canonicalHire(input) {
+  const out = emptyHireState();
+  const ids = new Set();
+  const linked = new Set();
+  for (const associate of Array.isArray(input.associates) ? input.associates : []) {
+    if (out.associates.length >= LIMITS.associates) break;
+    if (!isPlainObject(associate)) continue;
+    const id = idText(associate.id);
+    if (!HYPOTHETICAL_ID.test(id) || ids.has(id)) continue;
+    ids.add(id);
+    const label = (text(associate.label) || DEFAULT_LABEL).slice(0, LIMITS.label).trim() || DEFAULT_LABEL;
+    const focus = Array.isArray(associate.focus) ? associate.focus.map(text) : [];
+    const target = isPlainObject(associate.target) && associate.target.kind === 'average'
+      ? { kind: 'average' }
+      : { kind: 'count', count: Math.max(0, Math.min(LIMITS.clients, Math.round(Number(associate.target?.count)) || 0)) };
+    let person = personId(associate.personId);
+    if (person && linked.has(person)) person = null;
+    if (person) linked.add(person);
+    out.associates.push({ id, label, focus: PRACTICE_AREAS.filter((area) => focus.includes(area)), target, personId: person });
+  }
+  for (const [key, pick] of Object.entries(isPlainObject(input.picks) ? input.picks : {})) {
+    const id = clientId(key);
+    if (!id || !isPlainObject(pick)) continue;
+    const associate = pick.associateId === null || pick.associateId === '' || pick.associateId === undefined ? null : idText(pick.associateId);
+    if (associate !== null && !ids.has(associate)) continue;
+    out.picks[id] = { associateId: associate, seenSecondChairId: personId(pick.seenSecondChairId) };
+  }
+  out.relief = boolean(input.relief);
+  return out;
+}
+
 /**
  * The open scenario's state from the store: the workflow, Stage 2's plans,
  * and Stage 3's records (the transitions shown, and those kept but not shown
  * since the scenario was opened: `heldTransitions`), tasks and communications.
  */
 export function stateFromStore(store = {}) {
+  if (store.scenarioKind === 'hire') return canonicalState({ kind: 'hire', ...(store.hireScenario || {}) });
   const workflow = store.successionWorkflow || {};
   const execution = {};
   for (const t of [...(store.heldTransitions || []), ...(store.activeTransitions || [])]) {
@@ -329,6 +397,17 @@ export const stateJson = (state) => JSON.stringify(sorted(canonicalState(state))
 /** Whether the store's scenario differs from what was last opened or saved. */
 export const scenarioDirty = (store) => stateJson(stateFromStore(store)) !== store.savedStateJson;
 
+/**
+ * Whether the API can save the open scenario: saved-scenarios in /api/health
+ * (WP8), and for a hire scenario hire-scenarios too (WP9): an API with only
+ * the first refuses kind 'hire'. Without it the scenario works in the browser
+ * only, and nothing asks about unsaved changes, as without saved-scenarios.
+ */
+export const scenarioSavable = (store) => store.scenarioFeature === true && (store.scenarioKind !== 'hire' || store.hireFeature === true);
+
+/** Unsaved changes that could be saved: what New, Open, logout and leaving the page ask about. */
+export const unsavedChanges = (store) => scenarioSavable(store) && scenarioDirty(store);
+
 /* -------------------------------- opening -------------------------------- */
 
 const plural = (n, one, many) => (n === 1 ? one : many);
@@ -357,6 +436,7 @@ const plural = (n, one, many) => (n === 1 ? one : many);
  */
 export function openState(saved, { people = [], clients = [], reportingYear = null, today } = {}) {
   const state = canonicalState(saved);
+  if (state.kind === 'hire') return openHire(state, { people, clients, reportingYear });
   const notices = [];
 
   const listed = new Map(people.map((p) => [String(p.id), p]));
@@ -415,12 +495,66 @@ export function openState(saved, { people = [], clients = [], reportingYear = nu
   }
 
   return {
+    scenarioKind: 'departure',
     successionWorkflow: { currentStage: state.currentStage, departingIds, choices },
     transitionPlans: plans,
     activeTransitions,
     heldTransitions,
     transitionTasks: tasks,
     communicationLog: state.communications,
+    notices,
+  };
+}
+
+/**
+ * A saved hire scenario opened on the current book (WP9): the store's
+ * hireScenario and the notices. The proposals and the loads are derived again
+ * (./hireScenario.js); here:
+ *
+ * - a client no longer in the book loses its pick, with a notice (its id never
+ *   returns); saving the scenario removes it;
+ * - an associate linked to someone no longer on the People list is unlinked,
+ *   with a notice; one linked to someone who is no longer an active associate
+ *   keeps the link, which the figures do not use, and is named;
+ * - a pick whose seat has changed since it was made stays, and the page shows
+ *   why and does not apply it (a notice counts them), as a refused pick stays
+ *   in a departure.
+ */
+function openHire(state, { people, clients, reportingYear }) {
+  const notices = [];
+  const listed = new Map(people.map((p) => [String(p.id), p]));
+  const inBook = new Set(clients.map((c) => String(c.id)));
+  const gone = Object.keys(state.picks).filter((id) => !inBook.has(id));
+  const picks = Object.fromEntries(Object.entries(state.picks).filter(([id]) => inBook.has(id)));
+  if (gone.length > 0) {
+    notices.push(`${gone.length} ${plural(gone.length, 'client', 'clients')} picked or taken out in this scenario ${plural(gone.length, 'is', 'are')} no longer in the book, so ${plural(gone.length, 'its pick was', 'their picks were')} dropped. Saving the scenario removes ${plural(gone.length, 'it', 'them')}.`);
+  }
+  const associates = state.associates.map((a) => {
+    if (a.personId === null) return a;
+    const person = listed.get(a.personId);
+    if (!person) {
+      notices.push(`${a.label} was linked to someone no longer on the People list, so the link was removed.`);
+      return { ...a, personId: null };
+    }
+    if (!person.active || person.role !== 'associate') {
+      notices.push(`${a.label} is linked to ${person.name}, who is no longer an active associate; the figures treat ${a.label} as not hired yet.`);
+    }
+    return a;
+  });
+  const model = hireScenarioModel({
+    people,
+    clients,
+    revenueOf: (client) => revenueForYear(client, reportingYear),
+    associates,
+    picks,
+  });
+  const stale = model.notApplied.filter((n) => n.stale).length;
+  if (stale > 0) {
+    notices.push(`${stale} ${plural(stale, 'pick\'s seat has', 'picks\' seats have')} changed since ${plural(stale, 'it was', 'they were')} made; each shows why and is not applied until someone picks it again.`);
+  }
+  return {
+    scenarioKind: 'hire',
+    hireScenario: { associates, picks, relief: state.relief },
     notices,
   };
 }

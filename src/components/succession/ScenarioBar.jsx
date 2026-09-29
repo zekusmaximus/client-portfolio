@@ -10,7 +10,7 @@ import { FilePlus, FolderOpen, Loader2, Save, Trash2 } from 'lucide-react';
 import usePortfolioStore from '../../portfolioStore';
 import { apiErrorBody, apiErrorMessage, apiErrorStatus } from '../../api';
 import { firmTime } from '../../utils/clientHistory';
-import { LIMITS, scenarioDirty } from '../../utils/scenarioState';
+import { LIMITS, scenarioDirty, scenarioSavable } from '../../utils/scenarioState';
 
 // Saved Scenarios (docs/plans/tier-2.md, S12, WP8): the open scenario's name
 // and whether it has unsaved changes, New, Open (the saved list, with
@@ -19,6 +19,13 @@ import { LIMITS, scenarioDirty } from '../../utils/scenarioState';
 // before. Every partner can open, save and delete every scenario (P2). A
 // scenario holds what partners entered; opening one re-derives the rest from
 // the book as it is now (src/utils/scenarioState.js, openState).
+//
+// WP9 (docs/plans/tier-2.md, section 14): New asks which kind, "Someone
+// leaves" or "Add an associate"; the list shows a hire scenario by its kind
+// and its associates. An API with saved-scenarios but without
+// hire-scenarios refuses a hire scenario's state, so then Save and Save as
+// are off for one, it works in the browser only, and nothing asks about its
+// unsaved changes, as WP8 does without saved-scenarios.
 
 const STAGE_LABELS = {
   impact: 'Stage 1: Impact Analysis',
@@ -30,6 +37,13 @@ const UNSAVED_PROMPT = 'The open scenario has unsaved changes, which will be los
 
 const leavingText = (leaving = []) =>
   leaving.map((p) => p.name ?? 'someone no longer on the People list').join(', ') || 'nobody yet';
+
+// A hire scenario's associates, each with the person linked to it (WP9)
+const associatesText = (associates = []) =>
+  associates.map((a) => (a.person ? `${a.label} (${a.person})` : a.label)).join(', ') || 'no associate yet';
+
+const KIND_LABELS = { departure: 'Someone leaves', hire: 'Add an associate' };
+const NO_HIRE_SAVE = 'This API cannot save a hire scenario yet, so this one works in this browser only. It can be saved once the API is updated.';
 
 // A refused save's message: the details a 400 lists, or the server's error
 const saveErrorText = (err) => {
@@ -45,6 +59,8 @@ const ScenarioBar = () => {
   const notices = usePortfolioStore((s) => s.scenarioNotices);
   const list = usePortfolioStore((s) => s.scenarioList);
   const dirty = usePortfolioStore(scenarioDirty);
+  const savable = usePortfolioStore(scenarioSavable);
+  const scenarioKind = usePortfolioStore((s) => s.scenarioKind);
   const fetchScenarios = usePortfolioStore((s) => s.fetchScenarios);
   const openScenario = usePortfolioStore((s) => s.openScenario);
   const saveScenario = usePortfolioStore((s) => s.saveScenario);
@@ -53,17 +69,20 @@ const ScenarioBar = () => {
   const dismissScenarioNotices = usePortfolioStore((s) => s.dismissScenarioNotices);
 
   const [showList, setShowList] = useState(false);
+  // Choosing the kind of a new scenario (WP9)
+  const [choosingKind, setChoosingKind] = useState(false);
   // Naming a scenario to save as new: the draft name, or null
   const [nameDraft, setNameDraft] = useState(null);
   const [busy, setBusy] = useState(null); // 'save', 'open' or 'delete' while one runs
   // { tone: 'error' | 'info', text, conflict, missing } after an action
   const [message, setMessage] = useState(null);
 
-  const confirmLeaving = () => !dirty || window.confirm(UNSAVED_PROMPT);
+  const confirmLeaving = () => !(savable && dirty) || window.confirm(UNSAVED_PROMPT);
 
-  const handleNew = () => {
+  const handleNew = (kind) => {
     if (!confirmLeaving()) return;
-    newScenario();
+    newScenario(kind);
+    setChoosingKind(false);
     setNameDraft(null);
     setMessage(null);
   };
@@ -153,29 +172,39 @@ const ScenarioBar = () => {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium" data-testid="scenario-name">{savedScenario ? savedScenario.name : 'New scenario'}</span>
-              {dirty && (
+              <Badge variant="outline" className="text-xs">{KIND_LABELS[scenarioKind]}</Badge>
+              {savable && dirty && (
                 <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Unsaved changes</Badge>
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              {savedLine} Saved scenarios are shared: every partner can open, save and delete them.
+              {savable ? `${savedLine} Saved scenarios are shared: every partner can open, save and delete them.` : NO_HIRE_SAVE}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleNew} disabled={!!busy}>
+            <Button variant="outline" size="sm" onClick={() => setChoosingKind(!choosingKind)} disabled={!!busy} aria-expanded={choosingKind}>
               <FilePlus className="h-4 w-4 mr-2" />New
             </Button>
             <Button variant="outline" size="sm" onClick={toggleList} disabled={!!busy} aria-expanded={showList}>
               <FolderOpen className="h-4 w-4 mr-2" />Open
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={!!busy || !dirty}>
+            <Button size="sm" onClick={handleSave} disabled={!!busy || !dirty || !savable}>
               {busy === 'save' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}Save
             </Button>
-            <Button variant="outline" size="sm" onClick={handleSaveAs} disabled={!!busy}>
+            <Button variant="outline" size="sm" onClick={handleSaveAs} disabled={!!busy || !savable}>
               Save as
             </Button>
           </div>
         </div>
+
+        {choosingKind && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3" role="group" aria-label="Kind of new scenario">
+            <span className="text-sm">A new scenario:</span>
+            <Button size="sm" variant="outline" onClick={() => handleNew('departure')}>{KIND_LABELS.departure}</Button>
+            <Button size="sm" variant="outline" onClick={() => handleNew('hire')}>{KIND_LABELS.hire}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setChoosingKind(false)}>Cancel</Button>
+          </div>
+        )}
 
         {nameDraft !== null && (
           <form className="flex flex-wrap items-end gap-2" onSubmit={submitName}>
@@ -244,7 +273,8 @@ const ScenarioBar = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Scenario</TableHead>
-                    <TableHead>Leaving</TableHead>
+                    <TableHead>Kind</TableHead>
+                    <TableHead>Who</TableHead>
                     <TableHead>Stage</TableHead>
                     <TableHead>Last saved</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -257,8 +287,13 @@ const ScenarioBar = () => {
                         {item.name}
                         {item.id === savedScenario?.id && <span className="ml-2 text-xs text-muted-foreground">(open)</span>}
                       </TableCell>
-                      <TableCell className="text-sm">{leavingText(item.leaving)}</TableCell>
-                      <TableCell className="text-sm whitespace-nowrap">{STAGE_LABELS[item.current_stage] || item.current_stage}</TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">{KIND_LABELS[item.kind] || item.kind}</TableCell>
+                      <TableCell className="text-sm">
+                        {item.kind !== 'hire'
+                          ? `Leaving: ${leavingText(item.leaving)}`
+                          : Array.isArray(item.associates) ? `Adding: ${associatesText(item.associates)}` : 'Adding an associate'}
+                      </TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">{item.kind === 'hire' ? '—' : STAGE_LABELS[item.current_stage] || item.current_stage}</TableCell>
                       <TableCell className="text-sm">
                         {item.updated_by_username || 'a former account'}, {firmTime(item.updated_at)}
                       </TableCell>

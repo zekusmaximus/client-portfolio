@@ -9,12 +9,14 @@ import { appendAnswers } from './utils/recentAnswers';
 import { clientRequestBody } from './utils/clientForm';
 import {
   emptyPlan,
-  emptyState,
+  emptyStateOf,
   openState,
   planViews,
+  scenarioSavable,
   stateFromStore,
   stateJson,
 } from './utils/scenarioState';
+import { newAssociate, withoutAssociatePicks, withPick } from './utils/hireScenario';
 
 // The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
 // brief. They start empty and go back to empty on logout.
@@ -65,13 +67,23 @@ const emptySuccessionWorkflow = () => ({ currentStage: 'impact', departingIds: [
 // could not show (their approved seats no longer apply on the book), kept so
 // that saving it again loses nothing (Tier 2 WP8).
 const emptyExecution = () => ({ activeTransitions: [], heldTransitions: [], transitionTasks: [], communicationLog: [] });
+// An associate in Scenarios (docs/plans/tier-2.md, section 14, WP9): the
+// hypothetical associates, the partner's picks and S19's toggle, which
+// src/utils/hireScenario.js turns into proposals and loads. Only the
+// Scenarios tab reads it: a hypothetical person never reaches the People
+// list, the book or another tab.
+const emptyHireScenario = () => ({ associates: [], picks: {}, relief: false });
 // Saved Scenarios (docs/plans/tier-2.md, S12, WP8): the saved scenario open
 // in Scenarios (null for one not saved yet), its state as last opened or
 // saved (as text, for "Unsaved changes"), and the notices opening it gave.
 // The scenario itself is the store's successionWorkflow, transitionPlans and
-// Stage 3 state, as before.
-const EMPTY_STATE_JSON = stateJson(emptyState());
-const closedScenario = () => ({ savedScenario: null, savedStateJson: EMPTY_STATE_JSON, scenarioNotices: [] });
+// Stage 3 state, as before, or, when scenarioKind is 'hire' (WP9),
+// hireScenario.
+const closedScenario = (kind = 'departure') => ({
+  savedScenario: null,
+  savedStateJson: stateJson(emptyStateOf(kind)),
+  scenarioNotices: []
+});
 const emptyScenarioList = () => ({ items: [], loaded: false, loading: false, error: null });
 // A saved scenario's fields the page keeps while it is open
 const scenarioMeta = (scenario) => ({
@@ -147,10 +159,17 @@ const usePortfolioStore = create(
       // Execution state, Stage 3
       ...emptyExecution(),
 
+      // Which kind of scenario is open (WP9): 'departure' (someone leaves,
+      // the three stages above) or 'hire' (an associate is added, below)
+      scenarioKind: 'departure',
+      hireScenario: emptyHireScenario(),
+
       // Saved Scenarios (WP8): whether the API has them (null until asked,
-      // then /api/health's saved-scenarios), the saved list, and the open one.
-      // Not persisted; cleared on logout.
+      // then /api/health's saved-scenarios), whether it saves a hire scenario
+      // (hire-scenarios, WP9), the saved list, and the open one. Not
+      // persisted; cleared on logout.
       scenarioFeature: null,
+      hireFeature: null,
       scenarioList: emptyScenarioList(),
       ...closedScenario(),
       
@@ -542,7 +561,10 @@ const usePortfolioStore = create(
             successionWorkflow: emptySuccessionWorkflow(),
             transitionPlans: {},
             ...emptyExecution(),
+            scenarioKind: 'departure',
+            hireScenario: emptyHireScenario(),
             scenarioFeature: null,
+            hireFeature: null,
             scenarioList: emptyScenarioList(),
             ...closedScenario()
           });
@@ -747,13 +769,65 @@ const usePortfolioStore = create(
         set((state) => ({ communicationLog: [...state.communicationLog, communication] }));
       },
 
+      // An associate in Scenarios (WP9). Nothing here is written anywhere
+      // but the scenario: accepting a pick after the hire goes through
+      // assignSecondChair, one client at a time (P9).
+      // A hypothetical associate: "New associate", no focus, the default target
+      addHireAssociate: () => {
+        set((state) => ({
+          hireScenario: {
+            ...state.hireScenario,
+            associates: [
+              ...state.hireScenario.associates,
+              newAssociate(state.hireScenario.associates, { people: state.people, clients: state.clients })
+            ]
+          }
+        }));
+      },
+
+      // { label?, focus?, target?, personId? } for one hypothetical associate
+      updateHireAssociate: (id, changes) => {
+        set((state) => ({
+          hireScenario: {
+            ...state.hireScenario,
+            associates: state.hireScenario.associates.map((a) => (a.id === id ? { ...a, ...changes } : a))
+          }
+        }));
+      },
+
+      // Remove a hypothetical associate and every pick naming it
+      removeHireAssociate: (id) => {
+        set((state) => ({
+          hireScenario: {
+            ...state.hireScenario,
+            associates: state.hireScenario.associates.filter((a) => a.id !== id),
+            picks: withoutAssociatePicks(state.hireScenario.picks, id)
+          }
+        }));
+      },
+
+      // One client's pick: an associate's id (its seat, as the book shows it
+      // now, goes to that associate), null (never propose the client), or
+      // undefined (forget the pick; the proposals decide again)
+      setHirePick: (client, associateId) => {
+        set((state) => ({
+          hireScenario: { ...state.hireScenario, picks: withPick(state.hireScenario.picks, client, associateId) }
+        }));
+      },
+
+      // S19's toggle: the figures beside P10's, in this scenario only
+      setHireRelief: (on) => {
+        set((state) => ({ hireScenario: { ...state.hireScenario, relief: on === true } }));
+      },
+
       // Saved Scenarios (docs/plans/tier-2.md, S12, WP8). Whether the API
       // saves scenarios: without saved-scenarios in /api/health (an API older
       // than WP8), Scenarios works in the browser only, as before
       checkScenarioFeature: async () => {
         const health = await apiClient.get('/api/health').catch(() => null);
-        const available = Array.isArray(health?.features) && health.features.includes('saved-scenarios');
-        set({ scenarioFeature: available });
+        const features = Array.isArray(health?.features) ? health.features : [];
+        const available = features.includes('saved-scenarios');
+        set({ scenarioFeature: available, hireFeature: features.includes('hire-scenarios') });
         return available;
       },
 
@@ -774,7 +848,7 @@ const usePortfolioStore = create(
       // Throws with a message the page shows.
       openScenario: async (id) => {
         const { scenario } = await apiClient.get(`/scenarios/${id}`);
-        if (scenario?.state?.kind !== 'departure') {
+        if (!['departure', 'hire'].includes(scenario?.state?.kind)) {
           throw new Error('This scenario is of a kind this page cannot show. Reload the page and try again.');
         }
         await get().fetchClients({ force: true });
@@ -791,13 +865,26 @@ const usePortfolioStore = create(
           reportingYear: get().getReportingYear(),
           today: new Date().toISOString().split('T')[0]
         });
+        // The other kind's state is cleared: one scenario is open at a time
+        const pieces = opened.scenarioKind === 'hire'
+          ? {
+            successionWorkflow: emptySuccessionWorkflow(),
+            transitionPlans: {},
+            ...emptyExecution(),
+            hireScenario: opened.hireScenario
+          }
+          : {
+            successionWorkflow: opened.successionWorkflow,
+            transitionPlans: opened.transitionPlans,
+            activeTransitions: opened.activeTransitions,
+            heldTransitions: opened.heldTransitions,
+            transitionTasks: opened.transitionTasks,
+            communicationLog: opened.communicationLog,
+            hireScenario: emptyHireScenario()
+          };
         set({
-          successionWorkflow: opened.successionWorkflow,
-          transitionPlans: opened.transitionPlans,
-          activeTransitions: opened.activeTransitions,
-          heldTransitions: opened.heldTransitions,
-          transitionTasks: opened.transitionTasks,
-          communicationLog: opened.communicationLog,
+          ...pieces,
+          scenarioKind: opened.scenarioKind,
           savedScenario: scenarioMeta(scenario),
           savedStateJson: stateJson(scenario.state),
           scenarioNotices: opened.notices
@@ -811,6 +898,9 @@ const usePortfolioStore = create(
       // A stale save answers 409, a deleted scenario 404: both throw, and
       // nothing on the page changes.
       saveScenario: async ({ name, asNew = false } = {}) => {
+        if (!scenarioSavable(get())) {
+          throw new Error('This API cannot save this scenario yet; it works in this browser only. Try again after the API is updated.');
+        }
         const state = stateFromStore(get());
         const open = get().savedScenario;
         const response = open && !asNew
@@ -825,17 +915,21 @@ const usePortfolioStore = create(
       // leaves what is on screen as a scenario not saved yet
       deleteScenario: async (id) => {
         await apiClient.del(`/scenarios/${id}`);
-        if (get().savedScenario?.id === id) set({ savedScenario: null, savedStateJson: EMPTY_STATE_JSON });
+        if (get().savedScenario?.id === id) set({ savedScenario: null, savedStateJson: stateJson(emptyStateOf(get().scenarioKind)) });
         await get().fetchScenarios();
       },
 
-      // A new scenario: nothing leaving, no picks or plans, nothing saved yet
-      newScenario: () => {
+      // A new scenario of either kind ('departure' or 'hire', WP9): nothing
+      // leaving, no picks, plans or associates, nothing saved yet
+      newScenario: (kind = 'departure') => {
+        const scenarioKind = kind === 'hire' ? 'hire' : 'departure';
         set({
           successionWorkflow: emptySuccessionWorkflow(),
           transitionPlans: {},
           ...emptyExecution(),
-          ...closedScenario()
+          scenarioKind,
+          hireScenario: emptyHireScenario(),
+          ...closedScenario(scenarioKind)
         });
       },
 

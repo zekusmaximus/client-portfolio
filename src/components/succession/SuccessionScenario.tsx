@@ -7,9 +7,11 @@ import ImpactAnalysisWorkbench from './ImpactAnalysisWorkbench';
 import ClientReviewInterface from './ClientReviewInterface';
 import TransitionPlanManager from './TransitionPlanManager';
 import ScenarioBar from './ScenarioBar';
+import HireScenario from './HireScenario';
 import usePortfolioStore from '../../portfolioStore';
 import { departureModel } from '../../utils/departure';
 import { revenueForYear } from '../../utils/revenue';
+import { emptyStateOf, stateFromStore, stateJson, unsavedChanges } from '../../utils/scenarioState';
 
 type Stage = 'impact' | 'mitigation' | 'implementation';
 
@@ -31,6 +33,17 @@ interface SuccessionScenarioProps {
 // bar above the stepper names, saves and opens shared scenarios; the store's
 // scenario state is then the open scenario's. Without it the tab works in the
 // browser only, as before.
+//
+// An associate in Scenarios (docs/plans/tier-2.md, section 14, WP9): the tab
+// starts with a choice of kind, "Someone leaves" (the three stages, as
+// before) or "Add an associate" (HireScenario). One scenario is open at a
+// time; choosing the other kind starts a new one, asking first when the open
+// one holds anything.
+const KINDS = [
+  { key: 'departure', label: 'Someone leaves' },
+  { key: 'hire', label: 'Add an associate' },
+];
+
 const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
   const clients = usePortfolioStore((s: any) => s.clients);
   const people = usePortfolioStore((s: any) => s.people);
@@ -45,6 +58,8 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
   const scenarioFeature = usePortfolioStore((s: any) => s.scenarioFeature);
   const savedScenario = usePortfolioStore((s: any) => s.savedScenario);
   const checkScenarioFeature = usePortfolioStore((s: any) => s.checkScenarioFeature);
+  const scenarioKind = usePortfolioStore((s: any) => s.scenarioKind);
+  const newScenario = usePortfolioStore((s: any) => s.newScenario);
   const currentStage: Stage = workflow.currentStage;
 
   useEffect(() => {
@@ -61,6 +76,45 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
       choices: workflow.choices,
     }),
     [people, clients, workflow.departingIds, workflow.choices, revenueOf]
+  );
+
+  // The other kind: a new scenario, after asking when the open one holds
+  // anything (a saved one, or anything entered)
+  const chooseKind = (kind: string) => {
+    if (kind === scenarioKind) return;
+    const state = usePortfolioStore.getState();
+    const entered = stateJson(stateFromStore(state)) !== stateJson(emptyStateOf(scenarioKind));
+    if (entered || state.savedScenario) {
+      const lost = unsavedChanges(state)
+        ? 'Its unsaved changes will be lost.'
+        : entered ? 'What is on screen is cleared.' : 'It stays saved.';
+      if (!window.confirm(`Start a new "${KINDS.find((k) => k.key === kind)?.label}" scenario? The open one is closed. ${lost} The book is not changed.`)) return;
+    }
+    newScenario(kind);
+  };
+
+  const renderKindChoice = () => (
+    <Card>
+      <CardContent className="py-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-sm font-medium">What to model:</span>
+          <div className="flex gap-2" role="group" aria-label="Kind of scenario">
+            {KINDS.map((kind) => (
+              <Button
+                key={kind.key}
+                size="sm"
+                variant={scenarioKind === kind.key ? 'default' : 'outline'}
+                aria-pressed={scenarioKind === kind.key}
+                data-scenario-kind={kind.key}
+                onClick={() => chooseKind(kind.key)}
+              >
+                {kind.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 
   // Stage transition handlers
@@ -133,6 +187,13 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
       {/* Saved Scenarios (WP8) */}
       {scenarioFeature === true && <ScenarioBar />}
 
+      {/* Someone leaves, or an associate is added (WP9) */}
+      {renderKindChoice()}
+
+      {scenarioKind === 'hire' && <HireScenario />}
+
+      {scenarioKind !== 'hire' && (
+      <>
       {/* Progress Stepper */}
       {renderProgressStepper()}
 
@@ -224,6 +285,8 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
             </div>
           </CardContent>
         </Card>
+      )}
+      </>
       )}
     </div>
   );

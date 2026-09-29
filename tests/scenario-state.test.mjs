@@ -12,6 +12,8 @@ import * as page from '../src/utils/scenarioState.js';
 import { departureModel, withChoice } from '../src/utils/departure.js';
 import { pinnedChoice, syncTransitions, approvalBlocker } from '../src/utils/transitionPlans.js';
 import { revenueForYear } from '../src/utils/revenue.js';
+import * as hire from '../src/utils/hireScenario.js';
+import clientRules from '../utils/clientRules.cjs';
 import { PEOPLE, CLIENTS } from './fixtures/books.mjs';
 
 const { trimStrings } = validation;
@@ -89,11 +91,18 @@ test('the page\'s vocabularies, keys and bounds are the server\'s', () => {
   for (const key of [
     'KINDS', 'STAGES', 'PLAN_STATUSES', 'TRANSITION_STATUSES', 'PRIORITIES', 'STATE_KEYS', 'CHOICE_KEYS', 'PLAN_KEYS',
     'AI_FIELDS', 'EDIT_FIELDS', 'RECOMMENDATION_KEYS', 'PERSON_KEYS', 'EXECUTION_KEYS', 'TASK_KEYS', 'COMMUNICATION_KEYS', 'LIMITS',
+    'HIRE_STATE_KEYS', 'ASSOCIATE_KEYS', 'TARGET_KINDS', 'PICK_KEYS',
   ]) {
     assert.deepEqual(page[key], server[key], key);
   }
   assert.deepEqual(Object.keys(page.emptyState()), server.STATE_KEYS);
   assert.deepEqual(Object.keys(page.emptyPlan()), server.PLAN_KEYS);
+  // WP9: a hire scenario's keys, its associates' ids and focus vocabulary
+  assert.deepEqual(Object.keys(page.emptyHireState()), server.HIRE_STATE_KEYS);
+  assert.equal(page.HYPOTHETICAL_ID.source, server.HYPOTHETICAL_ID.source);
+  assert.equal(hire.HYPOTHETICAL_ID.source, server.HYPOTHETICAL_ID.source);
+  assert.deepEqual(page.PRACTICE_AREAS, clientRules.PRACTICE_AREAS);
+  assert.deepEqual(Object.keys(hire.newAssociate([], { people: PEOPLE, clients: CLIENTS })), server.ASSOCIATE_KEYS);
 });
 
 test('the statuses and stages the checks allow are the ones the page uses', () => {
@@ -354,6 +363,194 @@ test('on 300 seeded random books and scenarios: the page\'s state passes the ser
     assert.deepEqual(trimStrings(state), state, `run ${run}`);
     const stored = JSON.parse(JSON.stringify(state));
     const opened = page.openState(stored, { people, clients, reportingYear: 2026, today: TODAY });
+    assert.equal(page.stateJson(page.stateFromStore(opened)), page.stateJson(state), `run ${run}: opened as saved`);
+    assert.deepEqual(opened.notices.filter((n) => /no longer (in the book|on the People list)/.test(n)), [], `run ${run}`);
+  }
+});
+
+/* ------------------------- WP9: a hire scenario -------------------------- */
+
+// A hire scenario as the page's actions leave it (docs/plans/tier-2.md,
+// section 14): two hypothetical associates, a pick, a client taken out of the
+// proposals, the toggle on; the fixture book's open seats are Paula's client
+// 4 (empty) and Brendan's client 5 (Kevin, a partner, seconds it)
+const hireStore = () => ({
+  scenarioKind: 'hire',
+  // The departure's pieces are not the hire scenario's and are never saved with it
+  successionWorkflow: { currentStage: 'mitigation', departingIds: [4], choices: {} },
+  hireScenario: {
+    associates: [
+      { id: 'h1', label: ' New associate ', focus: ['Healthcare'], target: { kind: 'count', count: 2 }, personId: null },
+      { id: 'h2', label: 'Energy hire', focus: ['Energy', 'Corporate'], target: { kind: 'average' }, personId: null },
+    ],
+    picks: hire.withPick(hire.withPick({}, CLIENTS[3], 'h1'), CLIENTS[4], null),
+    relief: true,
+  },
+});
+const openHireOn = (state, { people = PEOPLE, clients = CLIENTS } = {}) =>
+  page.openState(state, { people, clients, reportingYear: 2026, today: TODAY });
+
+test('a hire scenario\'s state: its own keys, ids as text, strings trimmed, the focus in the vocabulary\'s order; the server\'s checks pass', () => {
+  assert.deepEqual(server.checkState(page.emptyHireState()), []);
+  const state = page.stateFromStore(hireStore());
+  assert.deepEqual(state, {
+    kind: 'hire',
+    associates: [
+      { id: 'h1', label: 'New associate', focus: ['Healthcare'], target: { kind: 'count', count: 2 }, personId: null },
+      { id: 'h2', label: 'Energy hire', focus: ['Corporate', 'Energy'], target: { kind: 'average' }, personId: null },
+    ],
+    picks: { 4: { associateId: 'h1', seenSecondChairId: null }, 5: { associateId: null, seenSecondChairId: '4' } },
+    relief: true,
+  });
+  assert.deepEqual(server.checkState(state), []);
+  assert.deepEqual(server.checkScenario({ name: 'A healthcare associate', state }), []);
+  assert.deepEqual(trimStrings(state), state);
+  assert.deepEqual(page.canonicalState(state), state, 'canonical twice is canonical once');
+  // A departure store saves a departure state, whatever hire state it also holds
+  assert.equal(page.stateFromStore({ ...hireStore(), scenarioKind: 'departure' }).kind, 'departure');
+});
+
+test('each kind holds only its own keys: a departure state refuses a hire key and the reverse; unknown keys stay refused', () => {
+  const hireState = page.stateFromStore(hireStore());
+  const departure = page.stateFromStore(builtStore());
+  const refusals = [
+    [{ ...departure, picks: {} }, 'state.picks', 'state cannot hold "picks"; it holds only kind, currentStage, departingIds, choices, plans, execution, tasks, communications.'],
+    [{ ...departure, relief: true }, 'state.relief', 'state cannot hold "relief"; it holds only kind, currentStage, departingIds, choices, plans, execution, tasks, communications.'],
+    [{ ...hireState, departingIds: [] }, 'state.departingIds', 'state cannot hold "departingIds"; it holds only kind, associates, picks, relief.'],
+    [{ ...hireState, currentStage: 'impact' }, 'state.currentStage', 'state cannot hold "currentStage"; it holds only kind, associates, picks, relief.'],
+    [{ ...hireState, seats: [] }, 'state.seats', 'state cannot hold "seats"; it holds only kind, associates, picks, relief.'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], load: 3 }] }, 'state.associates.0.load', 'state.associates.0 cannot hold "load"; it holds only id, label, focus, target, personId.'],
+    [{ ...hireState, picks: { 4: { associateId: 'h1', seenSecondChairId: null, lead: '6' } } }, 'state.picks.4.lead', 'state.picks.4 cannot hold "lead"; it holds only associateId, seenSecondChairId.'],
+    [{ ...departure, kind: 'growth' }, 'state.kind', 'state.kind must be one of departure, hire.'],
+  ];
+  for (const [state, field, message] of refusals) {
+    assert.deepEqual(server.checkState(state), [{ field, message }], field);
+  }
+  // A kind's keys are dropped by the page when the state is the other kind
+  assert.deepEqual(page.canonicalState({ ...departure, picks: {}, relief: true }), departure);
+  assert.deepEqual(page.canonicalState({ ...hireState, departingIds: ['4'], currentStage: 'impact' }), hireState);
+});
+
+test('a hypothetical id never passes for a person\'s id: refused wherever the state needs a real person, and a pick must name one of the scenario\'s associates', () => {
+  const hireState = page.stateFromStore(hireStore());
+  const departure = page.stateFromStore(builtStore());
+  const refused = [
+    [{ ...departure, departingIds: ['h1'] }, 'state.departingIds.0'],
+    [{ ...departure, choices: { 4: { secondChairId: 'h1' } } }, 'state.choices.4.secondChairId'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], personId: 'h2' }, hireState.associates[1]] }, 'state.associates.0.personId'],
+    [{ ...hireState, picks: { 4: { associateId: 'h1', seenSecondChairId: 'h2' } } }, 'state.picks.4.seenSecondChairId'],
+    [{ ...hireState, picks: { 4: { associateId: 'h3', seenSecondChairId: null } } }, 'state.picks.4.associateId'],
+    [{ ...hireState, picks: { 4: { associateId: '8', seenSecondChairId: null } } }, 'state.picks.4.associateId'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], id: '8' }] }, 'state.associates.0.id'],
+    [{ ...hireState, associates: [hireState.associates[0], { ...hireState.associates[1], id: 'h1' }] }, 'state.associates.1.id'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], personId: '9' }, { ...hireState.associates[1], personId: '9' }] }, 'state.associates.1.personId'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], focus: ['Financial services'] }] }, 'state.associates.0.focus.0'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], target: { kind: 'count', count: 501 } }] }, 'state.associates.0.target.count'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], target: { kind: 'average', count: 2 } }] }, 'state.associates.0.target.count'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], label: '' }] }, 'state.associates.0.label'],
+    [{ ...hireState, associates: [{ ...hireState.associates[0], label: 'x'.repeat(121) }] }, 'state.associates.0.label'],
+    [{ ...hireState, associates: Array.from({ length: 21 }, (_, n) => ({ ...hireState.associates[0], id: `h${n + 1}` })) }, 'state.associates'],
+    [{ ...hireState, relief: 'on' }, 'state.relief'],
+  ];
+  for (const [state, field] of refused) {
+    const details = server.checkState(state);
+    assert.ok(details.some((d) => d.field === field), `${field}: ${JSON.stringify(details)}`);
+    assert.deepEqual(server.checkState(page.canonicalState(state)), [], `${field}: the page's canonical state passes`);
+  }
+});
+
+test('a hire scenario saved, then opened on the same book: the same state, no notice, nothing unsaved; a pick changed is an unsaved change', () => {
+  const state = page.stateFromStore(hireStore());
+  const opened = openHireOn(JSON.parse(JSON.stringify(state)));
+  assert.equal(opened.scenarioKind, 'hire');
+  assert.deepEqual(opened.notices, []);
+  const store = { scenarioKind: 'hire', hireScenario: opened.hireScenario, savedStateJson: page.stateJson(state) };
+  assert.equal(page.stateJson(page.stateFromStore(store)), page.stateJson(state));
+  assert.equal(page.scenarioDirty(store), false);
+  const changed = { ...store, hireScenario: { ...store.hireScenario, picks: hire.withPick(store.hireScenario.picks, CLIENTS[4], 'h2') } };
+  assert.equal(page.scenarioDirty(changed), true);
+  assert.equal(page.scenarioDirty({ ...store, hireScenario: { ...store.hireScenario, relief: false } }), true, 'the toggle is part of the scenario');
+  // The key order JSONB gives back changes nothing
+  const shuffled = JSON.parse(JSON.stringify(state, (key, value) => (
+    value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).reverse()) : value)));
+  assert.equal(page.stateJson(shuffled), page.stateJson(state));
+});
+
+test('a hire scenario opened on a changed book: a deleted client\'s pick dropped, a link to someone gone removed, a link to someone no longer an associate named, a pick whose seat changed kept and counted', () => {
+  const ria = { id: 11, name: 'Ria', role: 'associate', active: true };
+  const base = page.stateFromStore(hireStore());
+  const state = {
+    ...base,
+    associates: [{ ...base.associates[0], personId: '11' }, { ...base.associates[1], personId: '12' }],
+    picks: { ...base.picks, 3: { associateId: 'h2', seenSecondChairId: null } },
+  };
+  const people = [...PEOPLE, ria];
+  const clients = CLIENTS.filter((c) => c.id !== 4).map((c) => (c.id === 3 ? { ...c, secondChair: null } : c));
+  const opened = openHireOn(state, { people: people.map((p) => (p.id === 11 ? { ...p, role: 'partner' } : p)), clients: clients.map((c) => (c.id === 3 ? { ...c, secondChair: PEOPLE[1] } : c)) });
+  assert.deepEqual(opened.notices, [
+    '1 client picked or taken out in this scenario is no longer in the book, so its pick was dropped. Saving the scenario removes it.',
+    'New associate is linked to Ria, who is no longer an active associate; the figures treat New associate as not hired yet.',
+    'Energy hire was linked to someone no longer on the People list, so the link was removed.',
+    '1 pick\'s seat has changed since it was made; each shows why and is not applied until someone picks it again.',
+  ]);
+  assert.ok(!('4' in opened.hireScenario.picks));
+  assert.deepEqual(opened.hireScenario.picks['3'], { associateId: 'h2', seenSecondChairId: null }, 'the stale pick is kept');
+  assert.deepEqual(opened.hireScenario.associates.map((a) => a.personId), ['11', null]);
+  assert.deepEqual(server.checkState(page.stateFromStore({ scenarioKind: 'hire', hireScenario: opened.hireScenario })), []);
+});
+
+// Trap 4: WP8's rules hold, and a departure scenario WP8 saved opens unchanged
+test('a departure scenario as WP8 saved it (the stored JSON, keys in JSONB\'s order) still passes the checks and opens unchanged', () => {
+  const stored = JSON.parse(`{"kind": "departure", "plans": {"1": {"ai": {"risks": "The client may follow Kevin.", "tasks": ["Call the client"], "refused": false, "priority": "high", "strategy": "Two meetings, then a letter.", "truncated": false, "timelineDays": 45, "recommendedLead": {"none": false, "text": "Jeff", "person": {"id": 2, "name": "Jeff", "role": "partner"}, "problem": null}, "communicationTemplate": "Dear client,", "recommendedSecondChair": {"none": true, "text": "None", "person": null, "problem": null}}, "edits": {"strategy": "One meeting."}, "status": "approved", "answerId": 41, "updatedAt": "2026-09-29T14:00:00.000Z"}}, "tasks": [{"id": "1-0", "title": "Call the client", "status": "pending", "dueDate": "", "assignee": "Jeff", "category": "transition", "clientId": "1", "priority": "high", "description": ""}], "choices": {"1": {"leadId": "2", "secondChairId": "7"}}, "execution": {"1": {"status": "in-progress", "startDate": "2026-09-29"}}, "currentStage": "implementation", "departingIds": ["4"], "communications": [{"id": "comm-1", "date": "2026-09-29", "type": "call", "content": "They took it well.", "outcome": "positive", "subject": "First call", "clientId": "1", "timestamp": "2026-09-29T15:00:00.000Z"}]}`);
+  assert.deepEqual(server.checkState(stored), []);
+  assert.deepEqual(page.canonicalState(stored), JSON.parse(JSON.stringify(page.canonicalState(stored))));
+  const opened = openOn(stored);
+  assert.equal(opened.scenarioKind, 'departure');
+  assert.ok(!('hireScenario' in opened));
+  assert.deepEqual(opened.notices, []);
+  assert.equal(page.stateJson(page.stateFromStore(opened)), page.stateJson(stored));
+  assert.equal(opened.activeTransitions.length, 1);
+});
+
+test('on 300 seeded random hire scenarios: the page\'s state passes the server\'s checks, trims as the server does, and survives JSON and an open on the same book', () => {
+  let seed = 20260930;
+  const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  const pad = (text) => `${random() > 0.7 ? ' ' : ''}${text}${random() > 0.7 ? '\n' : ''}`;
+  const uuid = () => 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, () => Math.floor(random() * 16).toString(16));
+  for (let run = 0; run < 300; run += 1) {
+    const integerIds = random() > 0.5;
+    const people = PEOPLE.map((p) => ({ ...p, active: p.name === 'Steve' ? false : random() > 0.05 }));
+    const partners = people.filter((p) => p.role === 'partner');
+    const clients = Array.from({ length: 3 + Math.floor(random() * 12) }, (_, n) => ({
+      id: integerIds ? n + 1 : uuid(),
+      name: `Client ${n}`,
+      lead: random() > 0.1 ? pick(partners) : null,
+      secondChair: random() > 0.4 ? pick(people) : null,
+      practiceArea: random() > 0.3 ? [pick(page.PRACTICE_AREAS)] : [],
+      effort: 1 + Math.floor(random() * 5),
+      revenues: [{ year: 2026, revenue_amount: String(Math.round(random() * 100000)) }],
+    })).map((c) => (c.secondChair && c.lead && c.secondChair.id === c.lead.id ? { ...c, secondChair: null } : c));
+    let associates = [];
+    for (let n = 0; n < Math.floor(random() * 4); n += 1) {
+      const next = hire.newAssociate(associates, { people, clients });
+      associates.push({
+        ...next,
+        label: random() > 0.1 ? pad(`Hire ${n}`) : '  ',
+        focus: page.PRACTICE_AREAS.filter(() => random() > 0.8),
+        target: random() > 0.5 ? { kind: 'count', count: Math.floor(random() * 10) } : next.target,
+        personId: random() > 0.8 ? pick([8, '9', ' 8 ']) : null,
+      });
+    }
+    let picks = {};
+    for (const c of clients) {
+      if (associates.length > 0 && random() > 0.7) picks = hire.withPick(picks, c, random() > 0.3 ? pick(associates).id : null);
+    }
+    const store = { scenarioKind: 'hire', hireScenario: { associates, picks, relief: random() > 0.5 } };
+    const state = page.stateFromStore(store);
+    assert.deepEqual(server.checkState(state), [], `run ${run}`);
+    assert.deepEqual(trimStrings(state), state, `run ${run}`);
+    const opened = page.openState(JSON.parse(JSON.stringify(state)), { people, clients, reportingYear: 2026, today: TODAY });
     assert.equal(page.stateJson(page.stateFromStore(opened)), page.stateJson(state), `run ${run}: opened as saved`);
     assert.deepEqual(opened.notices.filter((n) => /no longer (in the book|on the People list)/.test(n)), [], `run ${run}`);
   }

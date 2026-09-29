@@ -70,7 +70,8 @@ const ScenarioModeler = () => {
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground mb-4">
-            Model a partner departure in three stages: impact analysis, client review and triage, then transition execution.
+            Model someone leaving in three stages (impact analysis, client review and triage, then transition execution), or
+            try out which clients a new associate would second-chair.
           </p>
           
           {/* Current Portfolio Metrics */}
