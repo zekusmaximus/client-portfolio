@@ -51,6 +51,7 @@ import { departureModel, withChoice } from '../src/utils/departure.js';
 import { pinnedChoice, planRequest, syncTransitions } from '../src/utils/transitionPlans.js';
 import { revenueForYear } from '../src/utils/revenue.js';
 import { openState, planViews, stateFromStore, stateJson, withAiPlan, withEdits } from '../src/utils/scenarioState.js';
+import { acceptance, hireScenarioModel, newAssociate, withPick } from '../src/utils/hireScenario.js';
 
 // Every route server.cjs registers, as METHOD and the full path, with whether
 // it needs a signed-in partner and the page files that call it.
@@ -170,7 +171,7 @@ const TOO_MANY = { success: false, error: 'Too many requests. Try again later.' 
 const MISSING_TOKEN = { error: 'Missing token' };
 const INVALID_TOKEN = { error: 'Invalid token' };
 const NOT_CONFIGURED = { success: false, error: 'AI is not configured on the server (missing API key).' };
-const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios'];
+const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios'];
 // The seed people init-db.sql adds to a new database (docs/plans/people-and-second-chair.md, P1)
 const SEED = { Brendan: 'partner', Jeff: 'partner', Joe: 'partner', Kevin: 'partner', Mike: 'partner', Paula: 'partner', Jay: 'emeritus' };
 const PERSON_KEYS = ['active', 'id', 'lead_count', 'name', 'originator_count', 'role', 'second_chair_count'];
@@ -1686,6 +1687,76 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(await storedClient(created.id), before);
     });
 
+    // Tier 2 WP9 (section 14): after the hire, a saved hire scenario's pick
+    // is accepted through this route, one at a time (P9), with the seat the
+    // scenario saw; until then nothing is written
+    test('a hire scenario\'s pick accepted after the hire: nothing written until then, and then exactly that one seat, logged as `second-chair`; a pick whose seat changed since answers 409 and writes nothing', async () => {
+      const allClients = async () => (await db.query('SELECT * FROM clients ORDER BY id::text')).rows;
+      const bookBefore = await allClients();
+      const body = await hireBody();
+      const created = (await allClients()).filter((c) => !bookBefore.some((b) => String(b.id) === String(c.id)));
+      const start = await allClients();
+      assert.deepEqual(created.map((c) => String(c.id)).sort(), [String(body.open.id), String(body.held.id)].sort());
+      const saved = await saveScenario(body);
+      // The hire: the associate joins the People list, and a partner links the hypothetical to them
+      const ria = (await call('POST', '/api/people', { name: uniqueName('Ria'), role: 'associate' })).body.person;
+      const linkedState = { ...body.state, associates: [{ ...body.state.associates[0], personId: String(ria.id) }] };
+      const put = await call('PUT', `/api/scenarios/${saved.id}`, { name: body.name, state: linkedState, version: 1 });
+      assert.equal(put.status, 200, put.text);
+      assert.deepEqual(await allClients(), start, 'saving, the hire and linking write nothing to clients');
+
+      // The page opens the scenario and accepts one pick
+      const opened = openState((await call('GET', `/api/scenarios/${saved.id}`)).body.scenario.state, {
+        people: (await call('GET', '/api/people')).body.people,
+        clients: (await call('GET', '/api/data/clients')).body.clients,
+        reportingYear: 2026,
+      });
+      const modelNow = async () => hireScenarioModel({
+        people: (await call('GET', '/api/people')).body.people,
+        clients: (await call('GET', '/api/data/clients')).body.clients,
+        revenueOf: (c) => revenueForYear(c, 2026),
+        ...opened.hireScenario,
+      });
+      let model = await modelNow();
+      const [associate] = model.associates;
+      assert.deepEqual([associate.hypothetical, associate.linked.id], [false, ria.id]);
+      const seat = model.seats.find((s) => s.clientId === String(body.held.id));
+      const accept = acceptance(seat, associate);
+      assert.deepEqual(accept, { ok: true, reason: null, expectedSecondChairId: body.paula.id });
+      const changesBefore = await changeCount();
+      const res = await call('PUT', `/api/data/clients/${body.held.id}/second-chair`, { second_chair_id: associate.linked.id, expected_second_chair_id: accept.expectedSecondChairId });
+      assert.equal(res.status, 200, res.text);
+      const after = await allClients();
+      const rest = ({ second_chair_id: _s, lobbyist_team: _t, updated_at: _u, updated_by: _b, ...other }) => other;
+      for (const row of start) {
+        const now = after.find((c) => String(c.id) === String(row.id));
+        if (String(row.id) === String(body.held.id)) assert.deepEqual(rest(now), rest(row));
+        else assert.deepEqual(now, row, `client ${row.id} unchanged`);
+      }
+      const held = after.find((c) => String(c.id) === String(body.held.id));
+      assert.deepEqual([held.second_chair_id, held.lobbyist_team], [ria.id, ['Kevin', ria.name]]);
+      assert.equal(await changeCount(), changesBefore + 1);
+      assert.deepEqual((await changeRows(body.held.id)).map((r) => [r.source, r.changes]), [
+        ['second-chair', { second_chair_id: { from: { id: body.paula.id, name: 'Paula' }, to: { id: ria.id, name: ria.name } } }],
+      ]);
+      model = await modelNow();
+      assert.equal(model.seats.find((s) => s.clientId === String(body.held.id)).source, 'done', 'the accepted seat is the linked person\'s');
+
+      // Another partner fills the other pick's seat first: the pick is not
+      // applied, and a request with the seat the scenario saw answers 409
+      const other = await secondPartner();
+      const jay = await seed('Jay');
+      const theirs = await request(api.base, 'PUT', `/api/data/clients/${body.open.id}/second-chair`, { as: other.cookie, body: { second_chair_id: jay.id, expected_second_chair_id: null } });
+      assert.equal(theirs.status, 200, theirs.text);
+      model = await modelNow();
+      const stale = model.notApplied.find((n) => n.clientId === String(body.open.id));
+      assert.deepEqual([stale.stale, stale.problem], [true, 'The seat was empty when this was picked and is held by Jay now, so the pick is not applied. Pick it again or remove it.']);
+      const stored = await storedClient(body.open.id);
+      const refused = await call('PUT', `/api/data/clients/${body.open.id}/second-chair`, { second_chair_id: ria.id, expected_second_chair_id: null });
+      assert.equal(refused.status, 409, refused.text);
+      assert.deepEqual(await storedClient(body.open.id), stored);
+    });
+
     // Tier 2 WP7 (S11)
     test('200: the client it answers carries the succession metrics after the seat, as GET lists it', async () => {
       const kevin = await seed('Kevin');
@@ -2299,10 +2370,10 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
   // saved scenario's fields in src/portfolioStore.js (openScenario,
   // saveScenario) and src/utils/scenarioState.js (openState): id, name,
   // state, version, updated_by_username, updated_at; the list's fields in
-  // src/components/succession/ScenarioBar.jsx: id, name, current_stage,
-  // leaving, updated_by_username, updated_at
+  // src/components/succession/ScenarioBar.jsx: id, name, kind, current_stage,
+  // leaving, associates (WP9), updated_by_username, updated_at
   const SCENARIO_KEYS = ['created_at', 'created_by_username', 'id', 'name', 'state', 'updated_at', 'updated_by_username', 'version'];
-  const LIST_SCENARIO_KEYS = ['created_at', 'created_by_username', 'current_stage', 'id', 'kind', 'leaving', 'name', 'updated_at', 'updated_by_username', 'version'];
+  const LIST_SCENARIO_KEYS = ['associates', 'created_at', 'created_by_username', 'current_stage', 'id', 'kind', 'leaving', 'name', 'updated_at', 'updated_by_username', 'version'];
   const SCENARIO_NOT_FOUND = { success: false, error: 'Scenario not found.' };
   // A departure scenario's state as the page saves one: Mike leaving, a pick,
   // a plan with the AI's fields and an edit, and Stage 3's records, for a
@@ -2379,6 +2450,25 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
     };
   };
 
+  // A hire scenario (WP9) as the page saves one, for two partner-led
+  // clients this call creates (one with an empty seat, one Paula seconds):
+  // one hypothetical associate with a Healthcare focus, both clients picked
+  // with the seat as the scenario saw it, and the toggle on. The state is
+  // built by the page's own helpers from this API's clients and People list.
+  const hireBody = async ({ name = uniqueName('Hire Scenario') } = {}) => {
+    const kevin = await seed('Kevin');
+    const paula = await seed('Paula');
+    const open = await addClient({ lead: kevin });
+    const held = await addClient({ lead: kevin, second: paula });
+    const clients = (await call('GET', '/api/data/clients')).body.clients;
+    const people = (await call('GET', '/api/people')).body.people;
+    const listed = (id) => clients.find((c) => String(c.id) === String(id));
+    const associates = [{ ...newAssociate([], { people, clients }), focus: ['Healthcare'], target: { kind: 'count', count: 0 } }];
+    const picks = withPick(withPick({}, listed(open.id), 'h1'), listed(held.id), 'h1');
+    const state = stateFromStore({ scenarioKind: 'hire', hireScenario: { associates, picks, relief: true } });
+    return { name, state, open, held, kevin, paula };
+  };
+
   route('GET /api/scenarios', () => {
     test('200 { success, scenarios }: newest save first, each with who saved last and when and the people leaving by name (null for an id not on the People list); no AI limiter', async () => {
       const first = await saveScenario(await scenarioBody());
@@ -2397,8 +2487,30 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         [body.name, 'departure', 'implementation', 1, account.username, account.username],
       );
       assert.deepEqual(listed.leaving, [{ id: String(body.mike.id), name: 'Mike' }, { id: '2147483000', name: null }]);
+      assert.deepEqual(listed.associates, [], 'a departure has no associates');
       assert.ok(!('state' in listed), 'the list does not carry the states');
       assert.equal(Date.parse(listed.updated_at), Date.parse(later.updated_at));
+    });
+
+    // WP9: the list shows a hire scenario by its kind and its associates
+    test('200: a hire scenario is listed with kind "hire", no stage, nobody leaving, and its associates with the person each is linked to now (null for none)', async () => {
+      const body = await hireBody();
+      const ria = await addPerson('associate', 'Ria');
+      const state = {
+        ...body.state,
+        associates: [
+          { ...body.state.associates[0], personId: String(ria.id) },
+          { id: 'h2', label: 'Energy hire', focus: ['Energy'], target: { kind: 'average' }, personId: null },
+        ],
+      };
+      const saved = await saveScenario({ name: body.name, state });
+      const listed = (await call('GET', '/api/scenarios')).body.scenarios.find((s) => s.id === saved.id);
+      assert.deepEqual(keysOf(listed), LIST_SCENARIO_KEYS);
+      assert.deepEqual([listed.kind, listed.current_stage, listed.leaving], ['hire', null, []]);
+      assert.deepEqual(listed.associates, [
+        { id: 'h1', label: 'New associate', person: ria.name },
+        { id: 'h2', label: 'Energy hire', person: null },
+      ]);
     });
   });
 
@@ -2457,6 +2569,24 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(opened.notices, []);
       assert.equal(stateJson(stateFromStore(opened)), stateJson(state));
       assert.deepEqual(opened.activeTransitions, transitions);
+    });
+
+    // WP9: a hire scenario, built by the page from this shape's ids
+    test('200: a hire scenario the page builds from this API\'s clients and People list comes back as saved and opens on the same book with nothing dropped', async () => {
+      const body = await hireBody();
+      const saved = await saveScenario(body);
+      const res = await call('GET', `/api/scenarios/${saved.id}`);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(res.body.scenario.state, body.state);
+      assert.equal(stateJson(res.body.scenario.state), stateJson(body.state));
+      assert.deepEqual(body.state.picks[String(body.held.id)], { associateId: 'h1', seenSecondChairId: String(body.paula.id) });
+      const clients = (await call('GET', '/api/data/clients')).body.clients;
+      const people = (await call('GET', '/api/people')).body.people;
+      const opened = openState(res.body.scenario.state, { people, clients, reportingYear: 2026, today: new Date().toISOString().split('T')[0] });
+      assert.deepEqual([opened.scenarioKind, opened.notices], ['hire', []]);
+      assert.equal(stateJson(stateFromStore(opened)), stateJson(body.state));
+      const model = hireScenarioModel({ people, clients, revenueOf: (c) => revenueForYear(c, 2026), ...opened.hireScenario });
+      assert.deepEqual(model.seats.filter((s) => s.source === 'pick').map((s) => s.clientId).sort(), [String(body.open.id), String(body.held.id)].sort());
     });
 
     test('404 { success: false, error: "Scenario not found." } for an id no scenario has, or one that is not a positive integer in PostgreSQL\'s integer range', async () => {
@@ -2528,7 +2658,10 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         ['a blank name', { name: '   ', state: body.state }, [{ field: 'name', message: 'The scenario needs a name.' }]],
         ['a name over 120 characters', { name: 'x'.repeat(121), state: body.state }, [{ field: 'name', message: 'The name is 121 characters; it can be at most 120.' }]],
         ['no state', { name: body.name }, [{ field: 'state', message: 'The scenario\'s state must be a JSON object.' }]],
-        ['another kind', withState({ kind: 'hire' }), [{ field: 'state.kind', message: 'state.kind must be one of departure.' }]],
+        // WP9 added 'hire'; until then this row sent kind 'hire' and answered "must be one of departure."
+        ['another kind', withState({ kind: 'growth' }), [{ field: 'state.kind', message: 'state.kind must be one of departure, hire.' }]],
+        ['a hire key in a departure', withState({ relief: true }), [{ field: 'state.relief', message: 'state cannot hold "relief"; it holds only kind, currentStage, departingIds, choices, plans, execution, tasks, communications.' }]],
+        ['a hypothetical associate\'s id as someone leaving', withState({ departingIds: ['h1'] }), [{ field: 'state.departingIds.0', message: 'state.departingIds.0 must be a person\'s id as text.' }]],
         ['a stage the page has not', withState({ currentStage: 'done' }), [{ field: 'state.currentStage', message: 'state.currentStage must be one of impact, mitigation, implementation.' }]],
         ['a person\'s id as a number', withState({ departingIds: [Number(body.mike.id)] }), [{ field: 'state.departingIds.0', message: 'state.departingIds.0 must be a person\'s id as text.' }]],
         ['a load the engine derives', withState({ before: { rows: [] } }), [{ field: 'state.before', message: 'state cannot hold "before"; it holds only kind, currentStage, departingIds, choices, plans, execution, tasks, communications.' }]],
@@ -2549,6 +2682,24 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         ['a state over 1,000,000 bytes', withState({ communications: [{ id: 'c', content: 'x'.repeat(1000001) }] }),
           [{ field: 'state', message: `The scenario is ${Buffer.byteLength(JSON.stringify({ ...body.state, communications: [{ id: 'c', content: 'x'.repeat(1000001) }] })).toLocaleString('en-US')} bytes; it can be at most 1,000,000.` }]],
       ];
+      // WP9: a hire scenario holds only its own keys, and a hypothetical id never passes for a person's
+      const hired = await hireBody();
+      const withHire = (state) => ({ name: hired.name, state: { ...hired.state, ...state } });
+      const [associate] = hired.state.associates;
+      const pickOf = String(hired.open.id);
+      refusals.push(
+        ['a departure key in a hire', withHire({ departingIds: [] }), [{ field: 'state.departingIds', message: 'state cannot hold "departingIds"; it holds only kind, associates, picks, relief.' }]],
+        ['a load in a hire', withHire({ seats: [] }), [{ field: 'state.seats', message: 'state cannot hold "seats"; it holds only kind, associates, picks, relief.' }]],
+        ['a People list id as an associate\'s', withHire({ associates: [{ ...associate, id: '7' }] }),
+          [{ field: 'state.associates.0.id', message: 'state.associates.0.id must be a scenario-local id: h1, h2 and so on.' },
+            { field: `state.picks.${pickOf}.associateId`, message: `state.picks.${pickOf}.associateId must be the id of one of this scenario's associates, or null.` },
+            { field: `state.picks.${hired.held.id}.associateId`, message: `state.picks.${hired.held.id}.associateId must be the id of one of this scenario's associates, or null.` }]],
+        ['a hypothetical id as the seat the scenario saw', withHire({ picks: { [pickOf]: { associateId: 'h1', seenSecondChairId: 'h1' } } }),
+          [{ field: `state.picks.${pickOf}.seenSecondChairId`, message: `state.picks.${pickOf}.seenSecondChairId must be a person's id as text, or null.` }]],
+        ['a focus off the form\'s list', withHire({ associates: [{ ...associate, focus: ['Financial services'] }] }),
+          [{ field: 'state.associates.0.focus.0', message: 'state.associates.0.focus.0 must be one of Healthcare, Municipal, Corporate, Energy, Financial, Education, Transportation, Environmental, Technology, Real Estate, Non-Profit, Other.' }]],
+        ['a toggle that is not true or false', withHire({ relief: 'on' }), [{ field: 'state.relief', message: 'state.relief must be true or false.' }]],
+      );
       const before = await scenarioCount();
       for (const [what, request, details] of refusals) {
         const res = await call('POST', '/api/scenarios', request);

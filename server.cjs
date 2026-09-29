@@ -142,8 +142,11 @@ app.get('/api/health', async (req, res) => {
     // carried updated_at_exact, which only this API sends). And before
     // Scenarios shows its list of saved scenarios (saved-scenarios): an API
     // without it has no /api/scenarios routes but the transition plan, and
-    // the tab then works in the browser only, as before.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios'],
+    // the tab then works in the browser only, as before. And before
+    // Scenarios saves a hire scenario (hire-scenarios, Tier 2 WP9): an API
+    // with saved-scenarios but without it refuses the state's kind 'hire'
+    // (400), so the page then keeps "Add an associate" in the browser only.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios'],
     services: {}
   };
 

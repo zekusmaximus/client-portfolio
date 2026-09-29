@@ -27,11 +27,31 @@
 // The page's copy is src/utils/scenarioState.js, which builds this state from
 // the store and opens it on the current book; the server never requires the
 // page's src/ (T3), and tests/scenario-state.test.mjs holds the two equal.
-// WP9 adds kind 'hire' (section 14).
+//
+// WP9 (section 14, S18 and S19) adds kind 'hire': one or more hypothetical
+// associates, the partner's second-chair picks for them, and S19's toggle:
+//
+//   { kind: 'hire',
+//     associates: [{ id: 'h1', label, focus: [practiceArea], target, personId }],
+//     picks: { [clientId]: { associateId, seenSecondChairId } },
+//     relief: false }
+//
+// An associate's id is scenario-local ('h1', 'h2', ...), which PERSON_ID
+// refuses wherever a real person is required, so a hypothetical id never
+// passes for a People list id. `target` is { kind: 'count', count } or
+// { kind: 'average' } (the active associates' average second-chair load);
+// `personId` the person on the People list it was linked to after the hire,
+// or null. A pick's `associateId` is one of this state's associates, or null
+// (the partner took the client out of the proposals); `seenSecondChairId` the
+// second chair as the scenario saw it when the pick was made (a person's id,
+// or null for an empty seat), which the page sends with an accepted pick. The
+// proposals and every load are derived by the page (src/utils/hireScenario.js)
+// and never saved. Each kind holds only its own keys.
 
 const { firmTime } = require('./clientChanges.cjs');
+const { PRACTICE_AREAS } = require('./clientRules.cjs');
 
-const KINDS = ['departure'];
+const KINDS = ['departure', 'hire'];
 const STAGES = ['impact', 'mitigation', 'implementation'];
 // Stage 2's plan statuses (ClientReviewInterface.jsx) and Stage 3's
 // transition statuses (TransitionPlanManager.jsx); the page reads both
@@ -60,6 +80,11 @@ const COMMUNICATION_KEYS = ['id', 'type', 'subject', 'content', 'date', 'outcome
 // Of those, the ones a record must carry
 const TASK_REQUIRED = ['id'];
 const COMMUNICATION_REQUIRED = ['id'];
+// A hire scenario (WP9)
+const HIRE_STATE_KEYS = ['kind', 'associates', 'picks', 'relief'];
+const ASSOCIATE_KEYS = ['id', 'label', 'focus', 'target', 'personId'];
+const TARGET_KINDS = ['count', 'average'];
+const PICK_KEYS = ['associateId', 'seenSecondChairId'];
 
 // The bounds. The name is scenarios.name's VARCHAR(120), in characters as
 // PostgreSQL counts them. The state is bounded by its size as JSON (the
@@ -76,6 +101,8 @@ const LIMITS = {
   text: 64000,
   short: 500,
   timelineDays: 36500,
+  associates: 20,
+  label: 120,
 };
 // Only this many details are listed, however many problems a state has
 const MAX_DETAILS = 20;
@@ -84,6 +111,8 @@ const PERSON_ID = /^[1-9]\d{0,9}$/;
 const CLIENT_ID = /^(?:[1-9]\d{0,9}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const INT_MAX = 2147483647;
+// A hypothetical associate's scenario-local id: never a People list id
+const HYPOTHETICAL_ID = /^h[1-9]\d{0,3}$/;
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isPositiveInteger = (value, max = INT_MAX) => Number.isInteger(value) && value >= 1 && value <= max;
@@ -197,6 +226,13 @@ function checkState(state) {
     }
   };
 
+  // A hire scenario holds only its own keys; any other kind is checked as a
+  // departure, so a kind the server does not know is the one detail
+  if (state.kind === 'hire') {
+    onlyKeys('state', state, HIRE_STATE_KEYS);
+    checkHire(state, { problem, onlyKeys, text, oneOf, clientMap });
+    return details;
+  }
   onlyKeys('state', state, STATE_KEYS);
   oneOf('state.kind', state.kind, KINDS);
   oneOf('state.currentStage', state.currentStage, STAGES);
@@ -278,6 +314,65 @@ function checkState(state) {
   return details;
 }
 
+// A hire scenario's associates, picks and toggle (checkState's helpers passed in)
+function checkHire(state, { problem, onlyKeys, text, oneOf, clientMap }) {
+  const ids = new Set();
+  const linked = new Set();
+  if (!Array.isArray(state.associates)) problem('state.associates', 'state.associates must be a list of hypothetical associates.');
+  else if (state.associates.length > LIMITS.associates) {
+    problem('state.associates', `state.associates holds ${state.associates.length} associates; it can hold at most ${LIMITS.associates}.`);
+  } else {
+    state.associates.forEach((associate, index) => {
+      const at = `state.associates.${index}`;
+      if (!isPlainObject(associate)) {
+        problem(at, `${at} must be an object.`);
+        return;
+      }
+      onlyKeys(at, associate, ASSOCIATE_KEYS);
+      if (typeof associate.id !== 'string' || !HYPOTHETICAL_ID.test(associate.id)) {
+        problem(`${at}.id`, `${at}.id must be a scenario-local id: h1, h2 and so on.`);
+      } else if (ids.has(associate.id)) problem(`${at}.id`, `${at}.id repeats ${associate.id}.`);
+      else ids.add(associate.id);
+      if (typeof associate.label !== 'string' || associate.label === '') problem(`${at}.label`, `${at}.label is required.`);
+      else text(`${at}.label`, associate.label, { max: LIMITS.label });
+      if (!Array.isArray(associate.focus)) problem(`${at}.focus`, `${at}.focus must be a list of practice areas.`);
+      else {
+        associate.focus.forEach((area, n) => oneOf(`${at}.focus.${n}`, area, PRACTICE_AREAS));
+        if (new Set(associate.focus).size !== associate.focus.length) problem(`${at}.focus`, `${at}.focus names a practice area twice.`);
+      }
+      const { target } = associate;
+      if (!isPlainObject(target)) problem(`${at}.target`, `${at}.target must be { kind: 'count', count } or { kind: 'average' }.`);
+      else {
+        oneOf(`${at}.target.kind`, target.kind, TARGET_KINDS);
+        onlyKeys(`${at}.target`, target, target.kind === 'count' ? ['kind', 'count'] : ['kind']);
+        if (target.kind === 'count' && !(Number.isInteger(target.count) && target.count >= 0 && target.count <= LIMITS.clients)) {
+          problem(`${at}.target.count`, `${at}.target.count must be a whole number of clients from 0 to ${LIMITS.clients}.`);
+        }
+      }
+      if (associate.personId === undefined) problem(`${at}.personId`, `${at}.personId is required: a person's id as text, or null.`);
+      else if (associate.personId !== null) {
+        if (!isPersonId(associate.personId)) problem(`${at}.personId`, `${at}.personId must be a person's id as text, or null.`);
+        else if (linked.has(associate.personId)) problem(`${at}.personId`, `${at}.personId links someone already linked to another associate.`);
+        else linked.add(associate.personId);
+      }
+    });
+  }
+
+  clientMap('state.picks', state.picks, (field, pick) => {
+    onlyKeys(field, pick, PICK_KEYS);
+    if (pick.associateId === undefined) problem(`${field}.associateId`, `${field}.associateId is required.`);
+    else if (pick.associateId !== null && !ids.has(pick.associateId)) {
+      problem(`${field}.associateId`, `${field}.associateId must be the id of one of this scenario's associates, or null.`);
+    }
+    if (pick.seenSecondChairId === undefined) problem(`${field}.seenSecondChairId`, `${field}.seenSecondChairId is required.`);
+    else if (pick.seenSecondChairId !== null && !isPersonId(pick.seenSecondChairId)) {
+      problem(`${field}.seenSecondChairId`, `${field}.seenSecondChairId must be a person's id as text, or null.`);
+    }
+  });
+
+  if (typeof state.relief !== 'boolean') problem('state.relief', 'state.relief must be true or false.');
+}
+
 /**
  * The problems with a POST or PUT body, { name, state } (and `version` on a
  * PUT), as [{ field, message }]: the name, then the version, then the state.
@@ -312,6 +407,9 @@ const SCENARIO_COLUMNS = 'id, name, state, version, created_by_username, updated
 
 // The list: newest save first, with the people leaving by id and their name
 // on the People list now (null for an id no longer on it), in the state's order
+// A hire scenario (WP9) has no people leaving and no stage; its associates
+// are listed instead, each with the name of the person linked to it now (null
+// for none, or for an id no longer on the People list), in the state's order
 const LIST_SCENARIOS_SQL = `
   SELECT s.id, s.name, s.state->>'kind' AS kind, s.state->>'currentStage' AS current_stage, s.version,
          s.created_by_username, s.updated_by_username, s.created_at, s.updated_at,
@@ -321,7 +419,14 @@ const LIST_SCENARIOS_SQL = `
                     CASE WHEN jsonb_typeof(s.state->'departingIds') = 'array' THEN s.state->'departingIds' ELSE '[]'::jsonb END
                   ) WITH ORDINALITY AS d(id, n)
              LEFT JOIN people p ON p.id::text = d.id
-         ), '[]'::jsonb) AS leaving
+         ), '[]'::jsonb) AS leaving,
+         COALESCE((
+           SELECT jsonb_agg(jsonb_build_object('id', a.value->>'id', 'label', a.value->>'label', 'person', p.name) ORDER BY a.n)
+             FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(s.state->'associates') = 'array' THEN s.state->'associates' ELSE '[]'::jsonb END
+                  ) WITH ORDINALITY AS a(value, n)
+             LEFT JOIN people p ON p.id::text = a.value->>'personId'
+         ), '[]'::jsonb) AS associates
     FROM scenarios s
    ORDER BY s.updated_at DESC, s.id DESC`;
 
@@ -389,6 +494,11 @@ module.exports = {
   EXECUTION_KEYS,
   TASK_KEYS,
   COMMUNICATION_KEYS,
+  HIRE_STATE_KEYS,
+  ASSOCIATE_KEYS,
+  TARGET_KINDS,
+  PICK_KEYS,
+  HYPOTHETICAL_ID,
   LIMITS,
   MAX_DETAILS,
   checkState,

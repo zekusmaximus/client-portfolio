@@ -419,7 +419,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();

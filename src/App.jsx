@@ -13,15 +13,13 @@ import PartnershipAnalytics from './PartnershipAnalytics';
 import LoginPage from './LoginPage';
 import ChangePasswordDialog from './ChangePasswordDialog';
 import PeopleDialog from './PeopleDialog';
-import { scenarioDirty } from './utils/scenarioState';
+import { unsavedChanges } from './utils/scenarioState';
 import './App.css';
 
-// Whether the open scenario has unsaved changes, with an API that saves
-// scenarios (without one nothing could be saved, and nothing is asked)
-const unsavedScenario = () => {
-  const state = usePortfolioStore.getState();
-  return state.scenarioFeature === true && scenarioDirty(state);
-};
+// Whether the open scenario has unsaved changes, with an API that can save
+// it (without one nothing could be saved, and nothing is asked: WP8, and for
+// a hire scenario WP9's hire-scenarios)
+const unsavedScenario = () => unsavedChanges(usePortfolioStore.getState());
 
 function App() {
   const {
