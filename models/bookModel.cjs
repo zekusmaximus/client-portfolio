@@ -15,12 +15,14 @@ const { buildBook } = require('../utils/book.cjs');
  * the People list, built by buildBook. Returns buildBook's result plus
  * `people`, the People list rows as read ({ id, name, role, active }), so a
  * transition plan checks its roster against the list the book was built from.
- * Two queries, not one snapshot (WP2).
+ * Two queries, not one snapshot (WP2). `q` runs them: the pool, or one
+ * connection inside a transaction, which scripts/eval-ai.cjs (Tier 2 WP11)
+ * opens read-only, so both queries then see one snapshot.
  */
-async function loadBook(now = new Date()) {
+async function loadBook(now = new Date(), q = db) {
   const [clients, { rows: people }] = await Promise.all([
-    clientModel.listWithMetrics(),
-    db.query('SELECT id, name, role, active FROM people'),
+    clientModel.listWithMetrics(q),
+    q.query('SELECT id, name, role, active FROM people'),
   ]);
   return { ...buildBook({ people, clients, now }), people };
 }

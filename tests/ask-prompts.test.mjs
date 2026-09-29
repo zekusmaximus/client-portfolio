@@ -18,6 +18,7 @@ const {
   ASK_INSTRUCTIONS,
   BRIEF_HEADINGS,
   QUESTION_MAX,
+  ASK_MAX_TOKENS,
   systemBlocks,
   askTurn,
   briefTurn,
@@ -97,6 +98,13 @@ test('the brief turn asks for the five headings of T6, in order, and carries no 
     assert.ok(after.length > 40 && after.endsWith('.'), `${heading}: ${after}`);
   }
   assert.ok(!turn.includes('<question>'));
+});
+
+// T11's budget for Ask and the brief, which routes/ai.cjs sends and
+// scripts/eval-ai.cjs (Tier 2 WP11) asks with; import-db and routes check
+// the recorded request's max_tokens.
+test('ASK_MAX_TOKENS is 32,000, the one budget for Ask, the brief and the evaluation', () => {
+  assert.equal(ASK_MAX_TOKENS, 32000);
 });
 
 test('checkQuestion: a string of 1 to 2,000 characters after trimming, otherwise the 400 message', () => {
