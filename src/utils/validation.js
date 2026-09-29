@@ -74,12 +74,13 @@ export const VALIDATION_RULES = {
     }
   },
   
+  // Blank is "Not set", as the server allows (utils/clientRules.cjs): the
+  // form used to require a cadence and fill As-Needed where none was set
   interaction_frequency: {
-    required: true,
+    required: false,
     allowedValues: ['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed'],
     errorMessages: {
-      required: 'Interaction frequency is required',
-      allowedValues: 'Interaction frequency must be one of: Daily, Weekly, Monthly, Quarterly, As-Needed'
+      allowedValues: 'Interaction frequency must be one of: Daily, Weekly, Monthly, Quarterly, As-Needed, or Not set'
     }
   },
   

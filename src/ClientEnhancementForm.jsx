@@ -80,7 +80,8 @@ const ClientEnhancementForm = ({ onClose }) => {
     second_chair_id: '',
     originator_id: '',
     originator_is_firm: false,
-    interaction_frequency: 'As-Needed',
+    // '' is "Not set": nobody has recorded the cadence yet
+    interaction_frequency: '',
     // null is "Not rated": nobody has judged the relationship yet
     stickiness: null,
     high_maintenance: false,
@@ -135,7 +136,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         second_chair_id: '',
         originator_id: '',
         originator_is_firm: false,
-        interaction_frequency: 'As-Needed',
+        interaction_frequency: '',
         stickiness: null,
         high_maintenance: false,
         notes: '',
@@ -594,19 +595,24 @@ const ClientEnhancementForm = ({ onClose }) => {
             </div>
           </div>
 
-          {/* Interaction Frequency */}
+          {/* Interaction Frequency: "Not set" ('') until someone records it,
+              kept when the client is saved for another reason (an unset
+              cadence counts as effort 1, As-Needed as 0.5) */}
           <div className="space-y-3">
-            <Label className="text-sm font-medium">Interaction Frequency *</Label>
+            <Label className="text-sm font-medium">Interaction Frequency</Label>
             <RadioGroup
               key={`interaction-freq-${formData.interaction_frequency}`}
-              value={formData.interaction_frequency}
-              onValueChange={(value) => handleFieldChange('interaction_frequency', value)}
+              value={formData.interaction_frequency || 'none'}
+              onValueChange={(value) => handleFieldChange('interaction_frequency', value === 'none' ? '' : value)}
               className="flex flex-wrap gap-x-4 gap-y-2"
             >
-              {['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed'].map((freq) => (
-                <div key={freq} className="flex items-center space-x-2">
-                  <RadioGroupItem value={freq} id={`freq-${freq}`} />
-                  <Label htmlFor={`freq-${freq}`}>{freq}</Label>
+              {[
+                ...['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed'].map((freq) => [freq, freq]),
+                ['none', 'Not set'],
+              ].map(([val, label]) => (
+                <div key={val} className="flex items-center space-x-2">
+                  <RadioGroupItem value={val} id={`freq-${val}`} />
+                  <Label htmlFor={`freq-${val}`}>{label}</Label>
                 </div>
               ))}
             </RadioGroup>

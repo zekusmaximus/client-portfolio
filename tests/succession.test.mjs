@@ -475,6 +475,33 @@ test('the form\'s preview equals what the save returns: an edit, through clientF
   }
 });
 
+// WP6's candidate (a) (docs/plans/tier-2.md): the form filled a client with no
+// cadence as As-Needed, so its preview, and the save, halved its effort (the
+// unset cadence's 1 to 0.5) and could drop its complexity. It opens as Not
+// set now: the preview is the client's own figures, and a save for another
+// reason keeps them. Stored NULL (a POST without the field) or '' (the import)
+test('the form\'s preview equals what the save returns: a client with no cadence stays unset, effort 1 (1.5 a handful), when saved for another reason', () => {
+  for (const cadence of [null, '']) {
+    for (const [handful, risk, effort, complexity] of [[false, 'Medium', 1, 0], [true, 'Medium', 1.5, 1], [true, 'High', 1.5, 2]]) {
+      const label = JSON.stringify({ cadence, handful, risk });
+      const stored = apiClient({
+        id: 7, name: 'Unset Co', lead_id: 4, stickiness: null, interaction_frequency: cadence, high_maintenance: handful,
+        conflict_risk: risk, revenues: [{ year: 2026, revenue_amount: '40000.00' }],
+      });
+      assert.deepEqual([stored.effort, successionMetrics(stored).transitionComplexity], [effort, complexity], label);
+      const form = clientFormData(stored);
+      assert.equal(form.interaction_frequency, '', label);
+      assert.equal(pageInputs(form).effort, effort, `${label}: the preview's effort`);
+      assert.deepEqual(preview(form), successionMetrics(stored), `${label}: opened, the client's own figures`);
+      // Saved with only its Stickiness changed
+      const rated = { ...form, stickiness: 4 };
+      const after = saved(rated);
+      assert.deepEqual([after.interaction_frequency, after.effort, after.transitionComplexity], ['', effort, complexity], `${label}: saved`);
+      assert.deepEqual(preview(rated), pick3(after), `${label}: saved`);
+    }
+  }
+});
+
 test('the form\'s preview equals what the save returns: a new client, from an empty form', () => {
   const empty = clientFormData({}, new Date('2026-09-29T12:00:00Z'));
   assert.deepEqual(preview(empty), { relationshipType: 'orphaned', transitionComplexity: 0, successionRisk: 7 }, 'no lead yet');
@@ -495,7 +522,7 @@ test('the form\'s preview equals what the save returns: a new client, from an em
       originator_id: id(),
       originator_is_firm: rand() < 0.3,
       stickiness: rand() < 0.3 ? null : 1 + Math.floor(rand() * 5),
-      interaction_frequency: choose(rand, clientRules.CADENCES),
+      interaction_frequency: choose(rand, ['', ...clientRules.CADENCES]),
       high_maintenance: rand() < 0.3,
       practiceArea: clientRules.PRACTICE_AREAS.filter(() => rand() < 0.2),
       conflict_risk: choose(rand, clientRules.CONFLICT_RISKS),

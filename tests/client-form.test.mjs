@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { clientFormData, clientRequestBody, revenuesToSend, formErrors, mergeAfterConflict, SEE_ABOVE } from '../src/utils/clientForm.js';
-import { validateField, sanitizeFormData } from '../src/utils/validation.js';
+import { validateField, validateClientForm, sanitizeFormData } from '../src/utils/validation.js';
 
 // What the database holds after the form saves `form`
 const stored = (form) => {
@@ -47,10 +47,11 @@ test('a stored client fills the form with its name and notes as stored, and ever
     notes: "O'Brien asked about R&D < 5%",
     revenues: [{ year: 2026, revenue_amount: '40000.00' }],
   });
-  // The defaults, and one empty revenue row in `now`'s year
+  // The defaults, and one empty revenue row in `now`'s year. No cadence is
+  // Not set (''): until WP6's candidate (a) was fixed, the form filled As-Needed
   assert.deepEqual(clientFormData({ id: 1, name: 'Plain' }, new Date('2027-01-15T12:00:00Z')), {
     name: 'Plain', practiceArea: [], conflict_risk: 'Medium', lead_id: '', second_chair_id: '', originator_id: '',
-    originator_is_firm: false, interaction_frequency: 'As-Needed', stickiness: null, high_maintenance: false, notes: '',
+    originator_is_firm: false, interaction_frequency: '', stickiness: null, high_maintenance: false, notes: '',
     revenues: [{ year: 2027, revenue_amount: '' }],
   });
 });
@@ -101,6 +102,31 @@ test('a client nobody has rated opens as Not rated, so saving it for another rea
   for (const stickiness of [1, 2, 3, 4, 5]) {
     assert.equal(clientFormData({ name: 'Rated', stickiness }).stickiness, stickiness);
   }
+});
+
+// WP6's candidate (a) (docs/plans/tier-2.md): the form filled a client with no
+// cadence as As-Needed and required one, so saving the client for any reason
+// set As-Needed and halved its effort (the unset cadence's 1 to 0.5). As with
+// stickiness (T5), it opens as Not set ('') and the save sends '' back, which
+// the API stores as sent, the import writes for a blank cell and the history
+// reads as NULL's "not set"
+test('a client with no cadence opens as Not set, so saving it for another reason keeps it unset; a cadence stays', () => {
+  for (const cadence of [null, undefined, '']) {
+    const form = clientFormData({ ...CLIENT, interaction_frequency: cadence });
+    assert.equal(form.interaction_frequency, '', String(cadence));
+    assert.equal(validateField('interaction_frequency', form.interaction_frequency), null, `${cadence}: the form does not require one`);
+    const rated = { ...form, stickiness: 2 };
+    assert.deepEqual(validateClientForm(rated), {}, `${cadence}: saved for its Stickiness`);
+    assert.equal(clientRequestBody(sanitizeFormData(rated)).interaction_frequency, '', `${cadence}: the save sends none`);
+  }
+  for (const cadence of ['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed']) {
+    const form = clientFormData({ ...CLIENT, interaction_frequency: cadence });
+    assert.equal(form.interaction_frequency, cadence);
+    assert.equal(clientRequestBody(sanitizeFormData(form)).interaction_frequency, cadence);
+  }
+  // A value off the list is still refused
+  assert.equal(validateField('interaction_frequency', 'Hourly'),
+    'Interaction frequency must be one of: Daily, Weekly, Monthly, Quarterly, As-Needed, or Not set');
 });
 
 // The save's side (docs/plans/tier-2.md, WP4): handleSave's revenue rows and the
@@ -208,6 +234,22 @@ test('mergeAfterConflict: practice areas as a set, revenue as a save sends it, t
   assert.deepEqual([merge.kept, merge.formData.stickiness, merge.formData.notes], [['stickiness'], null, 'By A']);
   // Nothing changed on either side
   assert.deepEqual(mergeAfterConflict(base, base, base), { formData: base, theirs: [], kept: [], clashes: [] });
+});
+
+// A client with no cadence may be NULL (a POST without the field, an older
+// row) or '' (the import's blank cell, a save through the form): both open as
+// Not set, so neither side has changed it
+test('mergeAfterConflict: a cadence unset on both sides is no change, whichever spelling each side stored; one the other save set is theirs', () => {
+  const base = formOf({ interaction_frequency: null });
+  const mine = { ...base, notes: 'Typed by B' };
+  let merge = mergeAfterConflict(base, mine, formOf({ interaction_frequency: '', stickiness: 2 }));
+  assert.deepEqual([merge.theirs, merge.kept, merge.clashes], [['stickiness'], ['notes'], []]);
+  assert.deepEqual([merge.formData.interaction_frequency, merge.formData.stickiness], ['', 2]);
+  merge = mergeAfterConflict(base, mine, formOf({ interaction_frequency: 'Weekly' }));
+  assert.deepEqual([merge.theirs, merge.kept, merge.formData.interaction_frequency], [['interaction_frequency'], ['notes'], 'Weekly']);
+  // This partner setting one is an edit, kept
+  merge = mergeAfterConflict(base, { ...base, interaction_frequency: 'Monthly' }, formOf({ interaction_frequency: '' }));
+  assert.deepEqual([merge.theirs, merge.kept, merge.clashes, merge.formData.interaction_frequency], [[], ['interaction_frequency'], [], 'Monthly']);
 });
 
 test('formErrors puts each detail of a 400 beside its field, a revenue entry beside the form row that sent it, and the rest under general', () => {

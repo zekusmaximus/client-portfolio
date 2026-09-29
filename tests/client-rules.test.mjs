@@ -109,6 +109,20 @@ describe('the page\'s copy (src/utils/validation.js) equals the server\'s', () =
     assert.deepEqual(VALIDATION_RULES.interaction_frequency.allowedValues, CADENCES);
   });
 
+  // WP6's candidate (a): the form required a cadence and filled As-Needed
+  // where none was set; like the server, it allows none ("Not set")
+  test('no cadence: allowed by the form, as by the server; a value off the list refused by both', () => {
+    assert.equal(VALIDATION_RULES.interaction_frequency.required, false);
+    for (const none of ['', null, undefined]) {
+      assert.equal(validateField('interaction_frequency', none), null, String(none));
+      assert.deepEqual(detailsFor({ interaction_frequency: none }), [], String(none));
+    }
+    for (const other of ['Hourly', 'weekly', 'As Needed']) {
+      assert.notEqual(validateField('interaction_frequency', other), null, other);
+      assert.deepEqual(detailsFor({ interaction_frequency: other }).map((d) => d.field), ['interaction_frequency'], other);
+    }
+  });
+
   test('the name\'s pattern, length and messages', () => {
     const page = VALIDATION_RULES.name;
     assert.deepEqual([page.pattern.source, page.pattern.flags], [NAME_PATTERN.source, NAME_PATTERN.flags]);
@@ -396,6 +410,8 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
       assert.deepEqual(checkClient(body), [], `${client.name}, as typed`);
       // The stored text goes out as it is: nothing escaped or unescaped
       assert.deepEqual([body.name, body.notes], [client.name, client.notes || '']);
+      // and no cadence as none (WP6's candidate (a); the form sent As-Needed)
+      assert.equal(body.interaction_frequency, client.interaction_frequency || '', `${client.name}: the cadence as stored`);
     }
   });
 
@@ -418,7 +434,8 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
         second_chair_id: pick(['', '7', '8']),
         originator_id: pick(['', '1', '9']),
         originator_is_firm: next() < 0.3,
-        interaction_frequency: pick(CADENCES),
+        // '' is Not set (WP6's candidate (a); the form required one until then)
+        interaction_frequency: pick(['', ...CADENCES]),
         stickiness: pick([null, ...STICKINESS]),
         high_maintenance: next() < 0.3,
         notes: Array.from({ length: Math.floor(next() * 30) }, () => pick(noteChars)).join(''),

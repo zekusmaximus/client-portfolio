@@ -1412,6 +1412,43 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(await changeRows(created.id), []);
     });
 
+    // WP6's candidate (a) (docs/plans/tier-2.md): the client form filled a
+    // client with no cadence as As-Needed, so opening one and saving it,
+    // unchanged or for another reason, wrote As-Needed and halved its effort
+    // (History: "Cadence: not set → As-Needed"). Opened in the form now, it
+    // stays unset, whether stored NULL (a POST without the field) or '' (the
+    // import's blank cell). A page-only fix: the route stores what it is sent
+    test('a client with no cadence, opened in the form and saved unchanged, writes nothing; saved with only its Stickiness changed, logs only that and keeps its effort', async () => {
+      const kevin = await seed('Kevin');
+      for (const cadence of [null, '']) {
+        const created = await addClient({ lead: kevin });
+        await db.query('UPDATE clients SET interaction_frequency = $1, high_maintenance = true, stickiness = NULL WHERE id::text = $2',
+          [cadence, String(created.id)]);
+        const before = await storedClient(created.id);
+        const loaded = await listedClient(created.id);
+        assert.deepEqual([loaded.interaction_frequency, loaded.effort], [cadence, 1.5], `${cadence}: a handful, effort 1 × 1.5`);
+        const form = clientFormData(loaded);
+        const expected = { expected_updated_at: loaded.updated_at_exact };
+        let res = await call('PUT', `/api/data/clients/${created.id}`, { ...formSaveBody(form), ...expected });
+        assert.equal(res.status, 200, res.text);
+        assert.equal(res.body.client.updated_at_exact, loaded.updated_at_exact, `${cadence}: updated_at as it was`);
+        assert.deepEqual(await storedClient(created.id), before, `${cadence}: nothing written`);
+        assert.deepEqual(await changeRows(created.id), [], `${cadence}: nothing logged`);
+
+        res = await call('PUT', `/api/data/clients/${created.id}`, { ...formSaveBody({ ...form, stickiness: 5 }), ...expected });
+        assert.equal(res.status, 200, res.text);
+        assert.deepEqual((await changeRows(created.id)).map((r) => [r.source, r.changes]), [['form', { stickiness: { from: null, to: 5 } }]], String(cadence));
+        const { client } = res.body;
+        assert.deepEqual([client.effort, client.transitionComplexity], [loaded.effort, loaded.transitionComplexity], `${cadence}: the effort as it was`);
+        // Stored as the page sends none, which the history, the scorer and the book read as NULL
+        const after = await storedClient(created.id);
+        assert.deepEqual([after.interaction_frequency, after.stickiness], ['', 5], String(cadence));
+        const rest = (row) => Object.fromEntries(Object.entries(row)
+          .filter(([column]) => !['interaction_frequency', 'stickiness', 'updated_at', 'updated_by'].includes(column)));
+        assert.deepEqual(rest(after), rest(before), `${cadence}: every other column as it was`);
+      }
+    });
+
     test('400 "Validation failed" with a detail for an expected_updated_at that is not the updated_at_exact the API sent, the Date JSON gives among them; before the client is looked up; nothing written', async () => {
       const kevin = await seed('Kevin');
       const created = await addClient({ lead: kevin });
