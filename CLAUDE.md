@@ -25,9 +25,15 @@ gbacpod.com by Jeff on 2026-09-28. WP6 (who changed what, and edit
 conflicts) merged as PR #47 (`e9b176f`) on 2026-09-29 at Jeff's instruction;
 the nightly backup since is green and counts `client_changes` (Jeff,
 2026-09-29), and his other after-deploy checks are open. WP7
-(succession metrics on the server) is in progress: PR #48 is open from
-`claude/practical-fermi-izuz9g`, and it adds no table or column, so no
-backup gate. Run the rest in order, and
+(succession metrics on the server) merged as PR #48 (`b3e4dba`) on
+2026-09-29 and is deployed; Jeff's Dashboard figures were the same before
+and after (risk High 0, Medium 83, Low 1; average complexity 0.2; Secondary
+83, Shared 1), as its PR predicted for this book, and his two other checks
+(Stage 2's "Stickiness not rated" badge, Render on `b3e4dba`) are open.
+WP6's candidate (a), the client form writing As-Needed over an unset
+cadence, is fixed outside the numbered packages on
+`claude/dazzling-wright-vusye8` (a page-only change). WP8 (saved scenarios)
+is next. Run the rest in order, and
 update its status table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
