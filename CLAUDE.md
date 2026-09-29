@@ -24,7 +24,7 @@ repair preview between them finding nothing to repair, and was verified on
 gbacpod.com by Jeff on 2026-09-28. WP6 (who changed what, and edit
 conflicts) merged as PR #47 (`e9b176f`) on 2026-09-29 at Jeff's instruction;
 his after-deploy checks and the green backup PR #47 asked for are open. WP7
-(succession metrics on the server) is in progress: its PR is open from
+(succession metrics on the server) is in progress: PR #48 is open from
 `claude/practical-fermi-izuz9g`, and it adds no table or column, so no
 backup gate. Run the rest in order, and
 update its status table when you finish one. A package that changes a
