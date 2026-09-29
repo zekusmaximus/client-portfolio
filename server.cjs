@@ -146,7 +146,10 @@ app.get('/api/health', async (req, res) => {
     // Scenarios saves a hire scenario (hire-scenarios, Tier 2 WP9): an API
     // with saved-scenarios but without it refuses the state's kind 'hire'
     // (400), so the page then keeps "Add an associate" in the browser only.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios'],
+    // And before the AI tab offers "Ask a follow-up", Hide and "Show hidden"
+    // (ai-threads, Tier 2 WP10): an API without it ignores parentId and
+    // answers a new question, and has no hide or show routes.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios', 'hire-scenarios', 'ai-threads'],
     services: {}
   };
 

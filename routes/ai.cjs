@@ -5,14 +5,22 @@ const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs'
 const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs');
 const { loadBook } = require('../models/bookModel.cjs');
 const { systemBlocks, askTurn, briefTurn, checkQuestion, FIRM_TIME_ZONE } = require('../utils/askPrompts.cjs');
-const { answerRow, readAnswerId, readListQuery } = require('../utils/aiAnswers.cjs');
+const { answerRow, bookHash, readAnswerId, readListQuery, listRow } = require('../utils/aiAnswers.cjs');
+const {
+  systemHash, turnContent, threadHistory, readParentId, checkFollowUp, threadPlace, earlierTurns,
+} = require('../utils/aiThreads.cjs');
 const { sseEvent, ssePing, wantsStream, pingInterval, SSE_HEADERS } = require('../utils/sse.cjs');
-const { saveAnswer, listAnswers, getAnswer, monthSummary } = require('../models/aiAnswerModel.cjs');
+const {
+  saveAnswer, listAnswers, getAnswer, getThread, setHidden, monthSummary,
+} = require('../models/aiAnswerModel.cjs');
 
 // The AI routes that work on the whole book (docs/plans/tier-1.md): the book
 // itself, as the AI sees it (WP2, utils/book.cjs), Ask the book and the
 // brief (WP3, utils/askPrompts.cjs), which send it, and the saved answers
-// (WP4, utils/aiAnswers.cjs), which every AI route writes.
+// (WP4, utils/aiAnswers.cjs), which every AI route writes. Since Tier 2 WP10
+// (S14, S15) an Ask may follow up a saved answer (utils/aiThreads.cjs), the
+// list marks an answer given on an earlier book, and any partner can hide an
+// answer from the list and show it again.
 //
 // Sign-in for every route. The two AI rate limiters (D11, T16) only on the
 // POST routes, which call the model: opening the book or the saved answers
@@ -70,9 +78,22 @@ const PING_MS = pingInterval(process.env.AI_STREAM_PING_MS);
 // trimmed, and a refusal nothing rescued discards what streamed (T10).
 // When the page's connection closes, the route stops writing and lets the
 // call finish and save (T15): the answer appears under Recent answers.
-async function answer(req, res, { kind, question }) {
+//
+// A follow-up (Tier 2 WP10, S14) is an Ask with `parentId`, the answer it
+// follows: the route reads the thread up to its first answer and refuses,
+// before any call, what checkFollowUp refuses (a missing answer 404; a
+// transition plan, a full thread, or an answer declined, cut off or saved
+// without its turn 400; a book or instructions changed since 409). The
+// request then sends the same system blocks, the thread's earlier turns as
+// saved (threadHistory) and the new question; the answer is saved with its
+// parent. Every answer that can be followed up is saved with its turn
+// (turnContent). The answer adds `parentId`, `followUp` (its number in the
+// thread, 0 for a first answer) and `canFollowUp`. The ai_call line's label
+// is `follow-up`.
+async function answer(req, res, { kind, question, parentId = null }) {
   const streaming = wantsStream(req.get('accept'));
   const userId = req.user.userId;
+  const label = parentId === null ? kind : 'follow-up';
   // open: the stream's headers are sent; closed: the page's connection is gone
   let open = false;
   let closed = false;
@@ -88,7 +109,7 @@ async function answer(req, res, { kind, question }) {
     if (res.writableFinished) return;
     closed = true;
     stopPing();
-    if (streaming) console.warn(JSON.stringify({ event: 'ai_stream_closed', label: kind, userId, opened: open }));
+    if (streaming) console.warn(JSON.stringify({ event: 'ai_stream_closed', label, userId, opened: open }));
   });
 
   try {
@@ -97,13 +118,23 @@ async function answer(req, res, { kind, question }) {
     if (book.clientCount === 0) {
       return res.status(400).json({ success: false, error: 'The book has no clients yet.' });
     }
+    const system = systemBlocks(book.text);
+    const current = { systemSha: systemHash(system), bookSha: bookHash(book.text) };
+    let chain = [];
+    if (parentId !== null) {
+      chain = await getThread(parentId);
+      const problem = checkFollowUp(chain, current);
+      if (problem) return res.status(problem.status).json({ success: false, error: problem.error });
+    }
+    const prompt = kind === 'ask' ? askTurn(question, now) : briefTurn(now);
     const started = Date.now();
     const result = await complete({
-      system: systemBlocks(book.text),
-      prompt: kind === 'ask' ? askTurn(question, now) : briefTurn(now),
+      system,
+      prompt,
+      history: threadHistory(chain.map((turn) => turn.content)),
       maxTokens: MAX_TOKENS,
       userId,
-      label: kind,
+      label,
       ...(streaming ? {
         onStart: () => {
           if (closed) return;
@@ -116,6 +147,7 @@ async function answer(req, res, { kind, question }) {
         onText: (text) => write(sseEvent('text', { text })),
       } : {}),
     });
+    const content = turnContent({ system, prompt, result });
     const { id, saved } = await saveAnswer(answerRow({
       kind,
       question,
@@ -125,7 +157,13 @@ async function answer(req, res, { kind, question }) {
       reportingYear: book.reportingYear,
       durationMs: Date.now() - started,
       model: AI_MODEL,
-    }), { label: kind, userId });
+      parentId,
+      content,
+    }), { label, userId });
+    const place = threadPlace([...chain, {
+      id, parent_id: parentId, kind, answer: result.text, refused: result.refused, truncated: result.truncated,
+      book_sha256: current.bookSha, content,
+    }], current);
     const answered = {
       answer: result.text,
       truncated: result.truncated,
@@ -137,6 +175,9 @@ async function answer(req, res, { kind, question }) {
       costUsd: result.costUsd,
       reportingYear: book.reportingYear,
       timestamp: now.toISOString(),
+      parentId,
+      followUp: place.followUp,
+      canFollowUp: saved && place.canFollowUp,
     };
     if (open) {
       stopPing();
@@ -152,7 +193,7 @@ async function answer(req, res, { kind, question }) {
     // shows it) and needs no stack trace. Keep the stack trace for unexpected
     // failures only.
     const expected = error?.code === 'AI_NOT_CONFIGURED' || typeof error?.status === 'number';
-    if (!expected) console.error(`ai_${kind} failed:`, error);
+    if (!expected) console.error(`ai_${label} failed:`, error);
     const { status, message } = describeError(error);
     if (open) {
       write(sseEvent('error', { error: message }));
@@ -163,13 +204,17 @@ async function answer(req, res, { kind, question }) {
   }
 }
 
-// POST /api/ai/ask { question } - one question on the whole book. The
-// question is trimmed at its ends and otherwise sent as written.
+// POST /api/ai/ask { question, parentId? } - one question on the whole
+// book, or with parentId a follow-up to that saved answer (WP10). The
+// question is trimmed at its ends and otherwise sent as written. A follow-up
+// counts once on the AI limiters, as any Ask (T16).
 router.post('/ask', aiUserLimiter, aiGlobalLimiter, (req, res) => {
-  const { question } = req.body || {};
+  const { question, parentId: parent } = req.body || {};
   const problem = checkQuestion(question);
   if (problem) return res.status(400).json({ success: false, error: problem });
-  return answer(req, res, { kind: 'ask', question: question.trim() });
+  const { parentId, error } = readParentId(parent);
+  if (error) return res.status(400).json({ success: false, error });
+  return answer(req, res, { kind: 'ask', question: question.trim(), parentId });
 });
 
 // POST /api/ai/brief {} - the brief under T6's five headings.
@@ -182,16 +227,26 @@ const answersFailed = (res, error) => {
   return res.status(500).json({ success: false, error: 'Failed to read the saved answers.' });
 };
 
-// GET /api/ai/answers?before=<id>&limit=20 - newest first: { success,
+// Today's book, and the hashes a thread is checked against (WP10)
+async function currentBook() {
+  const book = await loadBook(new Date());
+  return { book, systemSha: systemHash(systemBlocks(book.text)), bookSha: bookHash(book.text) };
+}
+
+// GET /api/ai/answers?before=<id>&limit=20&hidden=0 - newest first: { success,
 // answers: [{ id, kind, question, client_name, asked_by_username, created_at,
-// served_by, truncated, refused, cost_usd, preview }], hasMore }. preview is
-// the answer's first 200 characters; cost_usd is NUMERIC, so text (or null).
+// served_by, truncated, refused, cost_usd, preview, parent_id, earlier_book,
+// hidden_at, hidden_by_username }], hasMore }. preview is the answer's first
+// 200 characters; cost_usd is NUMERIC, so text (or null). The answers shown,
+// or with hidden=1 the hidden ones (WP10, "Show hidden"); earlier_book is
+// true for an answer given on a book other than today's (built here, as the
+// book route builds it), null when the answer records none.
 router.get('/answers', async (req, res) => {
-  const { before, limit, error } = readListQuery(req.query);
+  const { before, limit, hidden, error } = readListQuery(req.query);
   if (error) return res.status(400).json({ success: false, error });
   try {
-    const { answers, hasMore } = await listAnswers({ before, limit });
-    return res.json({ success: true, answers, hasMore });
+    const [{ answers, hasMore }, { bookSha }] = await Promise.all([listAnswers({ before, limit, hidden }), currentBook()]);
+    return res.json({ success: true, answers: answers.map((row) => listRow(row, bookSha)), hasMore });
   } catch (err) {
     return answersFailed(res, err);
   }
@@ -210,18 +265,52 @@ router.get('/answers/summary', async (req, res) => {
   }
 });
 
-// GET /api/ai/answers/:id - one answer, whole; 404 for an id that is not a
-// positive integer or not found.
+const answerNotFound = (res) => res.status(404).json({ success: false, error: 'No such answer.' });
+
+// GET /api/ai/answers/:id - one answer, whole (not its stored turn); 404 for
+// an id that is not a positive integer or not found. From WP10 also its
+// place in its thread: `thread`, the answers before it, oldest first;
+// `follow_up`, its number (0 for a first answer); `can_follow_up`, whether a
+// follow-up to it may be asked now; and `earlier_book`.
 router.get('/answers/:id', async (req, res) => {
   const id = readAnswerId(req.params.id);
-  const notFound = () => res.status(404).json({ success: false, error: 'No such answer.' });
-  if (id === null) return notFound();
+  if (id === null) return answerNotFound(res);
   try {
     const row = await getAnswer(id);
-    return row ? res.json({ success: true, answer: row }) : notFound();
+    if (!row) return answerNotFound(res);
+    const [chain, current] = await Promise.all([getThread(id), currentBook()]);
+    const place = threadPlace(chain, current);
+    return res.json({
+      success: true,
+      answer: {
+        ...row,
+        earlier_book: row.book_sha256 === null ? null : row.book_sha256 !== current.bookSha,
+        follow_up: place.followUp,
+        can_follow_up: place.canFollowUp,
+        thread: earlierTurns(chain),
+      },
+    });
   } catch (err) {
     return answersFailed(res, err);
   }
 });
+
+// POST /api/ai/answers/:id/hide and /show (WP10, S15): any partner hides an
+// answer from the list, or shows it again; nothing deletes one. Answers
+// { success, answer: { id, hidden_at, hidden_by_username } } as the row now
+// is: hiding an answer already hidden keeps who hid it first. 404 as above.
+// No AI limiter (T16).
+const hiding = (show) => async (req, res) => {
+  const id = readAnswerId(req.params.id);
+  if (id === null) return answerNotFound(res);
+  try {
+    const row = await setHidden(id, req.user, show);
+    return row ? res.json({ success: true, answer: row }) : answerNotFound(res);
+  } catch (err) {
+    return answersFailed(res, err);
+  }
+};
+router.post('/answers/:id/hide', hiding(false));
+router.post('/answers/:id/show', hiding(true));
 
 module.exports = router;

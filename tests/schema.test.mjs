@@ -700,6 +700,19 @@ async function answersCatalog(db) {
 const answersRows = async (db) =>
   (await db.query('SELECT to_jsonb(a) AS row FROM ai_answers a ORDER BY id')).rows;
 
+// WP10's five columns (the section below): an answer saved before them has
+// none, and a database migrated past them gives each row the five, NULL
+const THREAD_COLUMNS = ['parent_id', 'content', 'hidden_at', 'hidden_by', 'hidden_by_username'];
+const withoutThreadColumns = (rows) => rows.map(({ row }) => ({
+  row: Object.fromEntries(Object.entries(row).filter(([key]) => !THREAD_COLUMNS.includes(key))),
+}));
+// The insert as it was before WP10 (answerRow's columns but parent_id and
+// content), so these answers can be saved on a database from before WP10 too
+const PRE_THREAD_COLUMNS = aiAnswers.ANSWER_COLUMNS.filter((column) => !THREAD_COLUMNS.includes(column));
+const INSERT_PRE_THREAD_ANSWER_SQL = `
+  INSERT INTO ai_answers (${PRE_THREAD_COLUMNS.join(', ')})
+  VALUES (${PRE_THREAD_COLUMNS.map((column, i) => (column === 'asked_by' ? `(SELECT id FROM users WHERE id = $${i + 1})` : `$${i + 1}`)).join(', ')})`;
+
 // Three saved answers, as the routes write them: an Ask by partner-a, a brief
 // by partner-b and a transition plan for one of seed()'s clients by partner-a
 async function saveAnswers(db) {
@@ -714,7 +727,7 @@ async function saveAnswers(db) {
     answerRow({ kind: 'brief', user: { userId: await userId('partner-b'), username: 'partner-b' }, result, bookText: 'book', reportingYear: 2025, durationMs: 21000, model: 'claude-opus-5' }),
     answerRow({ kind: 'transition-plan', client, user: { userId: await userId('partner-a'), username: 'partner-a' }, result, reportingYear: 2025, durationMs: 15000, model: 'claude-opus-5' }),
   ];
-  for (const row of rows) await db.query(INSERT_ANSWER_SQL, insertParams(row));
+  for (const row of rows) await db.query(INSERT_PRE_THREAD_ANSWER_SQL, PRE_THREAD_COLUMNS.map((column) => row[column]));
   return rows;
 }
 
@@ -723,7 +736,8 @@ describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
     await withDatabase(async (db) => {
       await applyInit(db);
       const catalog = await answersCatalog(db);
-      assert.deepEqual(catalog.columns.map((c) => [c.name, c.type, c.not_null]), [
+      // WP4's 25 columns; WP10's five follow them (checked in WP10's suite, below)
+      assert.deepEqual(catalog.columns.slice(0, 25).map((c) => [c.name, c.type, c.not_null]), [
         ['id', 'integer', true],
         ['kind', 'character varying(20)', true],
         ['question', 'text', false],
@@ -750,12 +764,13 @@ describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
         ['duration_ms', 'integer', false],
         ['created_at', 'timestamp with time zone', true],
       ]);
-      assert.deepEqual(catalog.constraints.map((c) => c.conname), ['ai_answers_asked_by_fkey', 'ai_answers_kind_check', 'ai_answers_pkey']);
-      assert.equal(catalog.constraints[0].definition, 'FOREIGN KEY (asked_by) REFERENCES users(id) ON DELETE SET NULL');
+      const wp4Constraints = catalog.constraints.filter((c) => !['ai_answers_hidden_by_fkey', 'ai_answers_parent_id_fkey'].includes(c.conname));
+      assert.deepEqual(wp4Constraints.map((c) => c.conname), ['ai_answers_asked_by_fkey', 'ai_answers_kind_check', 'ai_answers_pkey']);
+      assert.equal(wp4Constraints[0].definition, 'FOREIGN KEY (asked_by) REFERENCES users(id) ON DELETE SET NULL');
       // The check's text is PostgreSQL's deparse, which may vary by version: its kinds, and the inserts below
-      assert.match(catalog.constraints[1].definition, /^CHECK /);
-      for (const kind of ['ask', 'brief', 'transition-plan']) assert.ok(catalog.constraints[1].definition.includes(`'${kind}'`), kind);
-      assert.equal(catalog.constraints[2].definition, 'PRIMARY KEY (id)');
+      assert.match(wp4Constraints[1].definition, /^CHECK /);
+      for (const kind of ['ask', 'brief', 'transition-plan']) assert.ok(wp4Constraints[1].definition.includes(`'${kind}'`), kind);
+      assert.equal(wp4Constraints[2].definition, 'PRIMARY KEY (id)');
       assert.deepEqual(catalog.indexes.map((i) => i.indexname), ['ai_answers_pkey', 'idx_ai_answers_created_at']);
       assert.match(catalog.indexes[1].indexdef, /USING btree \(created_at DESC, id DESC\)$/);
       // No key to clients (T12): reset-book would refuse, or a cascade empty the answers
@@ -807,7 +822,8 @@ describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
       // Every client gains updated_by (NULL) from WP6's section of the file
       assert.deepEqual(withoutUpdatedBy(await bookSnapshot(db)), before);
       assert.deepEqual(await answersRows(db), []);
-      assert.equal((await answersCatalog(db)).columns.length, 25);
+      // WP4's 25 columns and WP10's five
+      assert.equal((await answersCatalog(db)).columns.length, 30);
     });
   });
 
@@ -1007,7 +1023,8 @@ describe('client_changes on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TES
       const after = await bookSnapshot(db);
       assert.ok(after.clients.every(({ row }) => row.updated_by === null));
       assert.deepEqual(withoutUpdatedBy(after), before.book);
-      assert.deepEqual(await answersRows(db), before.answers);
+      // Every answer gains WP10's five columns, NULL, from WP10's section of the file
+      assert.deepEqual(withoutThreadColumns(await answersRows(db)), before.answers);
       assert.deepEqual(await changesRows(db), []);
     });
   });
@@ -1242,7 +1259,8 @@ describe('scenarios on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SER
       await seedBook(db);
       await saveAnswers(db);
       await logChanges(db);
-      const state = async () => ({ book: await bookSnapshot(db), answers: await answersRows(db), changes: await changesRows(db) });
+      // Every answer gains WP10's five columns, NULL, from WP10's section of the file
+      const state = async () => ({ book: await bookSnapshot(db), answers: withoutThreadColumns(await answersRows(db)), changes: await changesRows(db) });
       const before = await state();
       assert.equal((await db.query("SELECT to_regclass('scenarios') AS t")).rows[0].t, null);
 
@@ -1325,6 +1343,220 @@ describe('scenarios on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SER
       assert.equal(result.code, 0, result.stdout + result.stderr);
       assert.match(result.stdout, /^Removed 5 clients and 10 revenue rows\. Accounts: 2 and people: 9, unchanged\.$/m);
       assert.deepEqual(await scenarioRows(db), before);
+    });
+  });
+});
+
+// --- AI answer threads and hiding (docs/plans/tier-2.md, S14, S15, WP10) ------
+
+// init-db.sql as it was before WP10: everything above its section. Applying
+// it to a migrated database is what a Render rollback to pre-WP10 code does.
+const THREADS_MARKER = '-- AI answer threads and hiding';
+const preThreadsSql = initSql.slice(0, initSql.indexOf(THREADS_MARKER));
+
+test('init-db.sql still contains the WP10 section marker the rollback tests cut at, with no data statement after it', () => {
+  assert.ok(initSql.indexOf(THREADS_MARKER) > initSql.indexOf(SCENARIOS_MARKER));
+  assert.doesNotMatch(preThreadsSql, /parent_id|hidden_at|hidden_by/);
+  const section = initSql.slice(initSql.indexOf(THREADS_MARKER));
+  assert.match(section, /^ALTER TABLE ai_answers ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES ai_answers\(id\);$/m);
+  // No backfill: nothing in the section writes a row
+  assert.doesNotMatch(section, /^\s*(INSERT|UPDATE|DELETE)\b/im);
+});
+
+// A thread as the routes write one (utils/aiThreads.cjs): partner-a's Ask,
+// partner-b's follow-up to it and partner-a's follow-up to that, each with
+// the turn a later follow-up replays; and saveAnswers()'s brief hidden by
+// partner-a. Returns the three new rows' ids.
+async function saveThread(db) {
+  const userId = async (username) => (await db.query('SELECT id FROM users WHERE username = $1', [username])).rows[0].id;
+  const a = { userId: await userId('partner-a'), username: 'partner-a' };
+  const b = { userId: await userId('partner-b'), username: 'partner-b' };
+  const turn = (question, text) => ({
+    system_sha256: 'f'.repeat(64),
+    messages: [
+      { role: 'user', content: `Today is 2026-09-29.\n\n<question>\n${question}\n</question>` },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: `sig ${question}` }, { type: 'text', text }] },
+    ],
+  });
+  const result = (text) => ({ text, servedBy: 'claude-opus-5', stopReason: 'end_turn', costUsd: 0.01, pricesReadOn: '2026-09-26', tokens: { inputTokens: 900, outputTokens: 90, cacheReadTokens: 800, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 } });
+  const ids = [];
+  for (const [question, text, user] of [['Who carries the most?', 'Kevin.', a], ['And after him?', 'Anna.', b], ['Why?', 'Her load.', a]]) {
+    const row = answerRow({ kind: 'ask', question, user, result: result(text), bookText: 'book', reportingYear: 2025, durationMs: 900, model: 'claude-opus-5', parentId: ids.at(-1) ?? null, content: turn(question, text) });
+    ids.push((await db.query(INSERT_ANSWER_SQL, insertParams(row))).rows[0].id);
+  }
+  const brief = (await db.query("SELECT id FROM ai_answers WHERE kind = 'brief'")).rows[0].id;
+  await db.query(aiAnswers.HIDE_ANSWER_SQL, [brief, a.userId, a.username]);
+  return ids;
+}
+
+describe('ai_answers threads and hiding on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  test('a new database has the five columns, nullable, the key to the parent and the key to users; a second start changes nothing', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      const catalog = await answersCatalog(db);
+      assert.deepEqual(catalog.columns.slice(25).map((c) => [c.name, c.type, c.not_null, c.default_value]), [
+        ['parent_id', 'integer', false, null],
+        ['content', 'jsonb', false, null],
+        ['hidden_at', 'timestamp with time zone', false, null],
+        ['hidden_by', 'integer', false, null],
+        ['hidden_by_username', 'character varying(255)', false, null],
+      ]);
+      const keys = Object.fromEntries(catalog.constraints.map((c) => [c.conname, c.definition]));
+      assert.equal(keys.ai_answers_parent_id_fkey, 'FOREIGN KEY (parent_id) REFERENCES ai_answers(id)');
+      assert.equal(keys.ai_answers_hidden_by_fkey, 'FOREIGN KEY (hidden_by) REFERENCES users(id) ON DELETE SET NULL');
+      // No key to clients (constraint 3): reset-book would refuse, or a cascade empty the answers
+      const { rows: toClients } = await db.query(CLIENT_FOREIGN_KEYS_SQL);
+      assert.deepEqual(toClients.map((k) => k.table_name), ['client_revenues']);
+
+      await seed(db);
+      await db.query('BEGIN');
+      // A parent must be an answer; an answer with a follow-up cannot be deleted (nothing deletes one)
+      assert.equal(await sqlState(db, "INSERT INTO ai_answers (kind, answer, model, parent_id) VALUES ('ask', '', 'claude-opus-5', 999999)"), '23503');
+      assert.equal(await sqlState(db, "INSERT INTO ai_answers (kind, answer, model, hidden_by) VALUES ('ask', '', 'claude-opus-5', 999999)"), '23503');
+      await saveAnswers(db);
+      const [root, second, third] = await saveThread(db);
+      assert.equal(await sqlState(db, 'DELETE FROM ai_answers WHERE id = $1', [root]), '23503');
+
+      // The thread reads root first, with each turn's content as stored
+      const { rows: thread } = await db.query(aiAnswers.THREAD_SQL, [third]);
+      assert.deepEqual(thread.map((t) => [t.id, t.parent_id, t.question, t.asked_by_username]), [
+        [root, null, 'Who carries the most?', 'partner-a'],
+        [second, root, 'And after him?', 'partner-b'],
+        [third, second, 'Why?', 'partner-a'],
+      ]);
+      assert.deepEqual(thread[1].content.messages[1].content, [{ type: 'thinking', thinking: '', signature: 'sig And after him?' }, { type: 'text', text: 'Anna.' }]);
+      assert.deepEqual((await db.query(aiAnswers.THREAD_SQL, [999999])).rows, []);
+
+      // Hidden by partner-a; hiding again keeps who and when; shown again clears all three
+      const { rows: [hidden] } = await db.query("SELECT id, hidden_at, hidden_by, hidden_by_username FROM ai_answers WHERE kind = 'brief'");
+      assert.ok(hidden.hidden_at instanceof Date);
+      assert.equal(hidden.hidden_by_username, 'partner-a');
+      await db.query(aiAnswers.HIDE_ANSWER_SQL, [hidden.id, null, 'partner-b']);
+      assert.deepEqual((await db.query(aiAnswers.ANSWER_HIDDEN_SQL, [hidden.id])).rows[0], { id: hidden.id, hidden_at: hidden.hidden_at, hidden_by_username: 'partner-a' });
+      await db.query(aiAnswers.SHOW_ANSWER_SQL, [hidden.id]);
+      assert.deepEqual((await db.query('SELECT hidden_at, hidden_by, hidden_by_username FROM ai_answers WHERE id = $1', [hidden.id])).rows[0],
+        { hidden_at: null, hidden_by: null, hidden_by_username: null });
+      // A session whose account is gone hides with the username alone
+      await db.query(aiAnswers.HIDE_ANSWER_SQL, [root, 999999, 'ghost']);
+      assert.deepEqual((await db.query('SELECT hidden_by, hidden_by_username FROM ai_answers WHERE id = $1', [root])).rows[0], { hidden_by: null, hidden_by_username: 'ghost' });
+      await db.query('ROLLBACK');
+
+      await applyInit(db);
+      assert.deepEqual(await answersCatalog(db), catalog, 'the second start dropped or changed something');
+    });
+  });
+
+  test('applying init-db.sql again leaves threads and hidden answers as they are', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      await saveThread(db);
+      const before = await answersRows(db);
+      assert.equal(before.length, 6);
+      assert.equal(before.filter(({ row }) => row.hidden_at !== null).length, 1);
+      await applyInit(db);
+      assert.deepEqual(await answersRows(db), before);
+    });
+  });
+
+  test('a pre-WP10 database migrates with every client, revenue row, person, answer, change and scenario intact; the five columns NULL on every answer (no backfill)', async () => {
+    await withDatabase(async (db) => {
+      await db.query(preThreadsSql);
+      await seedBook(db);
+      await saveAnswers(db);
+      await logChanges(db);
+      await saveScenarios(db);
+      const state = async () => ({ book: await bookSnapshot(db), changes: await changesRows(db), scenarios: await scenarioRows(db) });
+      const before = { ...(await state()), answers: await answersRows(db) };
+      assert.equal((await answersCatalog(db)).columns.length, 25);
+
+      await applyInit(db);
+      const after = await answersRows(db);
+      assert.deepEqual({ ...(await state()), answers: withoutThreadColumns(after) }, before);
+      assert.ok(after.every(({ row }) => THREAD_COLUMNS.every((column) => row[column] === null)));
+    });
+  });
+
+  test('a rollback start (the pre-WP10 file on a migrated database) succeeds and leaves the columns, the threads and who hid what', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      await saveThread(db);
+      const state = async () => ({ catalog: await answersCatalog(db), answers: await answersRows(db), book: await bookSnapshot(db) });
+      const before = await state();
+      assert.equal(before.answers.filter(({ row }) => row.parent_id !== null).length, 2);
+
+      await db.query(preThreadsSql);
+      assert.deepEqual(await state(), before);
+      // An answer the older code saves (its insert, without the new columns) has them NULL
+      await db.query(INSERT_PRE_THREAD_ANSWER_SQL, PRE_THREAD_COLUMNS.map((column) => before.answers[0].row[column] ?? null));
+      const { rows: [older] } = await db.query('SELECT parent_id, content, hidden_at FROM ai_answers ORDER BY id DESC LIMIT 1');
+      assert.deepEqual(older, { parent_id: null, content: null, hidden_at: null });
+      await db.query('DELETE FROM ai_answers WHERE id = (SELECT max(id) FROM ai_answers)');
+      // And forward again
+      await applyInit(db);
+      assert.deepEqual(await state(), before);
+    });
+  });
+
+  test('check-schema still ends OK: ai_answers.hidden_by is SET NULL', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      await saveThread(db);
+      const result = await runScript('scripts/check-schema.cjs', url);
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^ok {2}ai_answers\.ai_answers_hidden_by_fkey: FOREIGN KEY \(hidden_by\) REFERENCES users\(id\) ON DELETE SET NULL$/m);
+      assert.doesNotMatch(result.stdout, /parent_id/, 'the key to the parent is not a key to users');
+      assert.match(result.stdout, /^OK: /m);
+    });
+  });
+
+  test('delete-user keeps the answers an account asked and hid: asked_by and hidden_by null, the usernames and the threads kept', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      await saveThread(db);
+      const before = await answersRows(db);
+      const partnerA = (await db.query("SELECT id FROM users WHERE username = 'partner-a'")).rows[0].id;
+      assert.equal(before.filter(({ row }) => row.hidden_by === partnerA).length, 1);
+
+      const result = await runScript('scripts/delete-user.cjs', url, 'partner-a');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+
+      const after = await answersRows(db);
+      const hidden = after.find(({ row }) => row.hidden_at !== null).row;
+      assert.deepEqual([hidden.hidden_by, hidden.hidden_by_username], [null, 'partner-a']);
+      const unset = ({ row }) => ({
+        ...row,
+        asked_by: row.asked_by === partnerA ? null : row.asked_by,
+        hidden_by: row.hidden_by === partnerA ? null : row.hidden_by,
+      });
+      assert.deepEqual(after.map(unset), before.map(unset));
+      assert.deepEqual(await counts(db), { users: 1, clients: 5, revenues: 10 });
+    });
+  });
+
+  test('reset-book --confirm with threads and a hidden answer succeeds and leaves every answer untouched', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveAnswers(db);
+      await saveThread(db);
+      const before = await answersRows(db);
+
+      let result = await runScript('scripts/reset-book.cjs', url);
+      assert.equal(result.code, 1, result.stdout + result.stderr);
+      assert.doesNotMatch(result.stdout, /ai_answers/, 'not a table that references clients');
+
+      result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^Removed 5 clients and 10 revenue rows\. Accounts: 2 and people: 9, unchanged\.$/m);
+      assert.deepEqual(await answersRows(db), before);
     });
   });
 });

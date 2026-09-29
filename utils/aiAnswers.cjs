@@ -5,7 +5,11 @@
 // (init-db.sql) with who asked, the question or the client, the answer, the
 // model requested and the one that served it, the flags, the tokens by kind
 // and the estimated cost. Errors are logged, not saved. Every partner sees
-// every answer; nobody can delete one in Tier 1.
+// every answer; nobody can delete one. Since Tier 2 WP10 (S14, S15) an Ask
+// may follow up an earlier answer (parent_id, with the turn it replays in
+// content: utils/aiThreads.cjs), and any partner can hide an answer from the
+// list and show it again (hidden_at, hidden_by, hidden_by_username); a hidden
+// answer is still counted in the month's summary, since it was paid for.
 //
 // Pure: no database and no environment. models/aiAnswerModel.cjs runs the
 // insert; routes/ai.cjs runs the reads. Every placeholder is untyped, so
@@ -17,6 +21,7 @@ const { createHash } = require('node:crypto');
 const { PRICES_READ_ON } = require('./aiCost.cjs');
 const { FIRM_TIME_ZONE } = require('./askPrompts.cjs');
 const { unescapeStored } = require('./escaping.cjs');
+const { FOLLOW_UP_MAX } = require('./aiThreads.cjs');
 
 const KINDS = Object.freeze(['ask', 'brief', 'transition-plan']);
 
@@ -47,6 +52,10 @@ const whole = (n) => {
  * stored as its hash (a transition plan's since WP6, when it moved onto the
  * book; before that it stored none).
  *
+ * `parentId` is the answer a follow-up follows (null for a first answer), and
+ * `content` the turn a later follow-up replays, from turnContent
+ * (utils/aiThreads.cjs), or null.
+ *
  * A refused answer stores empty text and its category. The cost and the date
  * its prices were read come from utils/aiCost.cjs through complete(), so the
  * row holds the same estimate as the ai_call log line; a model without a
@@ -64,6 +73,8 @@ function answerRow({
   reportingYear = null,
   durationMs = null,
   model,
+  parentId = null,
+  content = null,
 }) {
   const out = result || {};
   const tokens = out.tokens || {};
@@ -92,6 +103,9 @@ function answerRow({
     book_sha256: typeof bookText === 'string' ? bookHash(bookText) : null,
     reporting_year: Number.isInteger(reportingYear) ? reportingYear : null,
     duration_ms: Number.isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : null,
+    parent_id: Number.isInteger(parentId) ? parentId : null,
+    // JSONB, sent as JSON text; null for an answer that cannot be followed up
+    content: content ? JSON.stringify(content) : null,
   };
 }
 
@@ -101,6 +115,7 @@ const ANSWER_COLUMNS = Object.freeze([
   'model', 'served_by', 'fell_back', 'stop_reason', 'truncated', 'refused', 'refusal_category',
   'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens',
   'cost_usd', 'prices_read_on', 'book_sha256', 'reporting_year', 'duration_ms',
+  'parent_id', 'content',
 ]);
 
 // asked_by only when the account still exists: a session outlives a deleted
@@ -120,14 +135,19 @@ function insertParams(row) {
 // first 200 characters of the answer. The first page takes the limit; later
 // pages take the last id shown and the limit, and continue after that row in
 // the same order (created_at, then id), which the index serves. Both ask for
-// one row more than they show, to tell whether older answers remain.
+// one row more than they show, to tell whether older answers remain. The last
+// placeholder says which answers: the ones shown (false) or, for "Show
+// hidden", the hidden ones (true). book_sha256 is read for the earlier-book
+// mark (listRow) and not sent.
 const LIST_COLUMNS = `
   id, kind, question, client_name, asked_by_username, created_at, served_by,
-  truncated, refused, cost_usd, left(answer, 200) AS preview`;
+  truncated, refused, cost_usd, left(answer, 200) AS preview,
+  parent_id, book_sha256, hidden_at, hidden_by_username`;
 
 const LIST_ANSWERS_SQL = `
   SELECT ${LIST_COLUMNS.trim()}
     FROM ai_answers
+   WHERE (hidden_at IS NOT NULL) = $2
    ORDER BY created_at DESC, id DESC
    LIMIT $1`;
 
@@ -135,6 +155,7 @@ const LIST_ANSWERS_BEFORE_SQL = `
   SELECT ${LIST_COLUMNS.trim()}
     FROM ai_answers
    WHERE (created_at, id) < (SELECT created_at, id FROM ai_answers WHERE id = $1)
+     AND (hidden_at IS NOT NULL) = $3
    ORDER BY created_at DESC, id DESC
    LIMIT $2`;
 
@@ -145,7 +166,47 @@ const ONE_ANSWER_SQL = `
          model, served_by, fell_back, stop_reason, truncated, refused, refusal_category,
          input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
          to_char(prices_read_on, 'YYYY-MM-DD') AS prices_read_on, book_sha256,
-         reporting_year, duration_ms, created_at
+         reporting_year, duration_ms, created_at,
+         parent_id, hidden_at, hidden_by, hidden_by_username
+    FROM ai_answers
+   WHERE id = $1`;
+
+// A thread, from one answer up to its first (WP10): root first, each row with
+// what checkFollowUp and the page need, content included. The walk stops
+// after FOLLOW_UP_MAX + 1 steps up, so it ends whatever the rows say; a
+// first row that still has a parent is then too long a thread.
+const THREAD_SQL = `
+  WITH RECURSIVE thread AS (
+    SELECT id, parent_id, kind, question, answer, refused, truncated, book_sha256, content,
+           asked_by_username, created_at, 0 AS up
+      FROM ai_answers
+     WHERE id = $1
+    UNION ALL
+    SELECT a.id, a.parent_id, a.kind, a.question, a.answer, a.refused, a.truncated, a.book_sha256, a.content,
+           a.asked_by_username, a.created_at, t.up + 1
+      FROM ai_answers a JOIN thread t ON a.id = t.parent_id
+     WHERE t.up < ${FOLLOW_UP_MAX + 1}
+  )
+  SELECT id, parent_id, kind, question, answer, refused, truncated, book_sha256, content, asked_by_username, created_at
+    FROM thread
+   ORDER BY up DESC`;
+
+// Hiding (WP10, S15): any partner hides an answer from the list, and any
+// partner shows it again. Hiding an answer already hidden keeps who hid it
+// first and when; the route then reads the row (ANSWER_HIDDEN_SQL). hidden_by
+// only while the account exists, as asked_by.
+const HIDE_ANSWER_SQL = `
+  UPDATE ai_answers
+     SET hidden_at = now(), hidden_by = (SELECT id FROM users WHERE id = $2), hidden_by_username = $3
+   WHERE id = $1 AND hidden_at IS NULL`;
+
+const SHOW_ANSWER_SQL = `
+  UPDATE ai_answers
+     SET hidden_at = NULL, hidden_by = NULL, hidden_by_username = NULL
+   WHERE id = $1`;
+
+const ANSWER_HIDDEN_SQL = `
+  SELECT id, hidden_at, hidden_by_username
     FROM ai_answers
    WHERE id = $1`;
 
@@ -172,24 +233,42 @@ function readAnswerId(value) {
 }
 
 /**
- * GET /api/ai/answers's query: { before, limit, error }. `before` is the id
- * of the last answer shown (absent for the first page); `limit` is 1 to 50,
- * 20 when absent. `error` is the 400 message, or null.
+ * GET /api/ai/answers's query: { before, limit, hidden, error }. `before` is
+ * the id of the last answer shown (absent for the first page); `limit` is 1
+ * to 50, 20 when absent; `hidden` is 1 for the hidden answers only ("Show
+ * hidden", WP10) and 0 or absent for the others. `error` is the 400 message,
+ * or null.
  */
 function readListQuery(query = {}) {
   let before = null;
   if (query.before !== undefined) {
     before = readAnswerId(query.before);
-    if (before === null) return { before: null, limit: LIST_LIMIT, error: 'before must be the id of an answer.' };
+    if (before === null) return { before: null, limit: LIST_LIMIT, hidden: false, error: 'before must be the id of an answer.' };
   }
   let limit = LIST_LIMIT;
   if (query.limit !== undefined) {
     limit = readAnswerId(query.limit);
     if (limit === null || limit > LIST_LIMIT_MAX) {
-      return { before, limit: LIST_LIMIT, error: `limit must be a whole number from 1 to ${LIST_LIMIT_MAX}.` };
+      return { before, limit: LIST_LIMIT, hidden: false, error: `limit must be a whole number from 1 to ${LIST_LIMIT_MAX}.` };
     }
   }
-  return { before, limit, error: null };
+  let hidden = false;
+  if (query.hidden !== undefined) {
+    if (query.hidden !== '0' && query.hidden !== '1') return { before, limit, hidden: false, error: 'hidden must be 0 or 1.' };
+    hidden = query.hidden === '1';
+  }
+  return { before, limit, hidden, error: null };
+}
+
+/**
+ * A list row as the route sends it: without book_sha256, with earlier_book,
+ * true when the answer was given on a book other than `currentBookSha` (the
+ * hash of today's book), false when on today's, and null when the row
+ * records no book (a transition plan saved before Tier 1 WP6).
+ */
+function listRow(row, currentBookSha) {
+  const { book_sha256: bookSha = null, ...rest } = row;
+  return { ...rest, earlier_book: bookSha === null ? null : bookSha !== currentBookSha };
 }
 
 // The month is the firm's calendar month: an answer at 10 pm on the 31st in
@@ -250,6 +329,10 @@ module.exports = {
   LIST_ANSWERS_SQL,
   LIST_ANSWERS_BEFORE_SQL,
   ONE_ANSWER_SQL,
+  THREAD_SQL,
+  HIDE_ANSWER_SQL,
+  SHOW_ANSWER_SQL,
+  ANSWER_HIDDEN_SQL,
   MONTH_SUMMARY_SQL,
   LIST_LIMIT,
   LIST_LIMIT_MAX,
@@ -258,5 +341,6 @@ module.exports = {
   insertParams,
   readAnswerId,
   readListQuery,
+  listRow,
   firmMonth,
 };

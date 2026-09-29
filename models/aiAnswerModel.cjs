@@ -4,6 +4,10 @@ const {
   LIST_ANSWERS_SQL,
   LIST_ANSWERS_BEFORE_SQL,
   ONE_ANSWER_SQL,
+  THREAD_SQL,
+  HIDE_ANSWER_SQL,
+  SHOW_ANSWER_SQL,
+  ANSWER_HIDDEN_SQL,
   MONTH_SUMMARY_SQL,
   insertParams,
   firmMonth,
@@ -11,7 +15,8 @@ const {
 
 // Saved AI answers (docs/plans/tier-1.md, WP4): the database side of
 // utils/aiAnswers.cjs, shared by routes/ai.cjs (Ask and the brief, and the
-// recent answers) and routes/scenarios.cjs (transition plans).
+// recent answers) and routes/scenarios.cjs (transition plans); since Tier 2
+// WP10 also threads (follow-ups) and hiding.
 
 /**
  * Saves one answer (a row from answerRow). Never throws: the partner has paid
@@ -36,17 +41,40 @@ async function saveAnswer(row, { label, userId } = {}) {
   }
 }
 
-/** The newest answers, `limit` of them, after the answer `before` when given; and whether older ones remain. */
-async function listAnswers({ before = null, limit }) {
+/**
+ * The newest answers, `limit` of them, after the answer `before` when given;
+ * and whether older ones remain. `hidden` true lists the hidden answers
+ * only, false the others (WP10).
+ */
+async function listAnswers({ before = null, limit, hidden = false }) {
   const { rows } = before === null
-    ? await db.query(LIST_ANSWERS_SQL, [limit + 1])
-    : await db.query(LIST_ANSWERS_BEFORE_SQL, [before, limit + 1]);
+    ? await db.query(LIST_ANSWERS_SQL, [limit + 1, hidden])
+    : await db.query(LIST_ANSWERS_BEFORE_SQL, [before, limit + 1, hidden]);
   return { answers: rows.slice(0, limit), hasMore: rows.length > limit };
 }
 
 /** One answer, whole, or null. */
 async function getAnswer(id) {
   const { rows } = await db.query(ONE_ANSWER_SQL, [id]);
+  return rows[0] || null;
+}
+
+/** The thread ending at answer `id`, root first (THREAD_SQL); [] when there is no such answer. */
+async function getThread(id) {
+  const { rows } = await db.query(THREAD_SQL, [id]);
+  return rows;
+}
+
+/**
+ * Hides answer `id` for everyone, as `user` ({ userId, username }), unless it
+ * is hidden already (who hid it first stays); `show` true shows it again.
+ * Returns { id, hidden_at, hidden_by_username } as the row now is, or null
+ * when there is no such answer.
+ */
+async function setHidden(id, user, show = false) {
+  if (show) await db.query(SHOW_ANSWER_SQL, [id]);
+  else await db.query(HIDE_ANSWER_SQL, [id, Number.isInteger(user?.userId) ? user.userId : null, user?.username ?? null]);
+  const { rows } = await db.query(ANSWER_HIDDEN_SQL, [id]);
   return rows[0] || null;
 }
 
@@ -57,4 +85,4 @@ async function monthSummary(now = new Date()) {
   return { ...month, answers: sums.answers, costUsd: sums.cost_usd, unpriced: sums.unpriced };
 }
 
-module.exports = { saveAnswer, listAnswers, getAnswer, monthSummary };
+module.exports = { saveAnswer, listAnswers, getAnswer, getThread, setHidden, monthSummary };
