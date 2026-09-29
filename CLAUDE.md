@@ -22,9 +22,10 @@ merged as PR #43 and was verified on gbacpod.com by Jeff on 2026-09-28; WP5
 (stop escaping; repair stored text) merged as PR #44 and PR #45, Jeff's
 repair preview between them finding nothing to repair, and was verified on
 gbacpod.com by Jeff on 2026-09-28. WP6 (who changed what, and edit
-conflicts) is in progress: PR #47 is open from `claude/kind-archimedes-zlfz6v`,
-and it needs a green backup before the merge (the plan's section 17); WP7
-(succession metrics on the server) follows. Run the rest in order, and
+conflicts) merged as PR #47 (`e9b176f`) on 2026-09-29 at Jeff's instruction;
+his after-deploy checks and the green backup PR #47 asked for are open. WP7
+(succession metrics on the server) is in progress on
+`claude/practical-fermi-izuz9g`. Run the rest in order, and
 update its status table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
