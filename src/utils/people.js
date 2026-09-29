@@ -54,23 +54,6 @@ export function originatorLabel(client = {}) {
   return client.client_originator || '';
 }
 
-/**
- * The legacy people fields for a form's selections (ids as strings), as
- * legacyText in utils/people.cjs writes them: the views not yet rebuilt, such
- * as the form's succession preview, read these.
- */
-export function legacyPeopleFields({ lead_id, second_chair_id, originator_id, originator_is_firm } = {}, people = []) {
-  const byId = new Map(people.map((p) => [String(p.id), p]));
-  const lead = byId.get(String(lead_id ?? ''));
-  const secondChair = byId.get(String(second_chair_id ?? ''));
-  const originator = byId.get(String(originator_id ?? ''));
-  return {
-    primary_lobbyist: lead ? lead.name : '',
-    lobbyist_team: [lead, secondChair].filter(Boolean).map((p) => p.name),
-    client_originator: originator_is_firm ? 'Firm' : originator ? originator.name : '',
-  };
-}
-
 /** A select's string value back to a person id, or null for "None". */
 export function toPersonId(value) {
   if (value === '' || value === null || value === undefined) return null;

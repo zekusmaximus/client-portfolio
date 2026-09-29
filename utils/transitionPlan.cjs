@@ -22,9 +22,11 @@
 // book share one cache entry (T8); the date, the scenario, the client and the
 // roster go in the user turn. The client's facts come from its entry in the
 // server's book (utils/book.cjs) and the roster's loads from the book's rows,
-// whatever figures the page sent; only the page's succession metrics
-// (successionRisk, transitionComplexity, relationshipType) come from the
-// request, since the server has no copy of src/utils/successionUtils.js.
+// whatever figures the page sent. Since Tier 2 WP7 (S11) so do its succession
+// metrics (relationshipType, transitionComplexity, successionRisk): computed
+// here from the book's entry (utils/succession.cjs), the figures the client's
+// own response carries, and the plan's priority follows that risk. The
+// metrics the page sends are ignored.
 
 // Names are read as the page sends them. Until Tier 2 WP5 the route's request
 // sanitizer HTML-escaped every string in the request (O'Brien arrived as
@@ -40,6 +42,7 @@ const {
   cadenceText,
   conflictText,
 } = require('./book.cjs');
+const { bookEntryMetrics } = require('./succession.cjs');
 
 // The most people a roster may hold; the firm has about a dozen
 const ROSTER_MAX = 50;
@@ -155,18 +158,24 @@ function rosterFromBook(roster = [], model = {}) {
 // "Kevin", "Kevin and Anna", "Kevin, Anna and Jay"
 const andList = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 
-// A succession metric the page computed (src/utils/successionUtils.js), out of 10
-const metric = (value) => {
-  const n = Number(value);
-  return value !== null && value !== undefined && value !== '' && Number.isFinite(n) ? `${n}/10` : 'not given';
-};
+/**
+ * A client's succession metrics from its entry in the book (Tier 2 WP7, S11):
+ * { relationshipType, transitionComplexity, successionRisk }, the figures
+ * GET /api/data/clients sends for it, and `notRated` when it has no
+ * Stickiness pick (its risk counts the stand-in, not a rating). null when the
+ * book has no such client. Whatever the request's client carries is ignored.
+ */
+function planMetrics(book, id) {
+  const entry = bookClient(book, id);
+  return entry ? { ...bookEntryMetrics(entry), notRated: entry.stickiness === null } : null;
+}
 
 /**
  * One client's transition plan on the book (T14).
  *
- * `client` is the affected client as the page holds it; only its id (to find
- * it in the book) and the succession metrics the store adds (successionRisk,
- * transitionComplexity, relationshipType) are read. `stage1Data` carries who
+ * `client` is the affected client as the page holds it; only its id is read,
+ * to find it in the book. Its facts and its succession metrics come from the
+ * book's entry (planMetrics), whatever else the page sent. `stage1Data` carries who
  * is leaving (departing: [{ name, role }]; older callers sent
  * selectedPartners, names) and impactData.totalRevenueAtRisk, the page's
  * figure. `roster` is checkRoster's: its loads are replaced with the book's
@@ -175,11 +184,14 @@ const metric = (value) => {
  * retired relationshipStrength, is gone (people plan, Phase 5), and the
  * prompt states none.
  *
- * @returns {{ system: Array, prompt: string }} system is systemBlocks(book.text), byte for byte
+ * @returns {{ system: Array, prompt: string, metrics: Object }} system is
+ *   systemBlocks(book.text), byte for byte; metrics is planMetrics', which the
+ *   plan's priority follows
  */
 function createTransitionPlanPrompt(client, stage1Data = {}, roster = [], book, { today = new Date() } = {}) {
   const entry = bookClient(book, client?.id);
   if (!entry) throw new Error(`Client ${client?.id} is not in the book.`);
+  const metrics = planMetrics(book, client.id);
   const data = stage1Data || {};
   const year = book.reportingYear;
   const years = book.model.years || [];
@@ -224,10 +236,10 @@ As the book lists it (its row in the Clients table):
 - **Effort**: ${formatClientEffort(entry.effort)}
 - **Strategic Value**: ${entry.strategicValue.toFixed(1)}
 
-From the page's succession analysis, which the book does not hold:
-- **Relationship Type**: ${client.relationshipType ? String(client.relationshipType) : 'not given'}
-- **Succession Risk**: ${metric(client.successionRisk)}
-- **Transition Complexity**: ${metric(client.transitionComplexity)}
+Its succession analysis, computed from the entry above, as the partners see it on the Dashboard and in Scenarios:
+- **Relationship Type**: ${metrics.relationshipType}
+- **Succession Risk**: ${metrics.successionRisk}/10${metrics.notRated ? ' (Stickiness not rated: counted at a stand-in, not a rating)' : ''}
+- **Transition Complexity**: ${metrics.transitionComplexity}/10
 
 ## ROSTER
 The people who are staying, with the clients each leads now and the clients each is second chair on now, their revenue in ${year} and their effort, as the book's People tables give them. Recommend people only from this roster, by name exactly as written here: nobody else can take a seat.
@@ -258,7 +270,7 @@ Write the plan under these seven headings, in this order, each as a level-2 head
 
 The timeline and the days in the action items are your recommendation, counted from the start of the handover: give no calendar dates. Keep the plan to about 600 words, the email included.`;
 
-  return { system: systemBlocks(book.text), prompt };
+  return { system: systemBlocks(book.text), prompt, metrics };
 }
 
 // A client id as GET /api/data/clients sends it: an integer on production's
@@ -338,7 +350,13 @@ function resolveRecommendation(section, roster = [], { seat = 'lead', leadId = n
   return result;
 }
 
-function parseTransitionPlanResponse(aiResponse, client = {}, roster = []) {
+/**
+ * The plan the page reads from the model's markdown. `metrics` is the
+ * client's succession metrics as the server computes them (planMetrics,
+ * Tier 2 WP7): the priority follows its successionRisk. `roster` is
+ * checkRoster's, against which the two recommendations are resolved.
+ */
+function parseTransitionPlanResponse(aiResponse, metrics = {}, roster = []) {
   const text = typeof aiResponse === 'string' ? aiResponse : '';
 
   try {
@@ -357,11 +375,12 @@ function parseTransitionPlanResponse(aiResponse, client = {}, roster = []) {
       communicationTemplate: extractSection(text, 'CLIENT COMMUNICATION TEMPLATE')
     };
 
-    // Determine priority based on succession risk
+    // Determine priority based on the server's succession risk
+    const risk = metrics?.successionRisk;
     let priority = 'medium';
-    if (client.successionRisk >= 8) priority = 'critical';
-    else if (client.successionRisk >= 6) priority = 'high';
-    else if (client.successionRisk <= 3) priority = 'low';
+    if (risk >= 8) priority = 'critical';
+    else if (risk >= 6) priority = 'high';
+    else if (risk <= 3) priority = 'low';
 
     return {
       strategy: sections.strategy || 'No strategy generated',
@@ -448,6 +467,7 @@ module.exports = {
   rosterLine,
   bookClient,
   rosterFromBook,
+  planMetrics,
   createTransitionPlanPrompt,
   parseTransitionPlanResponse,
   extractSection,

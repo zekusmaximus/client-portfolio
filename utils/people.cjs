@@ -132,8 +132,10 @@ function validateAssignment(input = {}, people = []) {
 /**
  * The legacy text columns for a client's people (P6): stored on every write so
  * older code still shows the right names after a rollback. `lobbyist_team` is
- * the whole team, lead first, because the succession metrics read its length
- * as the number of people on the client.
+ * the whole team, lead first: the page's succession metrics read its length
+ * as the number of people on the client until Tier 2 WP7, and a rolled-back
+ * page still does. Since WP7 the metrics read the people by id
+ * (utils/succession.cjs).
  */
 function legacyText({ lead, secondChair, originator, originatorIsFirm }) {
   return {

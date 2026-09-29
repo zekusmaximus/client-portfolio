@@ -25,6 +25,7 @@ const {
 const { unescapeStoredSql } = require('./utils/escaping.cjs');
 const { NAME_MAX, NAME_PATTERN, isObjectBody, checkClient } = require('./utils/clientRules.cjs');
 const { revenueObjectFromRows } = require('./utils/strategic.cjs');
+const { withSuccessionMetrics } = require('./utils/succession.cjs');
 const {
   clientSnapshot,
   clientChanges,
@@ -535,6 +536,14 @@ function toApiClient(row) {
   };
 }
 
+// Joined client rows as every client response sends them: toApiClient, then
+// the scorer's figures (strategicValue, stickinessScore, effort), then the
+// succession metrics (relationshipType, transitionComplexity, successionRisk;
+// utils/succession.cjs, docs/plans/tier-2.md, S11, WP7), which read the
+// nested people and the scorer's effort. Kept out of calculateStrategicScores,
+// which also scores the import's response rows (no people) and the AI's book.
+const apiClients = (rows) => withSuccessionMetrics(calculateStrategicScores(rows.map(toApiClient)));
+
 // Check a create or update's lead, second chair and originator against the
 // People list, inside the write's transaction. The people it names are read
 // FOR SHARE, so routes/people.cjs cannot deactivate one or move a lead out of
@@ -615,8 +624,8 @@ router.get('/clients', async (req, res) => {
   try {
     const { rows } = await db.query(clientsQuery());
 
-    // Calculate strategic scores for all clients before returning
-    const clientsWithScores = calculateStrategicScores(rows.map(toApiClient));
+    // Scored, with the succession metrics, before returning
+    const clientsWithScores = apiClients(rows);
     
     res.json({
       success: true,
@@ -719,8 +728,8 @@ router.post('/clients', async (req, res) => {
     // Fetch the complete client with revenues and people
     const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [newClient.id]);
 
-    // Calculate strategic scores for the new client
-    const clientsWithScores = calculateStrategicScores(rows.map(toApiClient));
+    // Scored, with the succession metrics, as GET sends it
+    const clientsWithScores = apiClients(rows);
 
     res.status(201).json({
       success: true,
@@ -877,8 +886,8 @@ router.put('/clients/:id', async (req, res) => {
     // Fetch the complete updated client with revenues and people
     const { rows } = await db.query(clientsQuery('WHERE c.id = $1'), [updatedClient.id]);
 
-    // Calculate strategic scores for the updated client
-    const clientsWithScores = calculateStrategicScores(rows.map(toApiClient));
+    // Scored, with the succession metrics, as GET sends it
+    const clientsWithScores = apiClients(rows);
 
     res.json({
       success: true,
@@ -973,7 +982,7 @@ router.put('/clients/:id/second-chair', async (req, res) => {
     }
 
     const { rows } = await db.query(clientsQuery('WHERE c.id::text = $1'), [clientId]);
-    res.json({ success: true, client: calculateStrategicScores(rows.map(toApiClient))[0] });
+    res.json({ success: true, client: apiClients(rows)[0] });
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
     console.error('Error assigning a second chair:', error);

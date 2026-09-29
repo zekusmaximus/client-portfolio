@@ -286,11 +286,11 @@ const LoadComparison = ({ groups, year }) => (
 // Impact Heat Map Component
 const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
   const heatMapData = affectedClients.map(client => ({
-    x: client.successionRisk || 5,
+    x: client.successionRisk ?? 5,
     y: usePortfolioStore.getState().getClientRevenue(client) || 0,
     name: formatClientName(client.name),
     client: client,
-    risk: client.successionRisk || 5,
+    risk: client.successionRisk ?? 5,
     revenue: usePortfolioStore.getState().getClientRevenue(client) || 0,
     practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0) 
       ? client.practiceArea[0] 

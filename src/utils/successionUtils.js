@@ -1,164 +1,169 @@
 /**
- * Succession Planning Utility Functions
- * Provides computed metrics for client succession planning analysis
+ * Succession planning metrics: each client's relationship type, transition
+ * complexity and succession risk.
+ *
+ * Since Tier 2 WP7 (docs/plans/tier-2.md, S11) the server computes them
+ * (utils/succession.cjs) and every client response carries them, as it
+ * carries strategicValue and effort; the Dashboard, the client list and
+ * Scenarios show those. This module is the page's copy of the same rules,
+ * used for two things only:
+ *   - the client form's live preview, which works on the form's state before
+ *     anything is saved (people as select values, the raw Stickiness pick);
+ *   - a client from an API older than WP7, which sends no metrics
+ *     (withSuccessionMetrics): the page publishes before Render deploys, and
+ *     a rollback of the API sends none.
+ * tests/succession.test.mjs holds it equal to the server's, figure for
+ * figure, on the fixture books and on seeded random books. Change one side,
+ * change the other, with each sum in the same order.
+ *
+ * The rules (S11): orphaned without a lead; primary when the lead is the
+ * recorded originator and there is no second chair, whatever the firm credit
+ * says; shared when there is a second chair and stickiness is 7 or more of 10;
+ * otherwise secondary. Cadence counts once, through effort. Practice areas
+ * from practiceArea or practice_area. An unrated client's stickiness term is
+ * the scorer's stand-in, 40 / 9 (UNRATED_STICKINESS), not a rating.
  */
 
-import { safeFrequencyToLowerCase, safePracticeAreaToArray } from './dataUtils.js';
+import { safePracticeAreaToArray } from './dataUtils.js';
 import { resolveStickinessScore, resolveEffort, MAX_EFFORT } from './clientMetrics.js';
 
-/**
- * Derives the relationship type based on client's lobbyist structure
- * @param {Object} client - Client data object
- * @returns {string} 'orphaned', 'shared', 'primary', or 'secondary'
- */
-export const deriveRelationshipType = (client) => {
-  if (!client) return 'secondary';
-  
-  // Check if client has no primary lobbyist
-  if (!client.primary_lobbyist || client.primary_lobbyist.trim() === '') {
-    return 'orphaned';
-  }
-  
-  // Parse lobbyist team (handle both array and string formats)
-  let teamSize = 1; // Default to 1 for primary lobbyist
-  if (client.lobbyist_team) {
-    if (Array.isArray(client.lobbyist_team)) {
-      teamSize = client.lobbyist_team.length;
-    } else if (typeof client.lobbyist_team === 'string') {
-      // Split by common delimiters and filter empty values
-      const team = client.lobbyist_team.split(/[,;|\n]/).filter(member => member.trim() !== '');
-      teamSize = team.length > 0 ? team.length : 1;
-    }
-  }
-  
-  // Stickiness (0–10) now stands in for the retired relationship_strength.
-  // A high-stickiness client is firmly anchored to the firm, so when it's also
-  // serviced by a team we treat the relationship as "shared".
-  const stickinessScore = resolveStickinessScore(client);
+// Held equal to utils/succession.cjs. 'Financial', the form's practice area,
+// does not contain 'financial services' and adds nothing (as it always has;
+// a change is Jeff's to make, on both sides)
+export const COMPLEX_AREAS = ['healthcare', 'energy', 'financial services'];
+const TYPE_RISK = { primary: 3, secondary: 2, shared: 1, orphaned: 5 };
 
-  // Shared relationship: multiple team members AND a strong, anchored relationship
-  if (teamSize >= 2 && stickinessScore >= 7) {
-    return 'shared';
-  }
-  
-  // Primary relationship: client originator is primary lobbyist AND small team
-  if (client.primary_lobbyist === client.client_originator && teamSize <= 1) {
-    return 'primary';
-  }
-  
-  // All other cases are secondary
+// A person's id as text, or null: the nested person's (the API's lead,
+// secondChair and originator), else the id field (the form's select value,
+// '' for none)
+const personId = (nested, id) => {
+  const value = nested && typeof nested === 'object' && nested.id !== null && nested.id !== undefined ? nested.id : id;
+  return value === null || value === undefined || value === '' ? null : String(value);
+};
+
+/** A client's practice areas, from practiceArea or practice_area: the form holds practiceArea. */
+export const practiceAreasOf = (client) => safePracticeAreaToArray(client?.practiceArea ?? client?.practice_area);
+
+/**
+ * What the rules read. Stickiness (0 to 10) comes from the raw pick, never
+ * the API's stickinessScore, which is rounded (4.44 for the stand-in); the
+ * server reads the pick too.
+ */
+export const successionInputs = (client = {}) => ({
+  leadId: personId(client.lead, client.lead_id),
+  secondChairId: personId(client.secondChair, client.second_chair_id),
+  originatorId: personId(client.originator, client.originator_id),
+  stickiness: resolveStickinessScore({ stickiness: client.stickiness }),
+  effort: resolveEffort(client),
+  practiceAreas: practiceAreasOf(client),
+  conflictRisk: client.conflict_risk ?? client.conflictRisk,
+});
+
+/**
+ * True when the client has no Stickiness pick, so its succession risk rests
+ * on the stand-in, not a rating: Stage 2's badge says "not rated" beside it.
+ */
+export const stickinessNotRated = (client) => {
+  const n = parseFloat(client?.stickiness);
+  return Number.isNaN(n);
+};
+
+const conflictLabel = (risk) => (typeof risk === 'string' ? risk.trim().toLowerCase() : '');
+
+const relationshipTypeOf = (inputs) => {
+  if (inputs.leadId === null) return 'orphaned';
+  if (inputs.secondChairId !== null && inputs.stickiness >= 7) return 'shared';
+  if (inputs.originatorId !== null && inputs.originatorId === inputs.leadId && inputs.secondChairId === null) return 'primary';
   return 'secondary';
 };
 
-/** A client's conflict risk label, lowercased: 'low', 'medium', 'high' or ''. */
-const conflictRiskLabel = (client) => {
-  const label = client.conflict_risk ?? client.conflictRisk;
-  return typeof label === 'string' ? label.trim().toLowerCase() : '';
-};
-
-/**
- * Calculates transition complexity score based on multiple factors
- * @param {Object} client - Client data object
- * @returns {number} Complexity score from 1-10
- */
-export const calculateTransitionComplexity = (client) => {
-  if (!client) return 1;
-  
+const transitionComplexityOf = (inputs) => {
   let complexity = 0;
 
-  // Base complexity from engagement load. This used to read the 1–10
-  // relationship_intensity slider (× 0.3 ⇒ 0.3–3.0). That field is retired in
-  // favor of `effort` (cadence + handful flag, ~0.5–7.5 work units), so we
-  // normalize effort back onto a 0–10 scale and keep the same 0.3 weight —
-  // preserving the original contribution range rather than just swapping vars.
-  const effort = resolveEffort(client);
-  const engagement = Math.min(10, (effort / MAX_EFFORT) * 10);
+  // Engagement: effort on a 0 to 10 scale, weighted 0.3. The cadence is in
+  // effort already; until WP7 it was also added on its own
+  const engagement = Math.min(10, (inputs.effort / MAX_EFFORT) * 10);
   complexity += engagement * 0.3;
 
-  // Contact cadence factor. The column is interaction_frequency (the form's
-  // and the import's Cadence); this read communication_frequency, which no
-  // client has, so the factor was always 0 (people plan, Phase 5)
-  const frequency = safeFrequencyToLowerCase(client.interaction_frequency ?? client.interactionFrequency);
-  const frequencyScores = {
-    'daily': 3,
-    'weekly': 2,
-    'monthly': 1,
-    'quarterly': 0.5,
-    'as-needed': 0,
-    'as needed': 0
-  };
-  complexity += frequencyScores[frequency] || 0;
-  
-  // Complex practice areas
-  const practiceAreas = safePracticeAreaToArray(client.practice_area).map(area => area.toLowerCase());
-  
-  const complexAreas = ['healthcare', 'energy', 'financial services'];
-  if (practiceAreas.some(area => complexAreas.some(complexArea => area.includes(complexArea)))) {
+  const areas = inputs.practiceAreas.map((area) => area.toLowerCase());
+  if (areas.some((area) => COMPLEX_AREAS.some((complexArea) => area.includes(complexArea)))) {
     complexity += 1.5;
   }
-  
-  // High conflict risk adds complexity. Conflict risk is a Low/Medium/High
-  // label; this parseFloat'ed it and compared with 7, so it never counted
-  // (people plan, Phase 5)
-  if (conflictRiskLabel(client) === 'high') {
+
+  if (conflictLabel(inputs.conflictRisk) === 'high') {
     complexity += 1;
   }
-  
-  // Cap at 10 and round to integer
+
   return Math.min(Math.round(complexity), 10);
 };
 
-/**
- * Calculates succession risk score based on relationship factors
- * @param {Object} client - Client data object
- * @returns {number} Risk score from 1-10
- */
-export const calculateSuccessionRisk = (client) => {
-  if (!client) return 5;
-  
+const successionRiskOf = (inputs, type, complexity) => {
   let risk = 0;
-  
-  // Base risk from relationship type
-  const relationshipType = deriveRelationshipType(client);
-  const typeRiskScores = {
-    'primary': 3,
-    'secondary': 2,
-    'shared': 1,
-    'orphaned': 5
-  };
-  risk += typeRiskScores[relationshipType] || 2;
-  
-  // Low stickiness increases risk. Stickiness (0–10) replaces the retired
-  // relationship_strength: a loosely-held client (cold / transactional) is the
-  // easiest to lose in a transition, so it carries the most succession risk.
-  // Mirrors the old `strength < 6 ⇒ +(6 - strength)` curve on the new scale.
-  const stickinessScore = resolveStickinessScore(client);
-  if (stickinessScore < 6) {
-    risk += (6 - stickinessScore);
+  risk += TYPE_RISK[type] || 2;
+  if (inputs.stickiness < 6) {
+    risk += (6 - inputs.stickiness);
   }
-  
-  // Complexity factor
-  const transitionComplexity = calculateTransitionComplexity(client);
-  risk += transitionComplexity * 0.3;
-  
-  // Cap at 10 and round to integer
+  risk += complexity * 0.3;
   return Math.min(Math.round(risk), 10);
 };
 
 /**
- * Enhances a client object with all succession planning metrics
+ * The relationship type: 'orphaned', 'shared', 'primary' or 'secondary'.
+ * @param {Object} client - a client as the API sends it, or the form's state
+ */
+export const deriveRelationshipType = (client) => {
+  if (!client) return 'secondary';
+  return relationshipTypeOf(successionInputs(client));
+};
+
+/**
+ * Transition complexity, 0 to 10.
+ * @param {Object} client - a client as the API sends it, or the form's state
+ */
+export const calculateTransitionComplexity = (client) => {
+  if (!client) return 1;
+  return transitionComplexityOf(successionInputs(client));
+};
+
+/**
+ * Succession risk, 1 to 10.
+ * @param {Object} client - a client as the API sends it, or the form's state
+ */
+export const calculateSuccessionRisk = (client) => {
+  if (!client) return 5;
+  const inputs = successionInputs(client);
+  return successionRiskOf(inputs, relationshipTypeOf(inputs), transitionComplexityOf(inputs));
+};
+
+/**
+ * The client with its three metrics computed here (the form's preview).
  * @param {Object} client - Client data object
  * @returns {Object} Enhanced client with succession metrics
  */
 export const enhanceClientWithSuccessionMetrics = (client) => {
   if (!client) return client;
-  
+  const inputs = successionInputs(client);
+  const relationshipType = relationshipTypeOf(inputs);
+  const transitionComplexity = transitionComplexityOf(inputs);
   return {
     ...client,
-    relationshipType: deriveRelationshipType(client),
-    transitionComplexity: calculateTransitionComplexity(client),
-    successionRisk: calculateSuccessionRisk(client)
+    relationshipType,
+    transitionComplexity,
+    successionRisk: successionRiskOf(inputs, relationshipType, transitionComplexity)
   };
+};
+
+const hasServerMetrics = (client) =>
+  client.relationshipType !== undefined && client.transitionComplexity !== undefined && client.successionRisk !== undefined;
+
+/**
+ * A client from the API as the store keeps it: the server's three metrics as
+ * they came (WP7), or, from an API older than WP7, which sends none, the same
+ * rules computed here from the nested people it does send. Never a mix.
+ */
+export const withSuccessionMetrics = (client) => {
+  if (!client || hasServerMetrics(client)) return client;
+  return enhanceClientWithSuccessionMetrics(client);
 };
 
 /**
@@ -187,6 +192,13 @@ export const getRelationshipTypeColor = (type) => {
   return colorMap[type] || 'bg-gray-100 text-gray-800';
 };
 
+// A metric as the client carries it, computed here only when it has none. A
+// 0 is a value (transition complexity is 0 for an As-Needed client with no
+// complex area and no High conflict risk), so `??`, never `||`
+const riskOf = (client) => client.successionRisk ?? calculateSuccessionRisk(client);
+const complexityOf = (client) => client.transitionComplexity ?? calculateTransitionComplexity(client);
+const typeOf = (client) => client.relationshipType ?? deriveRelationshipType(client);
+
 /**
  * Groups clients by succession risk level
  * @param {Array} clients - Array of client objects
@@ -198,9 +210,9 @@ export const groupClientsBySuccessionRisk = (clients) => {
     medium: [],
     high: []
   };
-  
+
   clients.forEach(client => {
-    const riskScore = client.successionRisk || calculateSuccessionRisk(client);
+    const riskScore = riskOf(client);
     if (riskScore <= 3) {
       groups.low.push(client);
     } else if (riskScore <= 6) {
@@ -209,7 +221,7 @@ export const groupClientsBySuccessionRisk = (clients) => {
       groups.high.push(client);
     }
   });
-  
+
   return groups;
 };
 
@@ -223,7 +235,7 @@ export const getHighestRiskClients = (clients, limit = 5) => {
   return clients
     .map(client => ({
       ...client,
-      successionRisk: client.successionRisk || calculateSuccessionRisk(client)
+      successionRisk: riskOf(client)
     }))
     .sort((a, b) => b.successionRisk - a.successionRisk)
     .slice(0, limit);
@@ -237,15 +249,15 @@ export const getHighestRiskClients = (clients, limit = 5) => {
 export const getSuccessionAnalytics = (clients) => {
   const riskGroups = groupClientsBySuccessionRisk(clients);
   const relationshipTypes = clients.reduce((acc, client) => {
-    const type = client.relationshipType || deriveRelationshipType(client);
+    const type = typeOf(client);
     acc[type] = (acc[type] || 0) + 1;
     return acc;
   }, {});
-  
+
   const avgComplexity = clients.reduce((sum, client) => {
-    return sum + (client.transitionComplexity || calculateTransitionComplexity(client));
+    return sum + complexityOf(client);
   }, 0) / clients.length;
-  
+
   return {
     riskDistribution: {
       low: riskGroups.low.length,

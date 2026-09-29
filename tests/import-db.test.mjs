@@ -1596,6 +1596,9 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
         assert.deepEqual([unsavedPlan.body.saved, unsavedPlan.body.answerId], [false, null]);
         assert.match(unsavedPlan.body.plan.strategy || JSON.stringify(unsavedPlan.body.plan), /Fake Anthropic plan/);
         assert.equal(await count(), lost);
+        // The log line reaches the server's output on its own pipe, which can
+        // arrive after the HTTP answer: wait for it (as for ai_stream_closed)
+        await waitFor(() => saveLines().length >= 2, 'the two ai_answer_save_failed lines');
         const lines = saveLines().map((line) => JSON.parse(line.slice(line.indexOf('{'))));
         assert.deepEqual(lines.map((l) => [l.label, l.kind, l.code]), [['ask', 'ask', '23514'], ['transition-plan', 'transition-plan', '23514']]);
       } finally {
@@ -1876,6 +1879,9 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
         assert.deepEqual([done.data.saved, done.data.answerId], [false, null]);
         assert.equal(done.data.answer, textOf(unsaved.events));
         assert.ok(done.data.answer.startsWith('**Fake Anthropic answer.**'));
+        // The log line reaches the server's output on its own pipe, which can
+        // arrive after done (it failed CI once on PR #48): wait for it
+        await waitFor(() => logLines(aiServer, 'ai_answer_save_failed').length >= 1, 'the ai_answer_save_failed line');
         assert.deepEqual(logLines(aiServer, 'ai_answer_save_failed').map((l) => [l.label, l.kind, l.code]), [['ask', 'ask', '23514']]);
       } finally {
         await db.query('ALTER TABLE ai_answers DROP CONSTRAINT wp5_refuse_every_row');
@@ -1919,7 +1925,8 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
         ...request,
         client: {
           ...request.client, averageRevenue: 7654321, stickinessScore: 9.9, effort: 77, practiceArea: ['Tax'],
-          successionRisk: 8, transitionComplexity: 6, relationshipType: 'primary',
+          // Tier 2 WP7: metrics no client can have, which the server ignores
+          successionRisk: 99, transitionComplexity: 77, relationshipType: 'inflated',
         },
         roster: request.roster.map((p) => ({ ...p, lead: inflate(p.lead), second: inflate(p.second) })),
       };
@@ -1947,8 +1954,8 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       assert.equal(JSON.stringify(fake.requests.at(-1).body.system), JSON.stringify(sent.system), 'one cache entry for both (T8)');
     });
 
-    test('WP6: the client\'s facts in the prompt come from the book, not the request; the succession metrics from the request', () => {
-      const { sent, target, leaving, year } = wp6;
+    test('WP6: the client\'s facts in the prompt come from the book, not the request; WP7: so do its succession metrics, and the priority', () => {
+      const { sent, target, leaving, year, planned } = wp6;
       assert.equal(sent.messages.length, 1);
       const turn = sent.messages[0].content;
       assert.match(turn, /^Today is \d{4}-\d{2}-\d{2}\.\n\n/);
@@ -1960,12 +1967,17 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
         `- **Current Lead**: ${leaving.name} (leaving)`,
         `- **Current Second Chair**: ${target.secondChair ? target.secondChair.name : 'none'}`,
         `- **Effort**: ${effort}`,
-        '- **Succession Risk**: 8/10',
-        '- **Transition Complexity**: 6/10',
-        '- **Relationship Type**: primary',
+        // Tier 2 WP7 (S11): the figures GET /api/data/clients sends for the
+        // client (until WP7, the request's 8, 6 and primary)
+        `- **Succession Risk**: ${target.successionRisk}/10${target.stickiness === null ? ' (Stickiness not rated: counted at a stand-in, not a rating)' : ''}`,
+        `- **Transition Complexity**: ${target.transitionComplexity}/10`,
+        `- **Relationship Type**: ${target.relationshipType}`,
       ]) assert.ok(turn.includes(`${line}\n`), line);
       assert.ok(turn.includes(`- **Revenue ${year}**: ${aiBook.formatMoney(revenueForYear(target, year))} (on file: `), 'the reporting year\'s revenue, then every year on file');
-      assert.ok(!/7,654,321|Tax|9\.9|\*\*Effort\*\*: 77/.test(turn), 'none of the request\'s figures for the client');
+      assert.ok(!/7,654,321|Tax|9\.9|\*\*Effort\*\*: 77|99\/10|77\/10|inflated/.test(turn), 'none of the request\'s figures for the client');
+      // The plan's priority follows the server's risk
+      const risk = target.successionRisk;
+      assert.equal(planned.body.plan.priority, risk >= 8 ? 'critical' : risk >= 6 ? 'high' : risk <= 3 ? 'low' : 'medium');
     });
 
     test('WP6: the roster\'s loads in the prompt are the book\'s, not the inflated ones the request carried', () => {

@@ -26,7 +26,12 @@ export function rosterFor(departure) {
     .map((r) => ({ name: r.person.name, role: r.person.role, lead: load(r.lead), second: load(r.second) }));
 }
 
-/** The request body for one client's transition plan. */
+/**
+ * The request body for one client's transition plan. The client goes as the
+ * store holds it; the server reads only its id and takes its facts and
+ * succession metrics from the book (Tier 1 WP6; Tier 2 WP7), so the figures
+ * the client carries are ignored.
+ */
 export function planRequest(decision, departure, reportingYear) {
   return {
     client: decision.client,
@@ -160,6 +165,8 @@ export function syncTransitions({ decisions = [], plans = {}, transitions = [], 
     next.push({
       clientId,
       clientName: d.client.name,
+      // The risk when the plan was approved, as the store holds it: the API's
+      // since Tier 2 WP7
       successionRisk: d.client.successionRisk ?? null,
       // Who held each seat before, only where the seat changes hands
       leadBefore: changed(d.lead) ? personLabel(d.lead.before) : null,

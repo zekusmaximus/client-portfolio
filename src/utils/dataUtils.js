@@ -27,18 +27,6 @@ export const safePracticeAreaToArray = (practiceAreaData) => {
 };
 
 /**
- * Safely converts communication frequency to lowercase string
- * @param {*} frequency - Frequency data from database or API
- * @returns {string} Lowercase frequency string
- */
-export const safeFrequencyToLowerCase = (frequency) => {
-  if (!frequency || typeof frequency !== 'string') {
-    return '';
-  }
-  return frequency.toLowerCase();
-};
-
-/**
  * Safely converts any text field to lowercase for comparison
  * @param {*} text - Text data to convert
  * @returns {string} Lowercase text or empty string
