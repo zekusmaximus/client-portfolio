@@ -367,6 +367,21 @@ works as before. The older `init-db.sql` leaves the `scenarios` table and its
 rows in place, and nothing needs undoing: once the newer API is back, the
 saved scenarios are listed again as they were.
 
+**Tier 2 WP9** (an associate in Scenarios) is safe to roll back on either
+side; roll back both together as usual. It adds no table and no column: a
+hire scenario is a row of `scenarios` whose `state` has `kind` `hire`. The
+newer page on an API from before it (which lists `saved-scenarios` but not
+`hire-scenarios`) keeps "Add an associate" in the browser only: Save and Save
+as are off for a hire scenario and say why, and departure scenarios save and
+open as before (checked end to end in its pull request). An older page on the
+newer API lists a hire scenario with "nobody yet" under Leaving and, on Open,
+says "This scenario is of a kind this page cannot show"; departure scenarios
+work as before. An API rolled back past WP9 refuses to save a hire scenario
+(400) but still lists and returns the ones saved, which the newer page opens
+again once the API is back. No seat is ever written by a hire scenario except
+a pick a partner accepts, one client at a time, through the second-chair
+route every version since Phase 6 has.
+
 ### 5.1 The page (Netlify)
 
 Deploys > the last good deploy > **Publish deploy**. It publishes that earlier
@@ -886,7 +901,7 @@ example `"event":"ai_error"`.
 
 ```json
 { "status": "OK", "timestamp": "<ISO time>", "uptimeSeconds": 8509, "environment": "production",
-  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text", "client-edit-conflict", "saved-scenarios"],
+  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text", "client-edit-conflict", "saved-scenarios", "hire-scenarios"],
   "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5" } }
 ```
 
@@ -896,7 +911,7 @@ example `"event":"ai_error"`.
 | `timestamp` | the server's clock when it answered |
 | `uptimeSeconds` | seconds since the process started. It resets on every deploy, restart and, on a Free instance, every spin-up |
 | `environment` | `NODE_ENV`; must be `production` on Render |
-| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). `plain-text` (Tier 2 WP5), which the page does not read, says this API stores text as typed, and 7.5's repair runs only on an API that lists it. `client-edit-conflict` (Tier 2 WP6): the client form shows "Last changed by" and History only with it, and without it saves as before. The last one added is `saved-scenarios` (Tier 2 WP8): Scenarios shows its list of saved scenarios (New, Open, Save, Save as, Delete) only with it, and without it works in the browser only, as before. A name missing after a merge means Render has not deployed that merge yet |
+| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). `plain-text` (Tier 2 WP5), which the page does not read, says this API stores text as typed, and 7.5's repair runs only on an API that lists it. `client-edit-conflict` (Tier 2 WP6): the client form shows "Last changed by" and History only with it, and without it saves as before. `saved-scenarios` (Tier 2 WP8): Scenarios shows its list of saved scenarios (New, Open, Save, Save as, Delete) only with it, and without it works in the browser only, as before. The last one added is `hire-scenarios` (Tier 2 WP9): Scenarios saves an "Add an associate" scenario only with it; without it (an API from before WP9, which refuses the kind) that kind works in the browser only, with Save and Save as off, and departure scenarios save as before. A name missing after a merge means Render has not deployed that merge yet |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
 | `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`) |

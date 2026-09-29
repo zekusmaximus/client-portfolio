@@ -289,7 +289,9 @@ const ScenarioBar = () => {
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap">{KIND_LABELS[item.kind] || item.kind}</TableCell>
                       <TableCell className="text-sm">
-                        {item.kind === 'hire' ? `Adding: ${associatesText(item.associates)}` : `Leaving: ${leavingText(item.leaving)}`}
+                        {item.kind !== 'hire'
+                          ? `Leaving: ${leavingText(item.leaving)}`
+                          : Array.isArray(item.associates) ? `Adding: ${associatesText(item.associates)}` : 'Adding an associate'}
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap">{item.kind === 'hire' ? '—' : STAGE_LABELS[item.current_stage] || item.current_stage}</TableCell>
                       <TableCell className="text-sm">

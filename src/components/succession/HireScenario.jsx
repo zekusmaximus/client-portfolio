@@ -192,7 +192,9 @@ const AssociateCard = ({ associate, entered, model, people, year, available, bus
                           <div className="text-xs text-muted-foreground">{signed(excess)} against the partners&apos; average</div>
                         )}
                       </TableCell>
-                      <TableCell>{seat.holder ? `${seat.holder.name} (freed of ${share}%)` : 'None'}</TableCell>
+                      <TableCell>
+                        {!seat.holder ? 'None' : seat.source === 'done' ? seat.holder.name : `${seat.holder.name} (freed of ${share}%)`}
+                      </TableCell>
                       <TableCell className={num}>{formatEffort(seat.effort)}</TableCell>
                       <TableCell className={num}>{formatMoney(seat.revenue)}</TableCell>
                       <TableCell>
