@@ -12,7 +12,11 @@ import aiAnswers from '../utils/aiAnswers.cjs';
 import aiCost from '../utils/aiCost.cjs';
 import ai from '../services/anthropic.cjs';
 import { fakeFetch, streamedText } from './helpers/fakeAnthropic.mjs';
-import { parseCost, formatCost, answerTitle, monthLine, appendAnswers } from '../src/utils/recentAnswers.js';
+import aiThreads from '../utils/aiThreads.cjs';
+import {
+  parseCost, formatCost, answerTitle, monthLine, appendAnswers, rowNotes, FOLLOW_UP_MAX, followUpLine, threadTurn,
+  turnsBefore, savedTurnsBefore,
+} from '../src/utils/recentAnswers.js';
 
 const {
   KINDS, ANSWER_COLUMNS, INSERT_ANSWER_SQL, LIST_ANSWERS_SQL, LIST_ANSWERS_BEFORE_SQL, ONE_ANSWER_SQL,
@@ -284,4 +288,38 @@ test('the page: costs arrive as text and are parsed; a row\'s title; the month\'
   const page = [{ id: 9 }, { id: 8 }];
   assert.deepEqual(appendAnswers(page, [{ id: 8 }, { id: 7 }, { id: 6 }]).map((a) => a.id), [9, 8, 7, 6]);
   assert.deepEqual(appendAnswers(undefined, [{ id: 1 }]).map((a) => a.id), [1]);
+});
+
+// Tier 2 WP10 (S14, S15): the page's side of threads and hiding
+test('recentAnswers (WP10): a follow-up\'s title, a row\'s notes, the follow-up line, and FOLLOW_UP_MAX the server\'s', () => {
+  assert.equal(FOLLOW_UP_MAX, aiThreads.FOLLOW_UP_MAX);
+  assert.equal(answerTitle({ kind: 'ask', question: 'And after Mike?', parent_id: 41 }), 'Follow-up: And after Mike?');
+  assert.equal(answerTitle({ kind: 'ask', question: 'Is Mike overloaded?', parent_id: null }), 'Is Mike overloaded?');
+
+  assert.deepEqual(rowNotes({}), []);
+  assert.deepEqual(rowNotes({ refused: true, truncated: false, earlier_book: false }), ['declined']);
+  assert.deepEqual(rowNotes({ truncated: true, earlier_book: true }), ['cut off', 'on an earlier book']);
+  assert.deepEqual(rowNotes({ earlier_book: null }), [], 'no book recorded: no mark');
+  assert.deepEqual(rowNotes({ hidden_at: '2026-09-29T15:00:00Z', hidden_by_username: 'jeff' }), ['hidden by jeff']);
+  assert.deepEqual(rowNotes({ hidden_at: '2026-09-29T15:00:00Z', hidden_by_username: null }), ['hidden by a former account']);
+
+  assert.equal(followUpLine(0), null);
+  assert.equal(followUpLine(undefined), null);
+  assert.equal(followUpLine(2), 'Follow-up 2 of 5');
+});
+
+test('recentAnswers (WP10): the turns a card shows above a follow-up, from Ask\'s answer or a saved one', () => {
+  const brief = { id: 1, kind: 'brief', question: null, answer: 'The brief.', truncated: false, refused: false, usage: {}, costUsd: 1 };
+  assert.deepEqual(threadTurn(brief), { id: 1, kind: 'brief', question: null, answer: 'The brief.', truncated: false, refused: false });
+  assert.deepEqual(threadTurn({}), { id: null, kind: 'ask', question: null, answer: '', truncated: false, refused: false });
+
+  // Ask's answer after a follow-up carries the turns it showed
+  const second = { id: 2, kind: 'ask', question: 'And Mike?', answer: 'Six.', truncated: false, refused: false, turns: [threadTurn(brief)] };
+  assert.deepEqual(turnsBefore(second).map((t) => [t.id, t.question]), [[1, null], [2, 'And Mike?']]);
+  assert.deepEqual(turnsBefore({ ...brief, turns: [] }).map((t) => t.id), [1]);
+
+  // A saved answer from GET /api/ai/answers/:id carries its thread
+  const saved = { id: 3, kind: 'ask', question: 'Why?', answer: 'Load.', truncated: false, refused: false, thread: [brief, second] };
+  assert.deepEqual(savedTurnsBefore(saved).map((t) => t.id), [1, 2, 3]);
+  assert.deepEqual(savedTurnsBefore({ ...saved, thread: undefined }).map((t) => t.id), [3]);
 });

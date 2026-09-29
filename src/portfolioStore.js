@@ -19,13 +19,17 @@ import {
 import { newAssociate, withoutAssociatePicks, withPick } from './utils/hireScenario';
 
 // The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
-// brief. They start empty and go back to empty on logout.
+// brief. They start empty and go back to empty on logout. From Tier 2 WP10
+// each is the last answer of its card's thread, with `turns`, the earlier
+// turns the card shows above it (threadTurn, src/utils/recentAnswers.js):
+// [] for a new question or brief, the thread so far for a follow-up.
 const EMPTY_AI_RESULTS = { ask: null, brief: null };
-// The AI tab's requests in flight (WP5), one per kind like aiResults: each
-// { kind, question, text, startedAt, firstTextAt, streamed } while its answer
-// is being written, then null. `text` is what has streamed so far, updated at
-// most every AI_TEXT_RENDER_MS so the tab re-renders about ten times a second
-// however fast the pieces come; `streamed` is false on the JSON path.
+// The AI tab's requests in flight (WP5), one per card like aiResults: each
+// { kind, question, text, startedAt, firstTextAt, streamed, turns } while its
+// answer is being written, then null. `text` is what has streamed so far,
+// updated at most every AI_TEXT_RENDER_MS so the tab re-renders about ten
+// times a second however fast the pieces come; `streamed` is false on the
+// JSON path; `turns` are the thread's earlier turns, for a follow-up.
 const EMPTY_AI_STREAMING = { ask: null, brief: null };
 const AI_TEXT_RENDER_MS = 100;
 const AI_DROPPED = 'The connection dropped. The answer is still being written and will appear under Recent answers.';
@@ -42,8 +46,11 @@ const abortAiRequests = () => {
 };
 // The AI tab's saved answers (WP4): the recent list as the API pages it
 // (newest first, for everyone), whether older ones remain, and the answers
-// opened from it, whole, by id. Saved answers never change (none can be
-// edited or deleted in Tier 1), so an opened one is fetched once.
+// opened from it, whole, by id. From Tier 2 WP10 an opened answer is fetched
+// each time it opens (whether it can be followed up depends on today's book,
+// and another partner may have hidden it), showing the copy already fetched
+// meanwhile; and `hidden` says which list is shown: the answers (false) or,
+// after "Show hidden", the hidden ones (true). Nothing deletes an answer.
 const emptyAiAnswers = () => ({
   items: [],
   hasMore: false,
@@ -53,7 +60,12 @@ const emptyAiAnswers = () => ({
   summary: null,
   details: {},
   openId: null,
+  hidden: false,
 });
+const answersPath = (hidden, query = '') => {
+  const params = [query, hidden ? 'hidden=1' : ''].filter(Boolean).join('&');
+  return params ? `/ai/answers?${params}` : '/ai/answers';
+};
 
 // The Scenarios workflow (docs/plans/people-and-second-chair.md, Phase 5,
 // P11): the open stage, the ids of the people leaving, and the partner's
@@ -372,8 +384,14 @@ const usePortfolioStore = create(
       // is empty). A stream that ends without `done` or `error` after it
       // opened says the connection dropped: the server still finishes and
       // saves the answer (T15). Logout aborts the request; nothing else does.
-      askStream: async (kind, question = null, { stream = true } = {}) => {
+      // `kind` is the card the answer shows in ('ask' or 'brief'). With
+      // `parentId` (Tier 2 WP10, only when /api/health lists ai-threads) it
+      // is a follow-up to that saved answer, posted to /ai/ask whichever
+      // card it is in, and `turns` are the thread's earlier turns, which the
+      // card shows above it.
+      askStream: async (kind, question = null, { stream = true, parentId = null, turns = [] } = {}) => {
         if (get().aiStreaming[kind]) return;
+        const followUp = Number.isInteger(parentId);
         const request = { controller: new AbortController(), text: '', timer: null };
         aiRequests[kind] = request;
         const current = () => aiRequests[kind] === request;
@@ -393,12 +411,12 @@ const usePortfolioStore = create(
           aiError: null,
           aiStreaming: {
             ...state.aiStreaming,
-            [kind]: { kind, question, text: '', startedAt: Date.now(), firstTextAt: null, streamed: stream },
+            [kind]: { kind, question, text: '', startedAt: Date.now(), firstTextAt: null, streamed: stream, turns: followUp ? turns : [] },
           },
         }));
 
-        const path = kind === 'ask' ? '/ai/ask' : '/ai/brief';
-        const body = kind === 'ask' ? { question } : {};
+        const path = kind === 'ask' || followUp ? '/ai/ask' : '/ai/brief';
+        const body = followUp ? { question, parentId } : kind === 'ask' ? { question } : {};
         try {
           let result = null;
           let failure = null;
@@ -415,7 +433,7 @@ const usePortfolioStore = create(
                   else if (!request.timer) request.timer = setTimeout(flush, AI_TEXT_RENDER_MS);
                 } else if (type === 'done' && data) {
                   const { answerId, ...answered } = data;
-                  result = { success: true, id: answerId ?? null, kind, question, ...answered };
+                  result = { success: true, id: answerId ?? null, kind: followUp ? 'ask' : kind, question, ...answered };
                 } else if (type === 'error') {
                   failure = data?.error || 'The AI request failed.';
                 }
@@ -432,7 +450,7 @@ const usePortfolioStore = create(
             finish(() => ({ aiError: failure }));
             return;
           }
-          finish((state) => ({ aiResults: { ...state.aiResults, [kind]: result } }));
+          finish((state) => ({ aiResults: { ...state.aiResults, [kind]: { ...result, turns: followUp ? turns : [] } } }));
           // The answer just given heads the saved list, with this month's new
           // total, when the tab has loaded the list (an API with ai-answers)
           if (get().aiAnswers.loaded) get().fetchAiAnswers();
@@ -447,12 +465,14 @@ const usePortfolioStore = create(
       // lists ai-answers. fetchAiAnswers reloads the first page and this
       // month's count and cost; the list stays on screen while it does.
       fetchAiAnswers: async () => {
+        const { hidden } = get().aiAnswers;
         try {
           const [list, summary] = await Promise.all([
-            apiClient.get('/ai/answers'),
+            apiClient.get(answersPath(hidden)),
             apiClient.get('/ai/answers/summary'),
           ]);
           if (!get().isAuthenticated) return; // signed out while it loaded
+          if (get().aiAnswers.hidden !== hidden) return; // the other list was asked for since
           set((state) => ({
             aiAnswers: {
               ...state.aiAnswers,
@@ -475,8 +495,9 @@ const usePortfolioStore = create(
         if (loadingOlder || items.length === 0) return;
         set((state) => ({ aiAnswers: { ...state.aiAnswers, loadingOlder: true } }));
         try {
-          const older = await apiClient.get(`/ai/answers?before=${items[items.length - 1].id}`);
-          if (!get().isAuthenticated) return;
+          const { hidden } = get().aiAnswers;
+          const older = await apiClient.get(answersPath(hidden, `before=${items[items.length - 1].id}`));
+          if (!get().isAuthenticated || get().aiAnswers.hidden !== hidden) return;
           set((state) => ({
             aiAnswers: {
               ...state.aiAnswers,
@@ -493,15 +514,15 @@ const usePortfolioStore = create(
       },
 
       // Opens a saved answer in place (or closes it when it is the one open),
-      // fetching it whole the first time
+      // fetching it whole each time it opens (WP10: whether it can be
+      // followed up, and whether it is hidden, may have changed)
       toggleAiAnswer: async (id) => {
-        const { openId, details } = get().aiAnswers;
+        const { openId } = get().aiAnswers;
         if (openId === id) {
           set((state) => ({ aiAnswers: { ...state.aiAnswers, openId: null } }));
           return;
         }
         set((state) => ({ aiAnswers: { ...state.aiAnswers, openId: id, error: null } }));
-        if (details[id]) return;
         try {
           const { answer } = await apiClient.get(`/ai/answers/${id}`);
           if (!get().isAuthenticated) return;
@@ -516,6 +537,37 @@ const usePortfolioStore = create(
             },
           }));
         }
+      },
+
+      // Hides a saved answer from every partner's list, or shows it again
+      // (Tier 2 WP10, S15; only when /api/health lists ai-threads). Nothing
+      // is deleted. The opened answer takes who hid it and when, and the
+      // list and the month's line reload.
+      setAiAnswerHidden: async (id, hidden) => {
+        try {
+          const { answer } = await apiClient.post(`/ai/answers/${id}/${hidden ? 'hide' : 'show'}`, {});
+          if (!get().isAuthenticated) return;
+          set((state) => ({
+            aiAnswers: {
+              ...state.aiAnswers,
+              error: null,
+              details: state.aiAnswers.details[id]
+                ? { ...state.aiAnswers.details, [id]: { ...state.aiAnswers.details[id], ...answer } }
+                : state.aiAnswers.details,
+            },
+          }));
+          await get().fetchAiAnswers();
+        } catch (err) {
+          console.error('Failed to hide or show an answer', err);
+          set((state) => ({ aiAnswers: { ...state.aiAnswers, error: apiErrorMessage(err, 'Could not change that answer.') } }));
+        }
+      },
+
+      // "Show hidden" (true) and back to the answers (false): the list and
+      // its pages reload for the one asked for (WP10)
+      showHiddenAiAnswers: async (hidden) => {
+        set((state) => ({ aiAnswers: { ...state.aiAnswers, hidden, items: [], hasMore: false, loaded: false, openId: null, error: null } }));
+        await get().fetchAiAnswers();
       },
 
       // Authentication actions
