@@ -12,7 +12,6 @@ import {
   personLabel,
   originatorLabel,
   toPersonId,
-  legacyPeopleFields,
   personFilterOptions,
   matchesPersonFilter,
 } from '../src/utils/people.js';
@@ -248,14 +247,6 @@ describe('src/utils/people.js pickers', () => {
     assert.equal(originatorLabel({ originator: null, originator_is_firm: true }), 'Firm');
     assert.equal(originatorLabel({ originator: null, client_originator: 'Steve' }), 'Steve');
     assert.equal(originatorLabel({}), '');
-  });
-
-  test('legacyPeopleFields matches legacyText for the same selections', () => {
-    const selection = { lead_id: '1', second_chair_id: '3', originator_id: '5', originator_is_firm: false };
-    assert.deepEqual(legacyPeopleFields(selection, ROSTER),
-      legacyText({ lead: KEVIN, secondChair: JAY, originator: STEVE, originatorIsFirm: false }));
-    assert.deepEqual(legacyPeopleFields({ lead_id: '', originator_is_firm: true }, ROSTER),
-      { primary_lobbyist: '', lobbyist_team: [], client_originator: 'Firm' });
   });
 
   test('toPersonId', () => {

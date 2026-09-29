@@ -30,7 +30,8 @@ import { formatClientName } from '../../utils/textUtils';
 import {
   getSuccessionRiskVariant,
   getRelationshipTypeColor,
-  groupClientsBySuccessionRisk
+  groupClientsBySuccessionRisk,
+  stickinessNotRated
 } from '../../utils/successionUtils';
 import { candidateReason } from '../../utils/departure';
 import { formatMoney } from '../../utils/load';
@@ -245,7 +246,15 @@ const PlanCard = ({ decision, plan, year, hasChoice, onPick, onResetPick, onUseA
                   {TRANSITION_STATUS[status]?.label || status}
                 </Badge>
                 {priority && <Badge className={`${priority.color} text-white`}>{priority.label} Priority</Badge>}
-                <Badge variant={getSuccessionRiskVariant(client.successionRisk)}>Risk: {client.successionRisk}/10</Badge>
+                {/* The server's risk (Tier 2 WP7). An unrated client's rests on
+                    the scorer's stand-in, not a rating (S11 rule 4), and says so;
+                    the colour and the risk filter still read the number */}
+                <Badge
+                  variant={getSuccessionRiskVariant(client.successionRisk)}
+                  title={stickinessNotRated(client) ? 'Stickiness is not rated: this risk counts it at a stand-in (4.44 of 10), not a rating.' : undefined}
+                >
+                  Risk: {client.successionRisk}/10{stickinessNotRated(client) ? ' · Stickiness not rated' : ''}
+                </Badge>
                 <span className="text-xs text-muted-foreground">
                   Lead {seatSummary(decision.lead)} · Second chair {seatSummary(decision.secondChair)}
                 </span>

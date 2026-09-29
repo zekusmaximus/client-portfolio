@@ -41,6 +41,11 @@ import {
   repo, serverUrl, generatedPassword, urlFor, freePort, startServer, SHAPES, addAccount, cookieOf, signIn,
 } from './helpers/server.mjs';
 import { createSseParser, eventJson } from '../src/utils/sse.js';
+import succession from '../utils/succession.cjs';
+import { clientFormData, clientRequestBody, revenuesToSend } from '../src/utils/clientForm.js';
+import { sanitizeFormData } from '../src/utils/validation.js';
+import { toPersonId } from '../src/utils/people.js';
+import { enhanceClientWithSuccessionMetrics } from '../src/utils/successionUtils.js';
 
 // Every route server.cjs registers, as METHOD and the full path, with whether
 // it needs a signed-in partner and the page files that call it.
@@ -180,7 +185,27 @@ const CLIENT_KEYS_THE_PAGE_READS = [
   'high_maintenance', 'lead_id', 'second_chair_id', 'originator_id', 'originator_is_firm', 'revenues', 'lead',
   'secondChair', 'originator', 'effort', 'stickinessScore', 'primary_lobbyist', 'lobbyist_team', 'client_originator',
   'strategicValue', 'updated_at_exact',
+  // Tier 2 WP7 (S11): the succession metrics, which the Dashboard, the client
+  // list and Scenarios show (src/DashboardView.jsx, src/ClientListView.jsx,
+  // src/components/succession/*, src/utils/transitionPlans.js)
+  'relationshipType', 'transitionComplexity', 'successionRisk',
 ];
+const METRIC_KEYS = ['relationshipType', 'transitionComplexity', 'successionRisk'];
+const metricsOf = (client) => Object.fromEntries(METRIC_KEYS.map((k) => [k, client[k]]));
+// The body the client form sends for its state, as handleSave builds it
+// (src/ClientEnhancementForm.jsx), and the form's live preview of that state
+const formSaveBody = (form) => {
+  const sent = sanitizeFormData(form);
+  return clientRequestBody({
+    ...sent,
+    lead_id: toPersonId(form.lead_id),
+    second_chair_id: toPersonId(form.second_chair_id),
+    originator_id: toPersonId(form.originator_id),
+    originator_is_firm: form.originator_is_firm === true,
+    revenues: revenuesToSend(sent.revenues).revenues,
+  });
+};
+const previewOf = (form) => metricsOf(enhanceClientWithSuccessionMetrics(form));
 // A client_changes row as GET /api/data/clients/:id/changes answers it (WP6)
 const CHANGE_KEYS = ['changed_by_username', 'changes', 'client_id', 'client_name', 'created_at', 'id', 'source'];
 const EXACT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/;
@@ -854,6 +879,11 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual([client.practiceArea, client.practice_area], [['Healthcare'], ['Healthcare']]);
       assert.equal(client.effort, 2, 'Monthly');
       for (const key of ['strategicValue', 'stickinessScore']) assert.equal(typeof client[key], 'number', key);
+      // WP7 (S11): the succession metrics, the server's (utils/succession.cjs)
+      // for every client. This one has a second chair and Stickiness 3 (5 of
+      // 10): secondary; Monthly and Healthcare, 0.8 + 1.5 = 2.3; 2 + 1 + 0.6 = 3.6
+      for (const each of res.body.clients) assert.deepEqual(metricsOf(each), succession.successionMetrics(each), each.name);
+      assert.deepEqual(metricsOf(client), { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 });
       // WP6: updated_at to the microsecond as PostgreSQL holds it (the page
       // sends it back as expected_updated_at), and who saved last (c.*)
       assert.match(client.updated_at_exact, EXACT);
@@ -868,6 +898,10 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       const client = body.clients.find((c) => String(c.id) === String(created.id));
       assert.deepEqual([client.lead, client.secondChair, client.originator], [null, null, null]);
       assert.deepEqual([client.primary_lobbyist, client.lobbyist_team], ['Old Text', ['Old Text']]);
+      // WP7 (S11 rule 1): no lead is orphaned, whatever the legacy text says
+      // (until WP7 the page read primary_lobbyist and called it secondary)
+      assert.equal(client.relationshipType, 'orphaned');
+      assert.equal(client.successionRisk, 7, '5 + 1 (Stickiness 3) + 0.6 (complexity 2)');
     });
   });
 
@@ -1074,6 +1108,29 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Validation failed', details }], JSON.stringify(people));
       }
       assert.equal(await clientCount(), before);
+    });
+
+    // Tier 2 WP7 (S11): the client form's live preview (src/utils/successionUtils.js
+    // on the form's state) shows what the save then returns, a new client and
+    // an edit, as POST and PUT answer them and as GET then lists them
+    test('201: the succession metrics the form\'s preview showed are the ones the save returns and GET lists', async () => {
+      const paula = await seed('Paula');
+      const jay = await seed('Jay');
+      const form = { ...clientFormData({}), name: uniqueName('Preview Client'), lead_id: String(paula.id), originator_id: String(paula.id),
+        stickiness: 5, practiceArea: ['Energy'], interaction_frequency: 'Monthly', revenues: [{ year: 2026, revenue_amount: '12000' }] };
+      assert.deepEqual(previewOf(form), { relationshipType: 'primary', transitionComplexity: 2, successionRisk: 4 });
+      const res = await call('POST', '/api/data/clients', formSaveBody(form));
+      assert.equal(res.status, 201, res.text);
+      assert.deepEqual(metricsOf(res.body.client), previewOf(form));
+      assert.deepEqual(metricsOf(await listedClient(res.body.client.id)), previewOf(form));
+
+      // An edit through clientFormData: a second chair, with Stickiness 5, makes it shared
+      const edit = { ...clientFormData(await listedClient(res.body.client.id)), second_chair_id: String(jay.id) };
+      assert.deepEqual(previewOf(edit), { relationshipType: 'shared', transitionComplexity: 2, successionRisk: 2 });
+      const put = await call('PUT', `/api/data/clients/${res.body.client.id}`, formSaveBody(edit));
+      assert.equal(put.status, 200, put.text);
+      assert.deepEqual(metricsOf(put.body.client), previewOf(edit));
+      assert.deepEqual(metricsOf(await listedClient(res.body.client.id)), previewOf(edit));
     });
   });
 
@@ -1563,6 +1620,19 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         details: [{ field: 'second_chair_id', message: 'The second chair must be an active person on the People list.' }],
       }]);
       assert.deepEqual(await storedClient(created.id), before);
+    });
+
+    // Tier 2 WP7 (S11)
+    test('200: the client it answers carries the succession metrics after the seat, as GET lists it', async () => {
+      const kevin = await seed('Kevin');
+      const associate = await addPerson('associate', 'Metric Associate');
+      const created = await addClient({ lead: kevin });
+      await db.query('UPDATE clients SET stickiness = 5 WHERE id::text = $1', [String(created.id)]);
+      assert.equal((await listedClient(created.id)).relationshipType, 'secondary', 'a lead, no second chair, no originator');
+      const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: associate.id, expected_second_chair_id: null });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(metricsOf(res.body.client), { relationshipType: 'shared', transitionComplexity: 2, successionRisk: 2 });
+      assert.deepEqual(metricsOf(res.body.client), metricsOf(await listedClient(created.id)));
     });
   });
 
@@ -2131,6 +2201,26 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       });
       assert.deepEqual([res.status, res.body], [404, { success: false, error: 'Client not found.' }]);
       assert.equal(fake.requests.length, reached);
+    });
+
+    // Tier 2 WP7 (S11): the prompt's succession lines and the plan's priority
+    // are the server's, from the book's entry: the figures GET lists for the
+    // client, whatever the request's client carried
+    test('200: the succession metrics in the prompt, and the priority, are the server\'s, not the request\'s', async () => {
+      const body = await planBody();
+      const listed = await listedClient(body.client.id);
+      // Mike leads it, no second chair, Stickiness 3, Monthly, Healthcare, Low: secondary, 2, 4
+      assert.deepEqual(metricsOf(listed), { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 });
+      const res = await call('POST', '/api/scenarios/transition-plan', {
+        ...body, client: { ...body.client, relationshipType: 'shared', transitionComplexity: 9, successionRisk: 10 },
+      });
+      assert.equal(res.status, 200, res.text);
+      assert.equal(res.body.plan.priority, 'medium', 'from risk 4; the request\'s 10 would be critical');
+      const turn = fake.requests.at(-1).body.messages[0].content;
+      for (const line of ['- **Relationship Type**: secondary', '- **Succession Risk**: 4/10', '- **Transition Complexity**: 2/10']) {
+        assert.ok(turn.includes(`${line}\n`), line);
+      }
+      assert.doesNotMatch(turn, /shared|10\/10|9\/10/);
     });
 
     test('503 { success: false, error } without a key', async () => {

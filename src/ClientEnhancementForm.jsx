@@ -14,8 +14,7 @@ import {
   secondChairCandidates,
   originatorCandidates,
   personLabel,
-  toPersonId,
-  legacyPeopleFields
+  toPersonId
 } from './utils/people';
 import { 
   validateClientForm, 
@@ -668,10 +667,11 @@ const ClientEnhancementForm = ({ onClose }) => {
             </CardHeader>
             <CardContent>
               {(() => {
-                const enhancedClient = enhanceClientWithSuccessionMetrics({
-                  ...formData,
-                  ...legacyPeopleFields(formData, people)
-                });
+                // The page's copy of the server's rules (Tier 2 WP7), on the
+                // form's own state: people as select values, the raw
+                // Stickiness pick, practiceArea. What the save then returns
+                // (tests/succession.test.mjs, tests/routes.test.mjs)
+                const enhancedClient = enhanceClientWithSuccessionMetrics(formData);
                 return (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">

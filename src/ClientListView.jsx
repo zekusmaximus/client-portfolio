@@ -91,11 +91,11 @@ const ClientListView = () => {
             aValue = getClientRevenue(a) || 0;
             bValue = getClientRevenue(b) || 0;
           } else if (sortBy === 'successionRisk') {
-            aValue = a.successionRisk || 0;
-            bValue = b.successionRisk || 0;
+            aValue = a.successionRisk ?? 0;
+            bValue = b.successionRisk ?? 0;
           } else if (sortBy === 'transitionComplexity') {
-            aValue = a.transitionComplexity || 0;
-            bValue = b.transitionComplexity || 0;
+            aValue = a.transitionComplexity ?? 0;
+            bValue = b.transitionComplexity ?? 0;
           } else {
             // Fallback for other fields
             aValue = a[sortBy] || 0;

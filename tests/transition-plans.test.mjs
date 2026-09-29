@@ -172,6 +172,11 @@ test('Stage 3: transitions and tasks from the approved plans only, with no inven
   for (const t of first.transitions) {
     assert.deepEqual(Object.keys(t).filter((k) => /retention|progress|successorPartner/i.test(k)), []);
   }
+  // The risk when the plan was approved, copied from the client as the store
+  // holds it (the API's since Tier 2 WP7), unchanged; a client without one, null
+  assert.deepEqual(first.transitions.map((t) => t.successionRisk), [5, 5]);
+  const scored = departureModel({ people: PEOPLE, clients: CLIENTS.map((c) => ({ ...c, successionRisk: c.id === 11 ? 0 : undefined })), departingIds: [2], revenueOf });
+  assert.deepEqual(syncTransitions({ decisions: scored.decisions, plans, today: '2026-09-25' }).transitions.map((t) => t.successionRisk), [0, null]);
 
   // Later: 11 is under way with a task done, 12 is withdrawn, 13 approved
   const done = first.tasks.map((t, i) => (i === 0 ? { ...t, status: 'completed' } : t));

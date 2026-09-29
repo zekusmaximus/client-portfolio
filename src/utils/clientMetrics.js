@@ -9,7 +9,9 @@
  * `stickiness` (1–5 pick), `high_maintenance` flag, and `interaction_frequency`
  * cadence — NOT the server-computed scores. These resolvers accept EITHER
  * shape so succession metrics are identical whether they're computed from a
- * saved client or from a form a partner is still editing.
+ * saved client or from a form a partner is still editing. (Since Tier 2 WP7
+ * the succession rules read stickiness from the raw pick on both sides,
+ * never the rounded stickinessScore: src/utils/successionUtils.js.)
  *
  * Keep the cadence weights / stickiness mapping in sync with
  * `utils/strategic.cjs` (the single source of truth for the saved score).

@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import transitionPlan from '../utils/transitionPlan.cjs';
 import askPrompts from '../utils/askPrompts.cjs';
 import book from '../utils/book.cjs';
+import succession from '../utils/succession.cjs';
 import { departureModel } from '../src/utils/departure.js';
 import { computeReportingYear, revenueForYear } from '../src/utils/revenue.js';
 import { rosterFor } from '../src/utils/transitionPlans.js';
@@ -29,6 +30,7 @@ const {
   parseTransitionPlanResponse,
   bookClient,
   rosterFromBook,
+  planMetrics,
 } = transitionPlan;
 
 const load = (count, revenue, effort) => ({ count, revenue, effort });
@@ -192,7 +194,7 @@ test('createTransitionPlanPrompt: the system blocks are Ask\'s for the same book
   assert.match(askPrompts.ASK_INSTRUCTIONS, /or, when someone is leaving the firm, a request for one client's transition plan\./, 'the instructions name the request');
 });
 
-test('createTransitionPlanPrompt: the client\'s facts come from the book, not the request; the succession metrics from the request', () => {
+test('createTransitionPlanPrompt: the client\'s facts and its succession metrics come from the book, not the request', () => {
   const { prompt } = createTransitionPlanPrompt(client, stage1Data, ROSTER, BOOK, at);
   const profile = section(prompt, '## THE CLIENT', '## ROSTER');
   assert.ok(profile.includes([
@@ -211,11 +213,22 @@ test('createTransitionPlanPrompt: the client\'s facts come from the book, not th
   // The request's figures for the same client (averageRevenue 120000,
   // stickinessScore 7.5, effort 3, Weekly, a handful, Energy) are not used
   assert.doesNotMatch(profile, /\$120,000|7\.5|Weekly|Energy|\*\*Handful\*\*: yes|\*\*Effort\*\*: 3/);
+  // Tier 2 WP7 (S11): the succession metrics are the server's, from the
+  // book's entry (utils/succession.cjs). The request says primary, risk 8 and
+  // complexity 6; the book's c1 has a second chair, Stickiness 2, effort 2, a
+  // Healthcare area and High conflict risk: secondary, 0.8 + 1.5 + 1 = 3.3
+  // (3), 2 + 3.5 + 0.9 = 6.4 (6). Until WP7 the prompt showed the request's
   assert.ok(profile.includes([
-    '- **Relationship Type**: primary',
-    '- **Succession Risk**: 8/10',
-    '- **Transition Complexity**: 6/10',
-  ].join('\n')), 'the page\'s succession analysis, which the server has no copy of');
+    'Its succession analysis, computed from the entry above, as the partners see it on the Dashboard and in Scenarios:',
+    '- **Relationship Type**: secondary',
+    '- **Succession Risk**: 6/10',
+    '- **Transition Complexity**: 3/10',
+  ].join('\n')), profile);
+  assert.doesNotMatch(profile, /primary|8\/10|Complexity\*\*: 6\/10|page's succession analysis/, 'none of the request\'s metrics');
+  const { metrics } = createTransitionPlanPrompt(client, stage1Data, ROSTER, BOOK, at);
+  assert.deepEqual(metrics, { ...succession.bookEntryMetrics(bookClient(BOOK, 'c1')), notRated: false });
+  assert.deepEqual(metrics, planMetrics(BOOK, 'c1'));
+  assert.deepEqual(metrics, { relationshipType: 'secondary', transitionComplexity: 3, successionRisk: 6, notRated: false });
 
   const scenario = section(prompt, '## THE SCENARIO', '## THE CLIENT');
   assert.match(scenario, /\*\*Departing\*\*: Kevin \(Partner\), Anna \(Associate\)/);
@@ -301,9 +314,10 @@ test('createTransitionPlanPrompt: a client the book has nothing set for, and emp
     '- **Stickiness**: not rated',
     '- **Cadence**: not set',
     '- **Conflict Risk**: not set',
-    '- **Relationship Type**: not given',
-    '- **Succession Risk**: not given',
-    '- **Transition Complexity**: not given',
+    // No lead: orphaned. Not rated: 5 + (6 − 40/9) + 0 = 6.56, and the line says the stand-in is not a rating
+    '- **Relationship Type**: orphaned',
+    '- **Succession Risk**: 7/10 (Stickiness not rated: counted at a stand-in, not a rating)',
+    '- **Transition Complexity**: 0/10',
   ]) assert.ok(profile.includes(`${line}\n`), line);
   assert.match(prompt, /\*\*Departing\*\*: not given/);
   assert.match(prompt, /\*\*Revenue at Risk\*\*: not given/);
@@ -434,11 +448,24 @@ test('rosterNamesIn and resolveRecommendation: whole names, regardless of case a
   assert.deepEqual(resolveRecommendation('1. Jeff', ROSTER).person, { id: 2, name: 'Jeff', role: 'partner' });
 });
 
-test('parseTransitionPlanResponse: priority follows the client succession risk', () => {
+test('parseTransitionPlanResponse: priority follows the server\'s succession risk (planMetrics), not the request\'s', () => {
+  assert.equal(parseTransitionPlanResponse(fixture, { successionRisk: 8 }).priority, 'critical');
   assert.equal(parseTransitionPlanResponse(fixture, { successionRisk: 6 }).priority, 'high');
   assert.equal(parseTransitionPlanResponse(fixture, { successionRisk: 5 }).priority, 'medium');
   assert.equal(parseTransitionPlanResponse(fixture, { successionRisk: 3 }).priority, 'low');
   assert.equal(parseTransitionPlanResponse(fixture).priority, 'medium');
+  // Tier 2 WP7: the route passes the metrics createTransitionPlanPrompt
+  // computed from the book. The request's client says risk 8 (critical); the
+  // book's c1 is 6 (high), and c6 7; c5 (Old Mill Co: Jay second chair,
+  // Stickiness 3, As-Needed) 3 (low)
+  assert.equal(client.successionRisk, 8);
+  const priority = (id) => {
+    const { metrics } = createTransitionPlanPrompt({ ...client, id }, stage1Data, ROSTER, BOOK, at);
+    return parseTransitionPlanResponse(fixture, metrics, ROSTER).priority;
+  };
+  assert.deepEqual(['c1', 'c6', 'c5'].map(priority), ['high', 'high', 'low']);
+  assert.deepEqual(['c1', 'c6', 'c5'].map((id) => planMetrics(BOOK, id).successionRisk), [6, 7, 3]);
+  assert.equal(planMetrics(BOOK, 'c9'), null, 'a client not in the book');
 });
 
 test('parseTransitionPlanResponse: empty text returns the documented defaults, with no invented timeline', () => {

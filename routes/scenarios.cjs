@@ -48,10 +48,12 @@ const MAX_TOKENS = 16000;
 // the book from the same cache entry (T8); the client's facts come from its
 // entry in the book and, after checkRoster, each roster person's loads from
 // the book's rows (createTransitionPlanPrompt, rosterFromBook), whatever the
-// page sent. Only the page's succession metrics (successionRisk,
-// transitionComplexity, relationshipType) and the scenario (who is leaving,
-// the revenue at risk) come from the request. The response is unchanged, so
-// the page needs no change and no feature name.
+// page sent. Since Tier 2 WP7 (S11) so do the client's succession metrics
+// (planMetrics, utils/succession.cjs: the figures its client response
+// carries), and the plan's priority follows that risk; the metrics the page
+// sends are ignored. Only the scenario (who is leaving, the revenue at risk)
+// comes from the request. The response is unchanged, so the page needs no
+// change and no feature name.
 //
 // The plan is saved (WP4, T12) as a 'transition-plan' answer with the
 // client's id as text, its name unescaped (unescapeStored: the name the page
@@ -84,7 +86,7 @@ router.post('/transition-plan', async (req, res) => {
   }
 
   try {
-    const { system, prompt } = createTransitionPlanPrompt(client, stage1Data, checked.roster, book, { today: now });
+    const { system, prompt, metrics } = createTransitionPlanPrompt(client, stage1Data, checked.roster, book, { today: now });
     const started = Date.now();
     const result = await complete({
       system,
@@ -103,7 +105,7 @@ router.post('/transition-plan', async (req, res) => {
       durationMs: Date.now() - started,
       model: AI_MODEL,
     }), { label: 'transition-plan', userId: req.user.userId });
-    const parsed = parseTransitionPlanResponse(result.text, client, checked.roster);
+    const parsed = parseTransitionPlanResponse(result.text, metrics, checked.roster);
 
     res.json({
       success: true,

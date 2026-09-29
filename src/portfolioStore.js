@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient, apiErrorMessage, apiErrorStatus } from './api';
-import { enhanceClientWithSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
+import { withSuccessionMetrics, getSuccessionAnalytics } from './utils/successionUtils';
 import { computeReportingYear, revenueForYear } from './utils/revenue';
 import { toggleId, withChoice } from './utils/departure';
 import { approvalBlocker, pinnedChoice, syncTransitions } from './utils/transitionPlans';
@@ -118,8 +118,12 @@ const usePortfolioStore = create(
       ...emptyExecution(),
       
       // Actions
+      // Each client's succession metrics are the API's since Tier 2 WP7
+      // (docs/plans/tier-2.md, S11), kept as they came; only a client from an
+      // older API, which sends none, gets them from the page's copy of the
+      // same rules (withSuccessionMetrics), so the page works on either API
       setClients: (clients) => {
-        const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
+        const enhancedClients = clients.map(withSuccessionMetrics);
         set({ clients: enhancedClients, reportingYear: computeReportingYear(enhancedClients) });
       },
 
@@ -133,7 +137,7 @@ const usePortfolioStore = create(
         try {
           const response = await apiClient.get('/data/clients');
           const clients = response.clients || [];
-          const enhancedClients = clients.map(client => enhanceClientWithSuccessionMetrics(client));
+          const enhancedClients = clients.map(withSuccessionMetrics);
           set({
             clients: enhancedClients,
             reportingYear: computeReportingYear(enhancedClients),
