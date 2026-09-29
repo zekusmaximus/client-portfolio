@@ -32,9 +32,10 @@ Low 1; average complexity 0.2; Secondary 83, Shared 1), as its PR predicted
 for this book, Stage 2 shows "Stickiness not rated" on an unrated client's
 badge, and Render deployed `b3e4dba`. WP6's candidate (a), the client form
 writing As-Needed over an unset cadence, was fixed outside the numbered
-packages as PR #49 (a page-only change). WP8 (saved scenarios) is in
-progress on `claude/cool-brown-w6co9o`: the `scenarios` table, its five
-routes and the Scenarios list behind `saved-scenarios`. Run the rest in
+packages as PR #49 (a page-only change). WP8 (saved scenarios) is open
+as PR #50 from `claude/cool-brown-w6co9o`: the `scenarios` table, its five
+routes and the Scenarios list behind `saved-scenarios`; the nightly backup
+must be green before it merges (section 17). Run the rest in
 order, and
 update its status table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
