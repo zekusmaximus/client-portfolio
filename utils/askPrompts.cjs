@@ -63,6 +63,11 @@ const BRIEF_SECTIONS = {
 /** The longest question, in characters after trimming; the page's box stops at the same length. */
 const QUESTION_MAX = 2000;
 
+// max_tokens for Ask and the brief (T11): thinking and the answer together.
+// routes/ai.cjs sends it, and so does scripts/eval-ai.cjs (Tier 2 WP11), which
+// asks saved questions as Ask does.
+const ASK_MAX_TOKENS = 32000;
+
 // The firm's day: a question asked at 10 pm in Connecticut is asked on that
 // day, whatever zone the server's clock is in (Render's is UTC).
 const FIRM_TIME_ZONE = 'America/New_York';
@@ -124,6 +129,7 @@ module.exports = {
   ASK_INSTRUCTIONS,
   BRIEF_HEADINGS,
   QUESTION_MAX,
+  ASK_MAX_TOKENS,
   FIRM_TIME_ZONE,
   firmDate,
   systemBlocks,

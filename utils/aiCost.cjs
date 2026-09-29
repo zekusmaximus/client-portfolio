@@ -6,10 +6,13 @@
 // estimate; the Anthropic Console is the bill.
 //
 // Prices are dollars per million tokens, read on PRICES_READ_ON from
-// https://platform.claude.com/docs/en/about-claude/pricing. On every model
-// listed, a cache write costs 1.25x the input price (5-minute lifetime) or 2x
-// (1-hour) and a cache read 0.1x. A model missing here gets no cost (null),
-// never a guess: add it when AI_MODEL or a fallback target changes.
+// https://platform.claude.com/docs/en/about-claude/pricing (re-read on
+// 2026-09-29 for Tier 2 WP11: the three earlier prices unchanged, and
+// claude-opus-5-5 added). On every model listed, a cache write costs 1.25x the
+// input price (5-minute lifetime) or 2x (1-hour); a cache read costs 0.1x,
+// except on claude-opus-5-5, where the page prices it at 0.05x ($0.20). A
+// model missing here gets no cost (null), never a guess: add it when AI_MODEL
+// or a fallback target changes.
 //
 // A call's cost is the sum over its attempts: usage.iterations when the API
 // reports them (a declined attempt and the fallback attempt are separate
@@ -28,24 +31,29 @@
 // applies itself on a server-side fallback: each attempt's counts are priced
 // as reported, so a fallback over a cached prefix may be overstated.
 
-const PRICES_READ_ON = '2026-09-26';
+const PRICES_READ_ON = '2026-09-29';
 
 const CACHE_WRITE_5M = 1.25;
 const CACHE_WRITE_1H = 2;
 const CACHE_READ = 0.1;
 
-const modelPrices = (input, output) => Object.freeze({
+// `cacheRead` is the model's cache-read multiplier when the page gives it one
+// of its own.
+const modelPrices = (input, output, { cacheRead = CACHE_READ } = {}) => Object.freeze({
   input,
   output,
   cacheWrite5m: input * CACHE_WRITE_5M,
   cacheWrite1h: input * CACHE_WRITE_1H,
-  cacheRead: input * CACHE_READ,
+  cacheRead: input * cacheRead,
 });
 
 const PRICES = Object.freeze({
   'claude-opus-5': modelPrices(5, 25), // AI_MODEL's default (D7)
   'claude-opus-4-8': modelPrices(5, 25), // where the default fallback sends cyber-category declines
   'claude-sonnet-5': modelPrices(2, 10), // D7's cheaper alternative
+  // Tier 2 WP11 (S16): compared by scripts/eval-ai.cjs when Jeff asks for it;
+  // not AI_MODEL, and not in FALLBACK_MODELS, unless Jeff chooses it
+  'claude-opus-5-5': modelPrices(4, 20, { cacheRead: 0.05 }),
 });
 
 // Refusal categories billed when the refusal comes before any output (as of

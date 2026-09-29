@@ -109,7 +109,7 @@ test('a thinking block then text: the text only, with tokens, cost and the ai_ca
     { inputTokens: 1850, outputTokens: 420, cacheReadTokens: 0, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, iterations: undefined },
   );
   assert.equal(result.costUsd, 0.01975); // 1,850 x $5 + 420 x $25, per million
-  assert.equal(result.pricesReadOn, '2026-09-26');
+  assert.equal(result.pricesReadOn, '2026-09-29');
 
   const call = lines.find((line) => line.event === 'ai_call');
   assert.deepEqual(

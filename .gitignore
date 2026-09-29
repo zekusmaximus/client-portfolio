@@ -40,6 +40,10 @@ upload-data.*
 # The import sheet's template: header and the plan's two example rows only
 !public/client-book-template.csv
 
+# The AI evaluation's side-by-side (scripts/eval-ai.cjs, Tier 2 WP11): the
+# firm's questions, answers and client names. DO NOT COMMIT
+eval-ai-output/
+
 # Build outputs
 dist/
 build/

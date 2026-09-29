@@ -17,11 +17,24 @@ test('the price table: each model as read from the pricing page, cache prices at
   assert.deepEqual({ ...PRICES['claude-opus-5'] }, { input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5 });
   assert.deepEqual({ ...PRICES['claude-opus-4-8'] }, { input: 5, output: 25, cacheWrite5m: 6.25, cacheWrite1h: 10, cacheRead: 0.5 });
   assert.deepEqual({ ...PRICES['claude-sonnet-5'] }, { input: 2, output: 10, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2 });
-  assert.match(PRICES_READ_ON, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(PRICES_READ_ON, '2026-09-29');
+});
+
+// Tier 2 WP11 (S16): the pricing page, read on 2026-09-29, prices
+// claude-opus-5-5 at $4 / $20, cache writes $5 and $8, and cache reads at
+// 0.05x of input ($0.20), not the 0.1x of every other model listed.
+test('claude-opus-5-5: $4 / $20, writes at 1.25x and 2x, and reads at 0.05x of input', () => {
+  assert.deepEqual({ ...PRICES['claude-opus-5-5'] }, { input: 4, output: 20, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.2 });
+  const usage = { input_tokens: 50, output_tokens: 200, cache_read_input_tokens: 12000, cache_creation_input_tokens: 1000 };
+  // 50 x 4 + 200 x 20 + 12,000 x 0.2 + 1,000 x 5
+  assert.equal(callCost(usage, 'claude-opus-5-5').usd, 0.0116);
+  assert.deepEqual(callCost(usage, 'claude-opus-5-5').unknownModels, []);
+  // The same counts on claude-opus-5: 50 x 5 + 200 x 25 + 12,000 x 0.5 + 1,000 x 6.25
+  assert.equal(callCost(usage, 'claude-opus-5').usd, 0.0175);
 });
 
 test('every model the service can send, and the fallback target, has a price', () => {
-  const models = new Set(['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', ...ai.FALLBACK_MODELS]);
+  const models = new Set(['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', 'claude-opus-5-5', ...ai.FALLBACK_MODELS]);
   for (const model of models) assert.ok(PRICES[model], `${model} has a price`);
 });
 

@@ -60,6 +60,14 @@ test('services/anthropic.cjs is the only module that builds an Anthropic client 
   assert.deepEqual(filesMatching(sdkUse, files), ['services/anthropic.cjs']);
 });
 
+// Tier 2 WP11 (S16): the evaluation script builds a service for each model
+// and effort it compares, through the one call site. Nothing else builds a
+// second service: the app answers on AI_MODEL and AI_EFFORT alone (the plan's
+// section 3 item 10), so a route with a model of its own fails here.
+test('createService is called only by the service itself and the evaluation script', () => {
+  assert.deepEqual(filesMatching(/createService\(/, files), ['scripts/eval-ai.cjs', 'services/anthropic.cjs']);
+});
+
 test('no sampling parameter or thinking budget anywhere in the app code', () => {
   assert.deepEqual(filesMatching(/temperature|top_p|top_k|budget_tokens/, files), []);
 });

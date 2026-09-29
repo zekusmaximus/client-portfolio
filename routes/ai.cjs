@@ -4,7 +4,7 @@ const auth = require('../middleware/auth.cjs');
 const { aiUserLimiter, aiGlobalLimiter } = require('../middleware/rateLimit.cjs');
 const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs');
 const { loadBook } = require('../models/bookModel.cjs');
-const { systemBlocks, askTurn, briefTurn, checkQuestion, FIRM_TIME_ZONE } = require('../utils/askPrompts.cjs');
+const { systemBlocks, askTurn, briefTurn, checkQuestion, FIRM_TIME_ZONE, ASK_MAX_TOKENS } = require('../utils/askPrompts.cjs');
 const { answerRow, bookHash, readAnswerId, readListQuery, listRow } = require('../utils/aiAnswers.cjs');
 const {
   systemHash, turnContent, threadHistory, readParentId, checkFollowUp, threadPlace, earlierTurns,
@@ -46,8 +46,6 @@ router.get('/book', async (req, res) => {
     res.status(500).json({ success: false, error: 'Failed to build the book.' });
   }
 });
-
-const MAX_TOKENS = 32000; // T11: thinking and the answer together
 
 // A comment line on a streamed answer this often until done (WP5, T9): the
 // model thinks before its first words, for minutes on a long answer, and the
@@ -132,7 +130,7 @@ async function answer(req, res, { kind, question, parentId = null }) {
       system,
       prompt,
       history: threadHistory(chain.map((turn) => turn.content)),
-      maxTokens: MAX_TOKENS,
+      maxTokens: ASK_MAX_TOKENS,
       userId,
       label,
       ...(streaming ? {

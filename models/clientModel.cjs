@@ -11,9 +11,11 @@ const {
    second chair, originator; the legacy people fields filled from them).
    The revenue rows read only columns production's older client_revenues has
    (no contract_end_date: see CLAUDE.md, File Structure, and
-   tests/import-db.test.mjs), so the AI routes work on both table shapes. */
-exports.listWithRevenues = async () => {
-  const { rows } = await db.query(
+   tests/import-db.test.mjs), so the AI routes work on both table shapes.
+   `q` is what runs the query: the pool, or one connection inside a
+   transaction (scripts/eval-ai.cjs reads the book read-only, Tier 2 WP11). */
+exports.listWithRevenues = async (q = db) => {
+  const { rows } = await q.query(
     `SELECT c.*, jsonb_agg(
          jsonb_build_object(
            'id', r.id,
@@ -35,10 +37,11 @@ exports.listWithRevenues = async () => {
 
 /**
  * List clients with calculated strategic metrics
+ * @param q the pool (the default) or one connection, as listWithRevenues
  * @returns {Promise<Array>}
  */
-exports.listWithMetrics = async () => {
- const clients = await exports.listWithRevenues();
+exports.listWithMetrics = async (q = db) => {
+ const clients = await exports.listWithRevenues(q);
 
  const enriched = clients.map((c) => {
    // Revenue by year for every row on file (year-agnostic)
