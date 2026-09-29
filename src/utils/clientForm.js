@@ -12,6 +12,13 @@
 // A client nobody has rated keeps `stickiness: null` ("Not rated"): the form
 // used to fill it with 3, so saving the client for any reason rated it 3, and
 // the book counts a rated 3 as safe where an unrated client is unknown (T5).
+// A client with no cadence keeps `interaction_frequency: ''` ("Not set") for
+// the same reason: the form used to fill it with As-Needed, so saving the
+// client for any reason set As-Needed and halved its effort, from the unset
+// cadence's 1 to 0.5 (docs/plans/tier-2.md, WP6's candidate (a)). The save
+// sends '' as before, which the API stores as sent and the import writes for
+// a blank cell; the history reads '' and NULL as one "not set", so a client
+// saved unchanged writes nothing.
 //
 // The save's side too: the body the API receives (clientRequestBody, the
 // store's formatClientForAPI), the revenue rows it sends (revenuesToSend) and
@@ -35,7 +42,7 @@ export function clientFormData(client, now = new Date()) {
     second_chair_id: client.second_chair_id ? String(client.second_chair_id) : '',
     originator_id: client.originator_id ? String(client.originator_id) : '',
     originator_is_firm: client.originator_is_firm === true,
-    interaction_frequency: client.interaction_frequency || 'As-Needed',
+    interaction_frequency: client.interaction_frequency || '',
     stickiness: Number.isInteger(client.stickiness) ? client.stickiness : null,
     high_maintenance: client.high_maintenance === true,
     notes: client.notes || '',
