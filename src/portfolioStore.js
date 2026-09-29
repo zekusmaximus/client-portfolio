@@ -779,7 +779,9 @@ const usePortfolioStore = create(
         }
         await get().fetchClients({ force: true });
         await get().fetchPeople();
-        const { fetchError, peopleError } = get();
+        const { fetchError, peopleError, isAuthenticated } = get();
+        // An expired session logs out while the book reloads: open nothing
+        if (!isAuthenticated) throw new Error('Your session has ended. Sign in again to open the scenario.');
         if (fetchError || peopleError) {
           throw new Error('The book or the People list could not be loaded, so the scenario was not opened. Try again.');
         }

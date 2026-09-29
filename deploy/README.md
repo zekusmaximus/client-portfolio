@@ -358,6 +358,15 @@ history rows: "Last changed by" is read from the newest row, so for a client
 saved in that window it names the change before it, and a 409 on such a client
 names nobody or that earlier change.
 
+**Tier 2 WP8** (saved scenarios) is safe to roll back on either side; roll
+back both together as usual. The newer page on an older API asks
+`/api/health` for `saved-scenarios` and, without it, shows no scenario list:
+Scenarios works in the browser only, as before (checked end to end in its
+pull request). An older page on the newer API never asks for the list and
+works as before. The older `init-db.sql` leaves the `scenarios` table and its
+rows in place, and nothing needs undoing: once the newer API is back, the
+saved scenarios are listed again as they were.
+
 ### 5.1 The page (Netlify)
 
 Deploys > the last good deploy > **Publish deploy**. It publishes that earlier
@@ -425,8 +434,9 @@ it, and its log's counts include it from the first night after the deploy.
 The backup role reads a table created after the role only through
 `pg_read_all_data` or the default privileges in INSTALL.md step 2. `people`
 (the people plan's Phase 1) was the first such table, so a nightly run that
-fails with `permission denied for table people`, `... ai_answers` or
-`... client_changes` (who changed what, Tier 2 WP6) means that grant is missing: make it as step 2 says, then run the backup by hand
+fails with `permission denied for table people`, `... ai_answers`,
+`... client_changes` (who changed what, Tier 2 WP6) or `... scenarios` (saved
+scenarios, Tier 2 WP8) means that grant is missing: make it as step 2 says, then run the backup by hand
 (INSTALL.md step 7). A job that uses the database's own URL, because step 2
 was skipped, reads every table and needs nothing.
 
@@ -876,7 +886,7 @@ example `"event":"ai_error"`.
 
 ```json
 { "status": "OK", "timestamp": "<ISO time>", "uptimeSeconds": 8509, "environment": "production",
-  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text", "client-edit-conflict"],
+  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text", "client-edit-conflict", "saved-scenarios"],
   "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5" } }
 ```
 
@@ -886,7 +896,7 @@ example `"event":"ai_error"`.
 | `timestamp` | the server's clock when it answered |
 | `uptimeSeconds` | seconds since the process started. It resets on every deploy, restart and, on a Free instance, every spin-up |
 | `environment` | `NODE_ENV`; must be `production` on Render |
-| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). `plain-text` (Tier 2 WP5), which the page does not read, says this API stores text as typed, and 7.5's repair runs only on an API that lists it. The last one added is `client-edit-conflict` (Tier 2 WP6): the client form shows "Last changed by" and History only with it, and without it saves as before. A name missing after a merge means Render has not deployed that merge yet |
+| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). `plain-text` (Tier 2 WP5), which the page does not read, says this API stores text as typed, and 7.5's repair runs only on an API that lists it. `client-edit-conflict` (Tier 2 WP6): the client form shows "Last changed by" and History only with it, and without it saves as before. The last one added is `saved-scenarios` (Tier 2 WP8): Scenarios shows its list of saved scenarios (New, Open, Save, Save as, Delete) only with it, and without it works in the browser only, as before. A name missing after a merge means Render has not deployed that merge yet |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
 | `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`) |
