@@ -31,7 +31,7 @@ and after (risk High 0, Medium 83, Low 1; average complexity 0.2; Secondary
 83, Shared 1), as its PR predicted for this book, and his two other checks
 (Stage 2's "Stickiness not rated" badge, Render on `b3e4dba`) are open.
 WP6's candidate (a), the client form writing As-Needed over an unset
-cadence, is fixed outside the numbered packages on
+cadence, is fixed outside the numbered packages: PR #49 is open from
 `claude/dazzling-wright-vusye8` (a page-only change). WP8 (saved scenarios)
 is next. Run the rest in order, and
 update its status table when you finish one. A package that changes a
