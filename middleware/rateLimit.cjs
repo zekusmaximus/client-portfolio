@@ -1,7 +1,9 @@
 // Rate limits (docs/plans/tier-0.md, D11). One instance of each limiter for the
 // whole process: the AI limiters are mounted on routes/ai.cjs's POST routes
-// (Ask the book and the brief) and on every route of routes/scenarios.cjs, so
-// the per-user and daily budgets cover every AI endpoint together. Counters
+// (Ask the book and the brief) and on routes/scenarios.cjs's transition-plan
+// route, so the per-user and daily budgets cover every AI endpoint together.
+// Until Tier 2 WP8 they were on every route of routes/scenarios.cjs; the saved
+// scenarios' routes call no model and spend none of the budget (T16). Counters
 // live in memory and reset on restart (a Render redeploy), which is
 // acceptable for six partners on one process.
 //

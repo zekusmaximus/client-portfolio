@@ -13,7 +13,15 @@ import PartnershipAnalytics from './PartnershipAnalytics';
 import LoginPage from './LoginPage';
 import ChangePasswordDialog from './ChangePasswordDialog';
 import PeopleDialog from './PeopleDialog';
+import { scenarioDirty } from './utils/scenarioState';
 import './App.css';
+
+// Whether the open scenario has unsaved changes, with an API that saves
+// scenarios (without one nothing could be saved, and nothing is asked)
+const unsavedScenario = () => {
+  const state = usePortfolioStore.getState();
+  return state.scenarioFeature === true && scenarioDirty(state);
+};
 
 function App() {
   const {
@@ -46,6 +54,22 @@ function App() {
       fetchPeople();
     }
   }, [isAuthenticated]);
+
+  // Saved Scenarios (docs/plans/tier-2.md, WP8): a scenario with unsaved
+  // changes asks before the page is left or reloaded, and before logout
+  useEffect(() => {
+    const warn = (event) => {
+      if (!unsavedScenario()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
+  const handleLogout = () => {
+    if (unsavedScenario() && !window.confirm('Log out? The open scenario has unsaved changes, which will be lost.')) return;
+    logout();
+  };
 
   // Set default view on initial load
   useEffect(() => {
@@ -90,7 +114,7 @@ function App() {
               <Button variant="ghost" onClick={() => setChangePasswordOpen(true)}>
                 Change password
               </Button>
-              <Button variant="outline" onClick={() => logout()}>
+              <Button variant="outline" onClick={handleLogout}>
                 Logout
               </Button>
             </div>

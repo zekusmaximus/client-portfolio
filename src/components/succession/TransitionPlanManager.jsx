@@ -29,6 +29,7 @@ import usePortfolioStore from '../../portfolioStore';
 import { formatClientName } from '../../utils/textUtils';
 import { getSuccessionRiskVariant } from '../../utils/successionUtils';
 import { executionSummary } from '../../utils/transitionPlans';
+import { planViews } from '../../utils/scenarioState';
 import TransitionSheetPanel from './TransitionSheetPanel';
 
 // Stage 3 (docs/plans/people-and-second-chair.md, Phase 5): the approved
@@ -430,7 +431,8 @@ const TransitionPlanManager = ({ departure, people, onBackToStage2 }) => {
   const transitions = usePortfolioStore((s) => s.activeTransitions);
   const tasks = usePortfolioStore((s) => s.transitionTasks);
   const communications = usePortfolioStore((s) => s.communicationLog);
-  const plans = usePortfolioStore((s) => s.transitionPlans);
+  const storedPlans = usePortfolioStore((s) => s.transitionPlans);
+  const plans = useMemo(() => planViews(storedPlans), [storedPlans]);
   const updateTransition = usePortfolioStore((s) => s.updateTransition);
   const addTransitionTask = usePortfolioStore((s) => s.addTransitionTask);
   const updateTransitionTask = usePortfolioStore((s) => s.updateTransitionTask);

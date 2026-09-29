@@ -139,8 +139,11 @@ app.get('/api/health', async (req, res) => {
     // API without it logs no changes, has no GET
     // /api/data/clients/:id/changes and never answers a stale save with 409
     // (the page sends expected_updated_at only for a client whose response
-    // carried updated_at_exact, which only this API sends).
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict'],
+    // carried updated_at_exact, which only this API sends). And before
+    // Scenarios shows its list of saved scenarios (saved-scenarios): an API
+    // without it has no /api/scenarios routes but the transition plan, and
+    // the tab then works in the browser only, as before.
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios'],
     services: {}
   };
 

@@ -36,6 +36,7 @@ import {
 import { candidateReason } from '../../utils/departure';
 import { formatMoney } from '../../utils/load';
 import { approvalBlocker, planRequest } from '../../utils/transitionPlans';
+import { planViews, withAiPlan, withEdits, withoutEdit } from '../../utils/scenarioState';
 import TransitionSheetPanel from './TransitionSheetPanel';
 
 // Stage 2 (docs/plans/people-and-second-chair.md, Phase 5): each affected
@@ -47,6 +48,11 @@ import TransitionSheetPanel from './TransitionSheetPanel';
 // the seats; the approved plan exports as an import sheet (CLIENT, Lead,
 // Second Chair) that Data Upload checks and applies. Nothing here writes to
 // the database.
+//
+// A plan keeps the AI's answer and the partner's edits apart (Tier 2 WP8,
+// src/utils/scenarioState.js): regenerating a plan replaces the AI's fields
+// and keeps every edit; an edit is shown over the AI's text, which stays, and
+// "Use the AI's text" drops the edit. `plan` below is the merged view.
 
 const PRIORITY_LEVELS = {
   critical: { label: 'Critical', color: 'bg-red-500' },
@@ -206,6 +212,23 @@ const BulkActionBar = ({ selected, leadOptions, onGeneratePlans, onAssignLead, o
   );
 };
 
+// "Edited" beside a field the partner changed, with a way back to the AI's
+// text when there is one
+const EditedNote = ({ plan, field, onUseAiText }) => {
+  if (!plan.edited?.includes(field)) return null;
+  const hasAi = plan.ai && plan.ai[field] !== undefined && plan.ai[field] !== null && plan.ai[field] !== '';
+  return (
+    <span className="ml-2 text-xs font-normal text-muted-foreground">
+      (edited{hasAi ? '; the AI\'s text is kept' : ''})
+      {hasAi && (
+        <button type="button" className="ml-1 text-blue-700 underline" onClick={() => onUseAiText(field)}>
+          Use the AI&apos;s text
+        </button>
+      )}
+    </span>
+  );
+};
+
 const PlanCard = ({ decision, plan, year, hasChoice, onPick, onResetPick, onUseAi, onUpdatePlan, onApprove, onReject, isExpanded, onToggleExpanded }) => {
   const client = decision.client;
   const [isEditing, setIsEditing] = useState(false);
@@ -218,15 +241,17 @@ const PlanCard = ({ decision, plan, year, hasChoice, onPick, onResetPick, onUseA
     setDraft({ timelineDays: plan?.timelineDays ?? '', strategy: plan?.strategy || '', risks: plan?.risks || '' });
     setIsEditing(true);
   };
+  // Only what differs from the AI's answer is kept as an edit (withEdits)
   const saveEdits = () => {
     const days = Number(draft.timelineDays);
-    onUpdatePlan(client.id, {
+    onUpdatePlan(client.id, (current) => withEdits(current, {
       timelineDays: Number.isInteger(days) && days > 0 ? days : null,
       strategy: draft.strategy,
       risks: draft.risks
-    });
+    }));
     setIsEditing(false);
   };
+  const useAiText = (field) => onUpdatePlan(client.id, (current) => withoutEdit(current, field));
 
   const seatSummary = (side) =>
     `${side.before ? side.before.name : 'none'} → ${side.after ? side.after.name : 'none'}`;
@@ -385,16 +410,19 @@ const PlanCard = ({ decision, plan, year, hasChoice, onPick, onResetPick, onUseA
                 <span className="text-sm font-medium">
                   Timeline: {plan.timelineDays ? `${plan.timelineDays} days` : 'not set'}
                 </span>
+                <EditedNote plan={plan} field="timelineDays" onUseAiText={useAiText} />
               </div>
               {plan.strategy && (
                 <div>
                   <Label className="text-sm font-medium">Transition Strategy</Label>
+                  <EditedNote plan={plan} field="strategy" onUseAiText={useAiText} />
                   <div className="mt-1 p-3 bg-gray-50 rounded-lg text-sm whitespace-pre-wrap">{plan.strategy}</div>
                 </div>
               )}
               {plan.risks && (
                 <div>
                   <Label className="text-sm font-medium">Key Risks & Mitigation</Label>
+                  <EditedNote plan={plan} field="risks" onUseAiText={useAiText} />
                   <div className="mt-1 p-3 bg-gray-50 rounded-lg text-sm whitespace-pre-wrap">{plan.risks}</div>
                 </div>
               )}
@@ -532,7 +560,8 @@ const ClientTriageGrid = ({ decisions, selected, onSelect, onSelectAll, renderCa
 };
 
 const ClientReviewInterface = ({ departure, reportingYear, onProceedToStage3, onBackToStage1 }) => {
-  const plans = usePortfolioStore((s) => s.transitionPlans);
+  const storedPlans = usePortfolioStore((s) => s.transitionPlans);
+  const plans = useMemo(() => planViews(storedPlans), [storedPlans]);
   const choices = usePortfolioStore((s) => s.successionWorkflow.choices);
   const setDepartureChoice = usePortfolioStore((s) => s.setDepartureChoice);
   const updateTransitionPlan = usePortfolioStore((s) => s.updateTransitionPlan);
@@ -588,12 +617,9 @@ const ClientReviewInterface = ({ departure, reportingYear, onProceedToStage3, on
           if (!data?.success || !data.plan) {
             throw new Error(data?.error || 'No plan returned');
           }
-          updateTransitionPlan(client.id, (current) => ({
-            ...current,
-            ...data.plan,
-            clientId: String(client.id),
-            status: current.status === 'approved' ? 'approved' : 'planned'
-          }));
+          // The AI's fields and the saved answer's id, the partner's edits
+          // kept (withAiPlan)
+          updateTransitionPlan(client.id, (current) => withAiPlan(current, data));
           setPlanProgress((prev) => ({ ...prev, done: prev.done + 1 }));
         } catch (error) {
           console.error(`Error generating plan for ${client.name}:`, error);
@@ -619,7 +645,7 @@ const ClientReviewInterface = ({ departure, reportingYear, onProceedToStage3, on
 
   const handleSetTimeline = (clientIds, timelineDays) => {
     const days = Number.isInteger(timelineDays) && timelineDays > 0 ? timelineDays : null;
-    clientIds.forEach((id) => updateTransitionPlan(id, { timelineDays: days }));
+    clientIds.forEach((id) => updateTransitionPlan(id, (current) => withEdits(current, { timelineDays: days })));
   };
 
   const handleApprove = (clientIds) => {

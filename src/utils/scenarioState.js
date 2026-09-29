@@ -1,0 +1,426 @@
+// Saved Scenarios (docs/plans/tier-2.md, S12, WP8), the page's side: the
+// state a saved scenario holds, built from the store; the scenario opened on
+// the current book; and a Stage 2 plan kept as the AI's fields and the
+// partner's edits, apart. Pure.
+//
+// The state is what partners entered, never what the departure engine
+// derives from the book (./departure.js recomputes that at every render, so
+// a scenario stays valid as the book changes):
+//
+//   { kind: 'departure', currentStage, departingIds: [personId],
+//     choices: { [clientId]: { leadId?, secondChairId? } },
+//     plans: { [clientId]: { answerId, ai, edits, status, updatedAt } },
+//     execution: { [clientId]: { startDate, status } },
+//     tasks: [...], communications: [...] }
+//
+// Every id is text. Every string is trimmed, as trimRequestBody trims the
+// body on /api/scenarios, so the state the page compares ("Unsaved
+// changes") is the state the server stores. The server's copy of the shape
+// and its checks is utils/scenarioState.cjs; tests/scenario-state.test.mjs
+// holds the two equal and checks that every state built here passes the
+// server's checks.
+
+import { departureModel } from './departure.js';
+import { revenueForYear } from './revenue.js';
+import { syncTransitions } from './transitionPlans.js';
+
+export const KINDS = ['departure'];
+export const STAGES = ['impact', 'mitigation', 'implementation'];
+export const PLAN_STATUSES = ['pending', 'planned', 'approved', 'rejected'];
+export const TRANSITION_STATUSES = ['in-progress', 'at-risk', 'delayed', 'completed'];
+export const PRIORITIES = ['critical', 'high', 'medium', 'low'];
+export const STATE_KEYS = ['kind', 'currentStage', 'departingIds', 'choices', 'plans', 'execution', 'tasks', 'communications'];
+export const CHOICE_KEYS = ['leadId', 'secondChairId'];
+export const PLAN_KEYS = ['answerId', 'ai', 'edits', 'status', 'updatedAt'];
+export const AI_FIELDS = [
+  'strategy', 'recommendedLead', 'recommendedSecondChair', 'timelineDays', 'risks', 'tasks',
+  'communicationTemplate', 'priority', 'truncated', 'refused',
+];
+export const EDIT_FIELDS = ['strategy', 'risks', 'timelineDays'];
+export const RECOMMENDATION_KEYS = ['person', 'none', 'text', 'problem'];
+export const PERSON_KEYS = ['id', 'name', 'role'];
+export const EXECUTION_KEYS = ['startDate', 'status'];
+export const TASK_KEYS = ['id', 'title', 'description', 'assignee', 'dueDate', 'priority', 'status', 'clientId', 'category', 'createdAt'];
+export const COMMUNICATION_KEYS = ['id', 'type', 'subject', 'content', 'date', 'outcome', 'clientId', 'timestamp'];
+export const LIMITS = {
+  name: 120,
+  stateBytes: 1000000,
+  departing: 50,
+  clients: 500,
+  tasks: 2000,
+  communications: 2000,
+  aiTasks: 100,
+  text: 64000,
+  short: 500,
+  timelineDays: 36500,
+};
+
+const PERSON_ID = /^[1-9]\d{0,9}$/;
+const CLIENT_ID = /^(?:[1-9]\d{0,9}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const INT_MAX = 2147483647;
+
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const idText = (value) => (value === null || value === undefined ? '' : String(value).trim());
+const personId = (value) => {
+  const text = idText(value);
+  return PERSON_ID.test(text) && Number(text) <= INT_MAX ? text : null;
+};
+const clientId = (value) => {
+  const text = idText(value);
+  return CLIENT_ID.test(text) && (!/^\d+$/.test(text) || Number(text) <= INT_MAX) ? text : null;
+};
+const isDate = (value) => typeof value === 'string' && DATE.test(value)
+  && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
+const text = (value) => (typeof value === 'string' ? value.trim() : null);
+const days = (value) => (Number.isInteger(value) && value >= 1 && value <= LIMITS.timelineDays ? value : null);
+const boolean = (value) => value === true;
+
+/** A new scenario: nobody leaving, no picks, no plans, nothing in Stage 3. */
+export const emptyState = () => ({
+  kind: 'departure',
+  currentStage: 'impact',
+  departingIds: [],
+  choices: {},
+  plans: {},
+  execution: {},
+  tasks: [],
+  communications: [],
+});
+
+/* --------------------------------- plans --------------------------------- */
+
+/** A client's plan before anyone has asked the AI or edited it. */
+export const emptyPlan = () => ({ answerId: null, ai: null, edits: {}, status: 'pending', updatedAt: null });
+
+const recommendation = (value) => {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  if (value.person !== undefined) {
+    out.person = isPlainObject(value.person)
+      ? {
+        id: Number.isInteger(value.person.id) ? value.person.id : idText(value.person.id),
+        name: text(value.person.name) ?? '',
+        role: text(value.person.role) ?? '',
+      }
+      : null;
+  }
+  if (value.none !== undefined) out.none = boolean(value.none);
+  if (value.text !== undefined) out.text = text(value.text) ?? '';
+  if (value.problem !== undefined) out.problem = text(value.problem);
+  return out;
+};
+
+/** The AI's fields a plan keeps, from the transition-plan route's `plan` (or a saved `ai`). */
+export function aiFields(plan) {
+  if (!isPlainObject(plan)) return null;
+  const ai = {};
+  for (const key of ['strategy', 'risks', 'communicationTemplate']) {
+    if (plan[key] !== undefined) ai[key] = text(plan[key]);
+  }
+  for (const key of ['recommendedLead', 'recommendedSecondChair']) {
+    if (plan[key] !== undefined) ai[key] = recommendation(plan[key]);
+  }
+  if (plan.timelineDays !== undefined) ai.timelineDays = days(plan.timelineDays);
+  if (plan.tasks !== undefined) {
+    ai.tasks = (Array.isArray(plan.tasks) ? plan.tasks : []).filter((t) => typeof t === 'string').map((t) => t.trim()).slice(0, LIMITS.aiTasks);
+  }
+  if (plan.priority !== undefined) ai.priority = PRIORITIES.includes(plan.priority) ? plan.priority : null;
+  for (const key of ['truncated', 'refused']) {
+    if (plan[key] !== undefined) ai[key] = boolean(plan[key]);
+  }
+  return ai;
+}
+
+const editFields = (edits) => {
+  const out = {};
+  if (!isPlainObject(edits)) return out;
+  for (const key of ['strategy', 'risks']) {
+    if (typeof edits[key] === 'string') out[key] = edits[key].trim();
+  }
+  if (edits.timelineDays !== undefined) out.timelineDays = days(edits.timelineDays);
+  return out;
+};
+
+const now = () => new Date().toISOString();
+
+/**
+ * The plan with the AI's answer in it: the route's `plan` as its AI fields,
+ * its saved answer's id (`answerId`; null from an API that saves none, or
+ * when the save failed), and the status planned unless already approved. The
+ * partner's edits stay as they are: regenerating a plan never loses one.
+ */
+export function withAiPlan(plan, response, at = now()) {
+  const current = plan || emptyPlan();
+  return {
+    ...emptyPlan(),
+    ...current,
+    answerId: Number.isInteger(response?.answerId) && response.answerId > 0 ? response.answerId : null,
+    ai: aiFields(response?.plan),
+    edits: { ...(current.edits || {}) },
+    status: current.status === 'approved' ? 'approved' : 'planned',
+    updatedAt: at,
+  };
+}
+
+const sameValue = (a, b) => (a ?? null) === (b ?? null);
+
+/**
+ * The plan with the partner's edits: `changes` holds any of strategy, risks
+ * and timelineDays (null for none). An edit equal to the AI's own value is
+ * no edit, so the AI's next answer shows through; the AI's text is never
+ * changed.
+ */
+export function withEdits(plan, changes, at = now()) {
+  const current = plan || emptyPlan();
+  const edits = { ...(current.edits || {}) };
+  for (const key of EDIT_FIELDS) {
+    if (changes?.[key] === undefined) continue;
+    const value = key === 'timelineDays' ? days(changes[key]) : String(changes[key] ?? '').trim();
+    if (sameValue(value, current.ai?.[key] ?? (key === 'timelineDays' ? null : ''))) delete edits[key];
+    else edits[key] = value;
+  }
+  return { ...emptyPlan(), ...current, edits, updatedAt: at };
+}
+
+/** The plan without the partner's edit of `field`: the AI's text shows again. */
+export function withoutEdit(plan, field, at = now()) {
+  const current = plan || emptyPlan();
+  const edits = { ...(current.edits || {}) };
+  delete edits[field];
+  return { ...emptyPlan(), ...current, edits, updatedAt: at };
+}
+
+/**
+ * What Stage 2 and Stage 3 read for a plan: the AI's fields with the
+ * partner's edits over them, plus the plan's own keys and `edited`, the
+ * fields the partner changed.
+ */
+export function planView(plan, id) {
+  const current = plan || emptyPlan();
+  const edits = current.edits || {};
+  return {
+    ...(current.ai || {}),
+    ...edits,
+    clientId: id === undefined ? current.clientId : String(id),
+    answerId: current.answerId ?? null,
+    status: current.status || 'pending',
+    updatedAt: current.updatedAt ?? null,
+    ai: current.ai ?? null,
+    edits,
+    edited: EDIT_FIELDS.filter((key) => edits[key] !== undefined),
+  };
+}
+
+/** planView for every plan in the store's transitionPlans. */
+export function planViews(plans = {}) {
+  return Object.fromEntries(Object.entries(plans || {}).map(([id, plan]) => [id, planView(plan, id)]));
+}
+
+/* ------------------------------ saved state ------------------------------ */
+
+const record = (value, keys) => {
+  const out = {};
+  for (const key of keys) {
+    if (key === 'clientId') {
+      if (value.clientId !== undefined && value.clientId !== null) out.clientId = clientId(value.clientId) ?? '';
+    } else if (typeof value[key] === 'string') {
+      out[key] = value[key].trim();
+    }
+  }
+  return out;
+};
+
+/**
+ * A state in the shape the server stores: the known keys only, every id as
+ * text, every string trimmed, anything malformed dropped (a plan's
+ * out-of-range timeline as none). Used on what the page builds and on what it
+ * opens, so both compare alike.
+ */
+export function canonicalState(state) {
+  const input = isPlainObject(state) ? state : {};
+  const out = emptyState();
+  out.currentStage = STAGES.includes(input.currentStage) ? input.currentStage : 'impact';
+
+  const seen = new Set();
+  for (const id of Array.isArray(input.departingIds) ? input.departingIds : []) {
+    const person = personId(id);
+    if (person && !seen.has(person)) {
+      seen.add(person);
+      out.departingIds.push(person);
+    }
+  }
+
+  for (const [key, choice] of Object.entries(isPlainObject(input.choices) ? input.choices : {})) {
+    const id = clientId(key);
+    if (!id || !isPlainObject(choice)) continue;
+    const next = {};
+    for (const seat of CHOICE_KEYS) {
+      if (choice[seat] === undefined) continue;
+      if (choice[seat] === null || choice[seat] === '') next[seat] = null;
+      else if (personId(choice[seat])) next[seat] = personId(choice[seat]);
+    }
+    out.choices[id] = next;
+  }
+
+  for (const [key, plan] of Object.entries(isPlainObject(input.plans) ? input.plans : {})) {
+    const id = clientId(key);
+    if (!id || !isPlainObject(plan)) continue;
+    out.plans[id] = {
+      answerId: Number.isInteger(plan.answerId) && plan.answerId > 0 && plan.answerId <= INT_MAX ? plan.answerId : null,
+      ai: aiFields(plan.ai),
+      edits: editFields(plan.edits),
+      status: PLAN_STATUSES.includes(plan.status) ? plan.status : 'pending',
+      updatedAt: text(plan.updatedAt),
+    };
+  }
+
+  for (const [key, entry] of Object.entries(isPlainObject(input.execution) ? input.execution : {})) {
+    const id = clientId(key);
+    if (!id || !isPlainObject(entry) || !isDate(entry.startDate) || !TRANSITION_STATUSES.includes(entry.status)) continue;
+    out.execution[id] = { startDate: entry.startDate, status: entry.status };
+  }
+
+  out.tasks = (Array.isArray(input.tasks) ? input.tasks : [])
+    .filter(isPlainObject)
+    .map((task) => record(task, TASK_KEYS))
+    .filter((task) => task.id);
+  out.communications = (Array.isArray(input.communications) ? input.communications : [])
+    .filter(isPlainObject)
+    .map((entry) => record(entry, COMMUNICATION_KEYS))
+    .filter((entry) => entry.id);
+  return out;
+}
+
+/**
+ * The open scenario's state from the store: the workflow, Stage 2's plans,
+ * and Stage 3's records (the transitions shown, and those kept but not shown
+ * since the scenario was opened: `heldTransitions`), tasks and communications.
+ */
+export function stateFromStore(store = {}) {
+  const workflow = store.successionWorkflow || {};
+  const execution = {};
+  for (const t of [...(store.heldTransitions || []), ...(store.activeTransitions || [])]) {
+    if (t && t.clientId !== undefined) execution[String(t.clientId)] = { startDate: t.startDate, status: t.status };
+  }
+  return canonicalState({
+    kind: 'departure',
+    currentStage: workflow.currentStage,
+    departingIds: workflow.departingIds,
+    choices: workflow.choices,
+    plans: store.transitionPlans,
+    execution,
+    tasks: store.transitionTasks,
+    communications: store.communicationLog,
+  });
+}
+
+// JSON with every object's keys sorted, so two states compare as text
+// whatever order their keys arrived in (JSONB stores its own order)
+const sorted = (value) => {
+  if (Array.isArray(value)) return value.map(sorted);
+  if (isPlainObject(value)) return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sorted(value[key])]));
+  return value;
+};
+
+/** A state as text, for "Unsaved changes": equal states give equal text. */
+export const stateJson = (state) => JSON.stringify(sorted(canonicalState(state)));
+
+/** Whether the store's scenario differs from what was last opened or saved. */
+export const scenarioDirty = (store) => stateJson(stateFromStore(store)) !== store.savedStateJson;
+
+/* -------------------------------- opening -------------------------------- */
+
+const plural = (n, one, many) => (n === 1 ? one : many);
+
+/**
+ * A saved scenario opened on the current book: the store's scenario state,
+ * and the notices to show. Everything the engine derives is derived again by
+ * the page (departureModel); here:
+ *
+ * - someone no longer on the People list is taken off the people leaving,
+ *   with a notice (people are only ever deactivated, P5, so this is rare);
+ *   someone leaving who is now inactive is kept and named;
+ * - a client no longer in the book: its pick, plan, Stage 3 record and tasks
+ *   are dropped, with a notice; the communication log is kept as recorded.
+ *   Its id will never return (a client is re-created with a new id), so they
+ *   could never be shown again. Saving the scenario then removes them;
+ * - a pick the engine now refuses stays, and Stage 2 shows why (a notice
+ *   counts them);
+ * - Stage 3's transitions are rebuilt from each client's saved start date and
+ *   status (syncTransitions, as Stage 3 builds them); a client whose approved
+ *   seats no longer apply keeps its record, not shown (`heldTransitions`),
+ *   until the partner proceeds to Stage 3 again.
+ *
+ * `people` and `clients` are the store's (the People list, the API's
+ * clients); `reportingYear` the book's; `today` 'YYYY-MM-DD'.
+ */
+export function openState(saved, { people = [], clients = [], reportingYear = null, today } = {}) {
+  const state = canonicalState(saved);
+  const notices = [];
+
+  const listed = new Map(people.map((p) => [String(p.id), p]));
+  const missingPeople = state.departingIds.filter((id) => !listed.has(id));
+  const departingIds = state.departingIds.filter((id) => listed.has(id));
+  if (missingPeople.length > 0) {
+    notices.push(`${missingPeople.length} ${plural(missingPeople.length, 'person', 'people')} marked as leaving ${plural(missingPeople.length, 'is', 'are')} no longer on the People list and ${plural(missingPeople.length, 'was', 'were')} taken off the people leaving.`);
+  }
+  const inactive = departingIds.map((id) => listed.get(id)).filter((p) => !p.active);
+  if (inactive.length > 0) {
+    notices.push(`Marked as leaving and now inactive on the People list: ${inactive.map((p) => p.name).join(', ')}.`);
+  }
+
+  const inBook = new Set(clients.map((c) => String(c.id)));
+  const gone = new Set([
+    ...Object.keys(state.choices),
+    ...Object.keys(state.plans),
+    ...Object.keys(state.execution),
+    ...state.tasks.map((t) => t.clientId).filter(Boolean),
+  ].filter((id) => !inBook.has(id)));
+  const keep = (map) => Object.fromEntries(Object.entries(map).filter(([id]) => !gone.has(id)));
+  const choices = keep(state.choices);
+  const plans = keep(state.plans);
+  const execution = keep(state.execution);
+  const tasks = state.tasks.filter((t) => !gone.has(t.clientId));
+  if (gone.size > 0) {
+    notices.push(`${gone.size} ${plural(gone.size, 'client', 'clients')} in this scenario ${plural(gone.size, 'is', 'are')} no longer in the book: ${plural(gone.size, 'its', 'their')} picks, plans, Stage 3 records and tasks were dropped; the communication log is kept as it was. Saving the scenario removes them.`);
+  }
+
+  const departure = departureModel({
+    people,
+    clients,
+    departingIds,
+    revenueOf: (client) => revenueForYear(client, reportingYear),
+    choices,
+  });
+  const refused = departure.decisions.filter((d) => d.lead.problem || d.secondChair.problem).length;
+  if (refused > 0) {
+    notices.push(`${refused} ${plural(refused, 'pick no longer holds', 'picks no longer hold')} on the current book; Stage 2 shows why, and the proposal stands until someone picks again.`);
+  }
+
+  const records = Object.entries(execution).map(([id, entry]) => ({ clientId: id, ...entry }));
+  const { transitions } = syncTransitions({
+    decisions: departure.decisions,
+    plans: planViews(plans),
+    transitions: records,
+    tasks: [],
+    today,
+  });
+  const activeTransitions = transitions.filter((t) => execution[t.clientId] !== undefined);
+  const shown = new Set(activeTransitions.map((t) => t.clientId));
+  const heldTransitions = records.filter((r) => !shown.has(r.clientId));
+  if (heldTransitions.length > 0) {
+    const n = heldTransitions.length;
+    notices.push(`Stage 3's ${plural(n, 'record', 'records')} for ${n} ${plural(n, 'client', 'clients')} ${plural(n, 'is', 'are')} kept but not shown: ${plural(n, 'its', 'their')} approved seats no longer apply on the current book. Proceeding to Stage 3 again sets Stage 3 from the plans approved then.`);
+  }
+
+  return {
+    successionWorkflow: { currentStage: state.currentStage, departingIds, choices },
+    transitionPlans: plans,
+    activeTransitions,
+    heldTransitions,
+    transitionTasks: tasks,
+    communicationLog: state.communications,
+    notices,
+  };
+}

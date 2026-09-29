@@ -36,6 +36,7 @@ import pg from 'pg';
 import jwt from 'jsonwebtoken';
 import aiAnswers from '../utils/aiAnswers.cjs';
 import clientChanges from '../utils/clientChanges.cjs';
+import scenarioState from '../utils/scenarioState.cjs';
 import { startFakeAnthropic } from './helpers/fakeAnthropic.mjs';
 import {
   repo, serverUrl, generatedPassword, urlFor, freePort, startServer, SHAPES, addAccount, cookieOf, signIn,
@@ -46,6 +47,10 @@ import { clientFormData, clientRequestBody, revenuesToSend } from '../src/utils/
 import { sanitizeFormData } from '../src/utils/validation.js';
 import { toPersonId } from '../src/utils/people.js';
 import { enhanceClientWithSuccessionMetrics } from '../src/utils/successionUtils.js';
+import { departureModel, withChoice } from '../src/utils/departure.js';
+import { pinnedChoice, planRequest, syncTransitions } from '../src/utils/transitionPlans.js';
+import { revenueForYear } from '../src/utils/revenue.js';
+import { openState, planViews, stateFromStore, stateJson, withAiPlan, withEdits } from '../src/utils/scenarioState.js';
 
 // Every route server.cjs registers, as METHOD and the full path, with whether
 // it needs a signed-in partner and the page files that call it.
@@ -71,7 +76,12 @@ const CONTRACTS = {
   'GET /api/ai/answers/summary': { signIn: true, page: 'src/portfolioStore.js (fetchAiAnswers), src/utils/recentAnswers.js' },
   'GET /api/ai/answers/:id': { signIn: true, page: 'src/portfolioStore.js (toggleAiAnswer), src/AIAdvisor.jsx' },
   'POST /api/scenarios/transition-plan': { signIn: true, page: 'src/components/succession/ClientReviewInterface.jsx' },
-  'GET /api/health': { signIn: false, page: 'src/DataUploadManager.jsx, src/components/AIBookPanel.jsx, src/AIAdvisor.jsx, src/components/AssociateSplit.jsx, src/components/succession/ClientReviewInterface.jsx, src/ClientEnhancementForm.jsx' },
+  'GET /api/scenarios': { signIn: true, page: 'src/portfolioStore.js (fetchScenarios), src/components/succession/ScenarioBar.jsx' },
+  'GET /api/scenarios/:id': { signIn: true, page: 'src/portfolioStore.js (openScenario), src/utils/scenarioState.js (openState)' },
+  'POST /api/scenarios': { signIn: true, page: 'src/portfolioStore.js (saveScenario)' },
+  'PUT /api/scenarios/:id': { signIn: true, page: 'src/portfolioStore.js (saveScenario)' },
+  'DELETE /api/scenarios/:id': { signIn: true, page: 'src/portfolioStore.js (deleteScenario)' },
+  'GET /api/health': { signIn: false, page: 'src/DataUploadManager.jsx, src/components/AIBookPanel.jsx, src/AIAdvisor.jsx, src/components/AssociateSplit.jsx, src/components/succession/ClientReviewInterface.jsx, src/ClientEnhancementForm.jsx, src/portfolioStore.js (checkScenarioFeature)' },
 };
 
 // Routes deleted in earlier packages: none may be registered again, and each
@@ -143,8 +153,9 @@ test('inventory: every registered route has a contract with tests, every contrac
   assert.deepEqual(blocks.filter((r) => !contracts.includes(r)), [], 'a route() block without a contract');
   assert.equal(new Set(blocks).size, blocks.length, 'a route() block written twice');
   // The plan's count (docs/plans/tier-2.md, section 6): 21 live routes, once
-  // WP2 deleted S3's three; 22 with WP6's GET /api/data/clients/:id/changes
-  assert.equal(routes.length, 22);
+  // WP2 deleted S3's three; 22 with WP6's GET /api/data/clients/:id/changes;
+  // 27 with WP8's five saved-scenario routes
+  assert.equal(routes.length, 27);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -159,7 +170,7 @@ const TOO_MANY = { success: false, error: 'Too many requests. Try again later.' 
 const MISSING_TOKEN = { error: 'Missing token' };
 const INVALID_TOKEN = { error: 'Invalid token' };
 const NOT_CONFIGURED = { success: false, error: 'AI is not configured on the server (missing API key).' };
-const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict'];
+const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict', 'saved-scenarios'];
 // The seed people init-db.sql adds to a new database (docs/plans/people-and-second-chair.md, P1)
 const SEED = { Brendan: 'partner', Jeff: 'partner', Joe: 'partner', Kevin: 'partner', Mike: 'partner', Paula: 'partner', Jay: 'emeritus' };
 const PERSON_KEYS = ['active', 'id', 'lead_count', 'name', 'originator_count', 'role', 'second_chair_count'];
@@ -2279,6 +2290,383 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
     test('503 { success: false, error } without a key', async () => {
       const res = await request(keyless.base, 'POST', '/api/scenarios/transition-plan', { body: await planBody() });
       assert.deepEqual([res.status, res.body], [503, NOT_CONFIGURED]);
+    });
+  });
+
+  /* ----------------------------- /api/scenarios ---------------------------- */
+
+  // Saved Scenarios (docs/plans/tier-2.md, S12, WP8). The page reads a
+  // saved scenario's fields in src/portfolioStore.js (openScenario,
+  // saveScenario) and src/utils/scenarioState.js (openState): id, name,
+  // state, version, updated_by_username, updated_at; the list's fields in
+  // src/components/succession/ScenarioBar.jsx: id, name, current_stage,
+  // leaving, updated_by_username, updated_at
+  const SCENARIO_KEYS = ['created_at', 'created_by_username', 'id', 'name', 'state', 'updated_at', 'updated_by_username', 'version'];
+  const LIST_SCENARIO_KEYS = ['created_at', 'created_by_username', 'current_stage', 'id', 'kind', 'leaving', 'name', 'updated_at', 'updated_by_username', 'version'];
+  const SCENARIO_NOT_FOUND = { success: false, error: 'Scenario not found.' };
+  // A departure scenario's state as the page saves one: Mike leaving, a pick,
+  // a plan with the AI's fields and an edit, and Stage 3's records, for a
+  // client this call creates
+  const scenarioBody = async ({ name = uniqueName('Scenario'), state = {} } = {}) => {
+    const mike = await seed('Mike');
+    const created = await addClient({ lead: mike });
+    const id = String(created.id);
+    return {
+      name,
+      state: {
+        kind: 'departure',
+        currentStage: 'implementation',
+        departingIds: [String(mike.id)],
+        choices: { [id]: { secondChairId: null } },
+        plans: {
+          [id]: {
+            answerId: null,
+            ai: {
+              strategy: 'Two meetings, then a letter.',
+              recommendedLead: { person: { id: (await seed('Jeff')).id, name: 'Jeff', role: 'partner' }, none: false, text: 'Jeff', problem: null },
+              recommendedSecondChair: { person: null, none: true, text: 'None', problem: null },
+              timelineDays: 45,
+              risks: 'The client may follow Mike.',
+              tasks: ['Call the client', 'Send the letter'],
+              communicationTemplate: 'Dear client,',
+              priority: 'medium',
+              truncated: false,
+              refused: false,
+            },
+            edits: { strategy: 'One meeting, then a letter.' },
+            status: 'approved',
+            updatedAt: '2026-09-29T14:00:00.000Z',
+          },
+        },
+        execution: { [id]: { startDate: '2026-09-29', status: 'at-risk' } },
+        tasks: [{ id: `${id}-0`, title: 'Call the client', description: '', assignee: 'Jeff', dueDate: '', priority: 'medium', status: 'pending', clientId: id, category: 'transition' }],
+        communications: [{ id: 'comm-1', type: 'call', subject: 'First call', content: 'They took it well.', date: '2026-09-29', outcome: 'positive', clientId: id, timestamp: '2026-09-29T15:00:00.000Z' }],
+        ...state,
+      },
+      clientId: id,
+      mike,
+    };
+  };
+  const saveScenario = async (body, as = cookie) => {
+    const res = await request(api.base, 'POST', '/api/scenarios', { as, body: { name: body.name, state: body.state } });
+    assert.equal(res.status, 201, res.text);
+    return res.body.scenario;
+  };
+  const scenarioRow = async (id) => (await db.query('SELECT * FROM scenarios WHERE id = $1', [id])).rows[0];
+  const scenarioCount = async () => (await db.query('SELECT count(*)::int AS n FROM scenarios')).rows[0].n;
+  // A second partner, signed in on the same server, made once per shape
+  let second = null;
+  const secondPartner = async () => {
+    if (!second) {
+      const partner = { username: `second-${letters(6)}`, password: generatedPassword() };
+      await addAccount(env, partner);
+      second = { ...partner, cookie: await signIn(api.base, partner) };
+    }
+    return second;
+  };
+  // The firm's AI budget left, from the limiters' RateLimit header (the
+  // daily limiter answers last, so the header is its count)
+  const budgetLeft = (res) => Number(/remaining=(\d+)/.exec(res.headers.get('ratelimit') || '')?.[1]);
+  // A transition-plan request for a client this call creates, as Stage 2 sends one
+  const aiPlanBody = async () => {
+    const mike = await seed('Mike');
+    const created = await addClient({ lead: mike });
+    const zero = { count: 0, revenue: 0, effort: 0 };
+    return {
+      client: { id: created.id, name: created.name },
+      stage1Data: { departing: [{ name: 'Mike', role: 'partner' }], impactData: { totalRevenueAtRisk: 100000 }, reportingYear: 2026 },
+      roster: Object.entries(SEED).filter(([name]) => name !== 'Mike').map(([name, role]) => ({ name, role, lead: zero, second: zero })),
+    };
+  };
+
+  route('GET /api/scenarios', () => {
+    test('200 { success, scenarios }: newest save first, each with who saved last and when and the people leaving by name (null for an id not on the People list); no AI limiter', async () => {
+      const first = await saveScenario(await scenarioBody());
+      const body = await scenarioBody();
+      const later = await saveScenario({ ...body, state: { ...body.state, departingIds: [String(body.mike.id), '2147483000'] } });
+      const res = await call('GET', '/api/scenarios');
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['scenarios', 'success']);
+      assert.equal(res.headers.get('ratelimit-policy'), null, 'T16: the saved scenarios spend no AI budget');
+      const ids = res.body.scenarios.map((s) => s.id);
+      assert.ok(ids.indexOf(later.id) >= 0 && ids.indexOf(later.id) < ids.indexOf(first.id), 'newest save first');
+      const listed = res.body.scenarios.find((s) => s.id === later.id);
+      assert.deepEqual(keysOf(listed), LIST_SCENARIO_KEYS);
+      assert.deepEqual(
+        [listed.name, listed.kind, listed.current_stage, listed.version, listed.created_by_username, listed.updated_by_username],
+        [body.name, 'departure', 'implementation', 1, account.username, account.username],
+      );
+      assert.deepEqual(listed.leaving, [{ id: String(body.mike.id), name: 'Mike' }, { id: '2147483000', name: null }]);
+      assert.ok(!('state' in listed), 'the list does not carry the states');
+      assert.equal(Date.parse(listed.updated_at), Date.parse(later.updated_at));
+    });
+  });
+
+  route('GET /api/scenarios/:id', () => {
+    test('200 { success, scenario }: the state as saved, with its version and who saved it; no AI limiter', async () => {
+      const body = await scenarioBody();
+      const saved = await saveScenario(body);
+      const res = await call('GET', `/api/scenarios/${saved.id}`);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['scenario', 'success']);
+      assert.deepEqual(keysOf(res.body.scenario), SCENARIO_KEYS);
+      assert.deepEqual(res.body.scenario.state, body.state);
+      assert.deepEqual([res.body.scenario.name, res.body.scenario.version, res.body.scenario.updated_by_username], [body.name, 1, account.username]);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
+    });
+
+    // The page's side (src/utils/scenarioState.js) on this shape's ids:
+    // Stage 2's real plan for a client, an edit, an approval and Stage 3,
+    // saved and read back as the page built it, and opened on the same book
+    // with nothing dropped
+    test('200: a scenario the page builds from this API\'s clients, People list and plan comes back as saved and opens on the same book with nothing dropped', async () => {
+      const mike = await seed('Mike');
+      const created = await addClient({ lead: mike, second: await seed('Jay') });
+      const id = String(created.id);
+      const clients = (await call('GET', '/api/data/clients')).body.clients;
+      const people = (await call('GET', '/api/people')).body.people;
+      const revenueOf = (client) => revenueForYear(client, 2026);
+      const departingIds = [mike.id];
+      let departure = departureModel({ people, clients, departingIds, revenueOf, choices: {} });
+      const decision = departure.decisions.find((d) => String(d.client.id) === id);
+      const answer = await call('POST', '/api/scenarios/transition-plan', planRequest(decision, departure, 2026));
+      assert.equal(answer.status, 200, answer.text);
+      let plan = withEdits(withAiPlan(undefined, answer.body), { strategy: 'Ours, not the AI\'s.' });
+      assert.equal(plan.answerId, answer.body.answerId);
+      plan = { ...plan, status: 'approved' };
+      const choices = withChoice({}, id, pinnedChoice(decision));
+      departure = departureModel({ people, clients, departingIds, revenueOf, choices });
+      const today = new Date().toISOString().split('T')[0];
+      const { transitions, tasks } = syncTransitions({ decisions: departure.decisions, plans: planViews({ [id]: plan }), transitions: [], tasks: [], today });
+      const state = stateFromStore({
+        successionWorkflow: { currentStage: 'implementation', departingIds, choices },
+        transitionPlans: { [id]: plan },
+        activeTransitions: transitions,
+        heldTransitions: [],
+        transitionTasks: tasks,
+        communicationLog: [],
+      });
+      assert.equal(Object.keys(state.execution).length, 1);
+
+      const saved = await saveScenario({ name: uniqueName('Page Scenario'), state });
+      const res = await call('GET', `/api/scenarios/${saved.id}`);
+      assert.equal(res.status, 200, res.text);
+      assert.equal(stateJson(res.body.scenario.state), stateJson(state));
+      assert.deepEqual(res.body.scenario.state.plans[id].ai.recommendedLead, answer.body.plan.recommendedLead);
+      const opened = openState(res.body.scenario.state, { people, clients, reportingYear: 2026, today });
+      assert.deepEqual(opened.notices, []);
+      assert.equal(stateJson(stateFromStore(opened)), stateJson(state));
+      assert.deepEqual(opened.activeTransitions, transitions);
+    });
+
+    test('404 { success: false, error: "Scenario not found." } for an id no scenario has, or one that is not a positive integer in PostgreSQL\'s integer range', async () => {
+      for (const id of ['2147483000', '0', '-1', 'abc', '1.5', '2147483648', '99999999999']) {
+        const res = await call('GET', `/api/scenarios/${id}`);
+        assert.deepEqual([res.status, res.body], [404, SCENARIO_NOT_FOUND], id);
+      }
+    });
+  });
+
+  route('POST /api/scenarios', () => {
+    test('201 { success, scenario } at version 1: stored exactly as sent, by the signed-in partner (created_by and updated_by, the username copied); no AI limiter, and none of the AI budget spent', async () => {
+      const plan = await call('POST', '/api/scenarios/transition-plan', await aiPlanBody());
+      assert.equal(plan.status, 200, plan.text);
+      const before = budgetLeft(plan);
+      assert.ok(Number.isInteger(before), plan.headers.get('ratelimit'));
+
+      const body = await scenarioBody({ name: `${'Ω'.repeat(60)}${'😀'.repeat(60)}` });
+      const res = await call('POST', '/api/scenarios', { name: body.name, state: body.state });
+      assert.equal(res.status, 201, res.text);
+      assert.deepEqual(keysOf(res.body), ['scenario', 'success']);
+      assert.deepEqual(keysOf(res.body.scenario), SCENARIO_KEYS);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
+      const row = await scenarioRow(res.body.scenario.id);
+      assert.deepEqual(row.state, body.state);
+      assert.deepEqual(
+        [row.name, row.version, row.created_by, row.created_by_username, row.updated_by, row.updated_by_username],
+        [body.name, 1, await accountId(), account.username, await accountId(), account.username],
+        'a 120-character name is stored, however many bytes',
+      );
+      // Four more scenario requests, then a plan: the budget moved by that plan alone
+      await call('GET', '/api/scenarios');
+      await call('GET', `/api/scenarios/${row.id}`);
+      await call('PUT', `/api/scenarios/${row.id}`, { name: body.name, state: body.state, version: 1 });
+      await call('DELETE', `/api/scenarios/${row.id}`);
+      const next = await call('POST', '/api/scenarios/transition-plan', await aiPlanBody());
+      assert.equal(next.status, 200, next.text);
+      assert.equal(budgetLeft(next), before - 1, 'T16: only the plans count');
+    });
+
+    // Trap 3: trimRequestBody trims every string in the body, the state's
+    // text included; the page trims the same way before it saves or compares
+    // (src/utils/scenarioState.js), so nothing it holds differs from what is stored
+    test('201: every string in the name and the state is stored trimmed, as trimRequestBody passes it on', async () => {
+      const body = await scenarioBody();
+      const id = body.clientId;
+      const padded = {
+        ...body.state,
+        departingIds: [` ${body.state.departingIds[0]} `],
+        plans: { [id]: { ...body.state.plans[id], edits: { strategy: '  One meeting.\n\n' } } },
+        communications: [{ ...body.state.communications[0], content: '\tThey took it well. ' }],
+      };
+      const saved = await saveScenario({ name: `  ${body.name}  `, state: padded });
+      const row = await scenarioRow(saved.id);
+      assert.equal(row.name, body.name);
+      assert.deepEqual(row.state.departingIds, body.state.departingIds);
+      assert.equal(row.state.plans[id].edits.strategy, 'One meeting.');
+      assert.equal(row.state.communications[0].content, 'They took it well.');
+    });
+
+    test('400 { success: false, error: "Validation failed", details: [{ field, message }] } for a name or a state checkScenario refuses; nothing written', async () => {
+      const body = await scenarioBody();
+      const id = body.clientId;
+      const plan = body.state.plans[id];
+      const withState = (state) => ({ name: body.name, state: { ...body.state, ...state } });
+      const refusals = [
+        ['a body that is not an object', [body], [{ field: 'body', message: 'The request body must be a JSON object: { name, state }.' }]],
+        ['no name', { state: body.state }, [{ field: 'name', message: 'The scenario needs a name.' }]],
+        ['a blank name', { name: '   ', state: body.state }, [{ field: 'name', message: 'The scenario needs a name.' }]],
+        ['a name over 120 characters', { name: 'x'.repeat(121), state: body.state }, [{ field: 'name', message: 'The name is 121 characters; it can be at most 120.' }]],
+        ['no state', { name: body.name }, [{ field: 'state', message: 'The scenario\'s state must be a JSON object.' }]],
+        ['another kind', withState({ kind: 'hire' }), [{ field: 'state.kind', message: 'state.kind must be one of departure.' }]],
+        ['a stage the page has not', withState({ currentStage: 'done' }), [{ field: 'state.currentStage', message: 'state.currentStage must be one of impact, mitigation, implementation.' }]],
+        ['a person\'s id as a number', withState({ departingIds: [Number(body.mike.id)] }), [{ field: 'state.departingIds.0', message: 'state.departingIds.0 must be a person\'s id as text.' }]],
+        ['a load the engine derives', withState({ before: { rows: [] } }), [{ field: 'state.before', message: 'state cannot hold "before"; it holds only kind, currentStage, departingIds, choices, plans, execution, tasks, communications.' }]],
+        ['a client\'s name in a plan', withState({ plans: { [id]: { ...plan, clientName: 'Acme' } } }),
+          [{ field: `state.plans.${id}.clientName`, message: `state.plans.${id} cannot hold "clientName"; it holds only answerId, ai, edits, status, updatedAt.` }]],
+        ['a plan status the page has not', withState({ plans: { [id]: { ...plan, status: 'done' } } }),
+          [{ field: `state.plans.${id}.status`, message: `state.plans.${id}.status must be one of pending, planned, approved, rejected.` }]],
+        ['an edited timeline of 0 days', withState({ plans: { [id]: { ...plan, edits: { timelineDays: 0 } } } }),
+          [{ field: `state.plans.${id}.edits.timelineDays`, message: `state.plans.${id}.edits.timelineDays must be a whole number of days from 1 to 36500, or null.` }]],
+        ['an AI strategy that is not text', withState({ plans: { [id]: { ...plan, ai: { ...plan.ai, strategy: 42 } } } }),
+          [{ field: `state.plans.${id}.ai.strategy`, message: `state.plans.${id}.ai.strategy must be text or null.` }]],
+        ['a client id that is neither shape\'s', withState({ choices: { abc: { leadId: '1' } } }), [{ field: 'state.choices.abc', message: '"abc" is not a client id.' }]],
+        ['a Stage 3 start that is not a date', withState({ execution: { [id]: { startDate: 'soon', status: 'in-progress' } } }),
+          [{ field: `state.execution.${id}.startDate`, message: `state.execution.${id}.startDate must be a date, YYYY-MM-DD.` }]],
+        ['a task without an id', withState({ tasks: [{ title: 'Call the client' }] }), [{ field: 'state.tasks.0.id', message: 'state.tasks.0.id is required.' }]],
+        ['more plans than the bound', withState({ plans: Object.fromEntries(Array.from({ length: 501 }, (_, n) => [String(n + 1), plan])) }),
+          [{ field: 'state.plans', message: 'state.plans holds 501 clients; it can hold at most 500.' }]],
+        ['a state over 1,000,000 bytes', withState({ communications: [{ id: 'c', content: 'x'.repeat(1000001) }] }),
+          [{ field: 'state', message: `The scenario is ${Buffer.byteLength(JSON.stringify({ ...body.state, communications: [{ id: 'c', content: 'x'.repeat(1000001) }] })).toLocaleString('en-US')} bytes; it can be at most 1,000,000.` }]],
+      ];
+      const before = await scenarioCount();
+      for (const [what, request, details] of refusals) {
+        const res = await call('POST', '/api/scenarios', request);
+        assert.equal(res.status, 400, what);
+        assert.deepEqual(res.body, { success: false, error: 'Validation failed', details }, what);
+        assert.equal(res.headers.get('ratelimit-policy'), null, what);
+      }
+      assert.equal(await scenarioCount(), before);
+    });
+
+    test('201: a session whose account is gone saves with created_by and updated_by null and the username kept', async () => {
+      const gone = { username: `gone-${letters(6)}`, password: generatedPassword() };
+      await addAccount(env, gone);
+      const goneCookie = await signIn(api.base, gone);
+      await db.query('DELETE FROM users WHERE username = $1', [gone.username]);
+      const saved = await saveScenario(await scenarioBody(), goneCookie);
+      const row = await scenarioRow(saved.id);
+      assert.deepEqual([row.created_by, row.created_by_username, row.updated_by, row.updated_by_username], [null, gone.username, null, gone.username]);
+    });
+  });
+
+  route('PUT /api/scenarios/:id', () => {
+    test('200 { success, scenario } at the next version: the name and the state replaced, saved by the partner who saved (another partner here), created_by as it was; no AI limiter', async () => {
+      const body = await scenarioBody();
+      const saved = await saveScenario(body);
+      const other = await secondPartner();
+      const state = { ...body.state, currentStage: 'mitigation', execution: {}, tasks: [], communications: [] };
+      const res = await request(api.base, 'PUT', `/api/scenarios/${saved.id}`, { as: other.cookie, body: { name: `${body.name} again`, state, version: 1 } });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['scenario', 'success']);
+      assert.deepEqual(keysOf(res.body.scenario), SCENARIO_KEYS);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
+      const row = await scenarioRow(saved.id);
+      assert.deepEqual(row.state, state);
+      assert.deepEqual(
+        [row.name, row.version, row.created_by_username, row.updated_by_username, res.body.scenario.version],
+        [`${body.name} again`, 2, account.username, other.username, 2],
+      );
+      assert.equal(row.created_by, await accountId());
+      assert.equal(row.updated_by, await accountId(other.username));
+      assert.ok(row.updated_at > row.created_at);
+    });
+
+    test('409 { success: false, error, latest_save } when another save came first: who saved last and when, in America/New_York; nothing written', async () => {
+      const body = await scenarioBody();
+      const saved = await saveScenario(body);
+      const other = await secondPartner();
+      const theirs = await request(api.base, 'PUT', `/api/scenarios/${saved.id}`, { as: other.cookie, body: { name: body.name, state: { ...body.state, currentStage: 'impact' }, version: 1 } });
+      assert.equal(theirs.status, 200, theirs.text);
+      const stored = await scenarioRow(saved.id);
+
+      const mine = await call('PUT', `/api/scenarios/${saved.id}`, { name: 'Mine', state: body.state, version: 1 });
+      assert.equal(mine.status, 409, mine.text);
+      const latest = { version: 2, updated_by_username: other.username, updated_at: stored.updated_at };
+      assert.deepEqual(mine.body, JSON.parse(JSON.stringify(scenarioState.conflictBody(latest))));
+      assert.match(mine.body.error, new RegExp(`^This scenario was saved after you opened it, by ${other.username} on [A-Z][a-z]{2} \\d{1,2}, \\d{4}, \\d{1,2}:\\d{2} [AP]M\\. Nothing was saved\\.$`));
+      assert.deepEqual(await scenarioRow(saved.id), stored);
+    });
+
+    test('two saves in flight with one version: one 200 and one 409, and the version moves once', async () => {
+      const body = await scenarioBody();
+      const saved = await saveScenario(body);
+      const other = await secondPartner();
+      const results = await Promise.all([
+        call('PUT', `/api/scenarios/${saved.id}`, { name: 'Mine', state: body.state, version: 1 }),
+        request(api.base, 'PUT', `/api/scenarios/${saved.id}`, { as: other.cookie, body: { name: 'Theirs', state: body.state, version: 1 } }),
+      ]);
+      assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
+      const row = await scenarioRow(saved.id);
+      assert.equal(row.version, 2);
+      assert.equal(row.name, results[0].status === 200 ? 'Mine' : 'Theirs');
+    });
+
+    test('400 before the id is looked up, then 404: a body checkScenario refuses, or a version that is not a positive integer, answers 400 for any id; a well-formed body answers 404 for an id no scenario has; nothing written', async () => {
+      const body = await scenarioBody();
+      const saved = await saveScenario(body);
+      const stored = await scenarioRow(saved.id);
+      const versionDetail = [{ field: 'version', message: 'version must be the whole number the scenario was opened at.' }];
+      for (const version of [undefined, 0, -1, '1', 1.5, null]) {
+        for (const id of [saved.id, '2147483000', 'abc']) {
+          const res = await call('PUT', `/api/scenarios/${id}`, { name: body.name, state: body.state, version });
+          assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Validation failed', details: versionDetail }], `${version} on ${id}`);
+        }
+      }
+      const blank = await call('PUT', '/api/scenarios/2147483000', { name: '', state: body.state, version: 1 });
+      assert.deepEqual([blank.status, blank.body.details], [400, [{ field: 'name', message: 'The scenario needs a name.' }]]);
+      const notObject = await call('PUT', '/api/scenarios/2147483000', []);
+      assert.deepEqual([notObject.status, notObject.body.details], [400, [{ field: 'body', message: 'The request body must be a JSON object: { name, state, version }.' }]]);
+      for (const id of ['2147483000', '0', 'abc', '2147483648']) {
+        const res = await call('PUT', `/api/scenarios/${id}`, { name: body.name, state: body.state, version: 1 });
+        assert.deepEqual([res.status, res.body], [404, SCENARIO_NOT_FOUND], id);
+      }
+      assert.deepEqual(await scenarioRow(saved.id), stored);
+    });
+  });
+
+  route('DELETE /api/scenarios/:id', () => {
+    test('200 { success: true } for any partner (P2), after which it answers 404 to GET, PUT and DELETE; no AI limiter', async () => {
+      const body = await scenarioBody();
+      const saved = await saveScenario(body);
+      const other = await secondPartner();
+      const res = await request(api.base, 'DELETE', `/api/scenarios/${saved.id}`, { as: other.cookie });
+      assert.deepEqual([res.status, res.body], [200, { success: true }]);
+      assert.equal(res.headers.get('ratelimit-policy'), null);
+      assert.equal(await scenarioRow(saved.id), undefined);
+      assert.deepEqual([(await call('GET', `/api/scenarios/${saved.id}`)).status, (await call('DELETE', `/api/scenarios/${saved.id}`)).status], [404, 404]);
+      const put = await call('PUT', `/api/scenarios/${saved.id}`, { name: body.name, state: body.state, version: 1 });
+      assert.deepEqual([put.status, put.body], [404, SCENARIO_NOT_FOUND]);
+    });
+
+    test('404 { success: false, error: "Scenario not found." } for an id no scenario has or a malformed one; nothing deleted', async () => {
+      await saveScenario(await scenarioBody());
+      const before = await scenarioCount();
+      for (const id of ['2147483000', '0', 'abc', '2147483648']) {
+        const res = await call('DELETE', `/api/scenarios/${id}`);
+        assert.deepEqual([res.status, res.body], [404, SCENARIO_NOT_FOUND], id);
+      }
+      assert.equal(await scenarioCount(), before);
     });
   });
 

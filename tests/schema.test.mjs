@@ -20,6 +20,7 @@ import validator from 'validator';
 import schemaCheck from '../utils/schemaCheck.cjs';
 import aiAnswers from '../utils/aiAnswers.cjs';
 import clientChanges from '../utils/clientChanges.cjs';
+import scenarios from '../utils/scenarioState.cjs';
 import escaping from '../utils/escaping.cjs';
 import { PRODUCTION_TABLES_SQL } from './helpers/server.mjs';
 
@@ -1096,6 +1097,234 @@ describe('client_changes on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TES
       // ids come from a sequence the reset's DELETE does not restart
       const { rows: [{ last_value: lastBefore }] } = await db.query("SELECT last_value FROM pg_sequences WHERE sequencename = 'client_changes_id_seq'");
       assert.equal(Number(lastBefore), 3);
+    });
+  });
+});
+
+// --- Saved Scenarios (docs/plans/tier-2.md, S12, WP8) ------------------------
+
+const SCENARIOS_MARKER = '-- Saved Scenarios';
+const preScenariosSql = initSql.slice(0, initSql.indexOf(SCENARIOS_MARKER));
+
+test('init-db.sql still contains the scenarios section marker the rollback tests cut at', () => {
+  assert.ok(initSql.indexOf(SCENARIOS_MARKER) > initSql.indexOf(CHANGES_MARKER));
+  assert.doesNotMatch(preScenariosSql, /scenarios/i);
+  const section = initSql.slice(initSql.indexOf(SCENARIOS_MARKER));
+  assert.match(section, /^CREATE TABLE IF NOT EXISTS scenarios \(/m);
+  // No backfill: nothing in the section writes a row
+  assert.doesNotMatch(section, /^\s*(INSERT|UPDATE|DELETE)\b/im);
+});
+
+// scenarios' columns, constraints (with their oids) and indexes
+async function scenariosCatalog(db) {
+  const rows = async (sql) => (await db.query(sql)).rows;
+  return {
+    columns: await rows(`
+      SELECT attname AS name, format_type(atttypid, atttypmod) AS type, attnotnull AS not_null,
+             pg_get_expr(d.adbin, d.adrelid) AS default_value
+        FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+       WHERE a.attrelid = 'scenarios'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+       ORDER BY a.attnum`),
+    // Not the NOT NULLs: PostgreSQL 18 lists each as a constraint (contype 'n'), 16 does not
+    constraints: await rows(`
+      SELECT oid::bigint::text AS oid, conname, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint WHERE conrelid = 'scenarios'::regclass AND contype <> 'n' ORDER BY conname`),
+    indexes: await rows(`SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'scenarios' ORDER BY indexname`),
+  };
+}
+
+const scenarioRows = async (db) =>
+  (await db.query('SELECT to_jsonb(s) AS row FROM scenarios s ORDER BY id')).rows;
+
+// A departure scenario's state as the page saves it (src/utils/scenarioState.js):
+// Kevin leaving, a plan with the AI's fields and an edit for seed()'s A1
+async function scenarioState(db) {
+  const kevin = (await db.query("SELECT id FROM people WHERE name = 'Kevin'")).rows[0].id;
+  const a1 = (await db.query("SELECT id FROM clients WHERE name = 'A1'")).rows[0].id;
+  return {
+    kind: 'departure',
+    currentStage: 'mitigation',
+    departingIds: [String(kevin)],
+    choices: { [String(a1)]: { secondChairId: null } },
+    plans: {
+      [String(a1)]: {
+        answerId: null,
+        ai: { strategy: 'Hand over in two meetings.', timelineDays: 30, tasks: ['Call the client'], priority: 'medium', truncated: false, refused: false },
+        edits: { strategy: 'Hand over in one meeting.' },
+        status: 'approved',
+        updatedAt: '2026-09-29T14:00:00.000Z',
+      },
+    },
+    execution: {},
+    tasks: [],
+    communications: [],
+  };
+}
+
+// Two saved scenarios as the routes write them (utils/scenarioState.cjs): one
+// by partner-a, and one by partner-b that partner-a saved again
+async function saveScenarios(db) {
+  const userId = async (name) => (await db.query('SELECT id FROM users WHERE username = $1', [name])).rows[0].id;
+  const a = { userId: await userId('partner-a'), username: 'partner-a' };
+  const b = { userId: await userId('partner-b'), username: 'partner-b' };
+  const state = await scenarioState(db);
+  await db.query(scenarios.INSERT_SCENARIO_SQL, scenarios.insertScenarioParams('Kevin retires', state, a));
+  const { rows: [second] } = await db.query(scenarios.INSERT_SCENARIO_SQL, scenarios.insertScenarioParams('Kevin leaves early', state, b));
+  await db.query(scenarios.UPDATE_SCENARIO_SQL, scenarios.updateScenarioParams(second.id, 'Kevin leaves early', { ...state, currentStage: 'implementation' }, 1, a));
+}
+
+describe('scenarios on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  test('a new database has scenarios with its columns, keys and primary key; a second start changes nothing', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      const catalog = await scenariosCatalog(db);
+      assert.deepEqual(catalog.columns.map((c) => [c.name, c.type, c.not_null]), [
+        ['id', 'integer', true],
+        ['name', 'character varying(120)', true],
+        ['state', 'jsonb', true],
+        ['version', 'integer', true],
+        ['created_by', 'integer', false],
+        ['created_by_username', 'character varying(255)', false],
+        ['updated_by', 'integer', false],
+        ['updated_by_username', 'character varying(255)', false],
+        ['created_at', 'timestamp with time zone', true],
+        ['updated_at', 'timestamp with time zone', true],
+      ]);
+      assert.equal(catalog.columns.find((c) => c.name === 'version').default_value, '1');
+      assert.deepEqual(catalog.constraints.map((c) => [c.conname, c.definition]), [
+        ['scenarios_created_by_fkey', 'FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL'],
+        ['scenarios_pkey', 'PRIMARY KEY (id)'],
+        ['scenarios_updated_by_fkey', 'FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL'],
+      ]);
+      assert.deepEqual(catalog.indexes.map((i) => i.indexname), ['scenarios_pkey']);
+      // No key to clients (constraint 3): reset-book would refuse, or a cascade empty the scenarios
+      const { rows: toClients } = await db.query(CLIENT_FOREIGN_KEYS_SQL);
+      assert.deepEqual(toClients.map((k) => k.table_name), ['client_revenues']);
+
+      // The keys to users only while the account exists; the version checked
+      // and moved in the one statement
+      await db.query('BEGIN');
+      assert.equal(await sqlState(db, "INSERT INTO scenarios (name, state) VALUES (NULL, '{}')"), '23502');
+      assert.equal(await sqlState(db, "INSERT INTO scenarios (name, state) VALUES ('A', NULL)"), '23502');
+      assert.equal(await sqlState(db, `INSERT INTO scenarios (name, state) VALUES ('${'x'.repeat(121)}', '{}')`), '22001');
+      assert.equal(await sqlState(db, "INSERT INTO scenarios (name, state, created_by) VALUES ('A', '{}', 999999)"), '23503');
+      const { rows: [saved] } = await db.query(scenarios.INSERT_SCENARIO_SQL,
+        scenarios.insertScenarioParams('Ghost', { kind: 'departure' }, { userId: 999999, username: 'ghost' }));
+      assert.deepEqual([saved.name, saved.state, saved.version, saved.created_by_username, saved.updated_by_username], ['Ghost', { kind: 'departure' }, 1, 'ghost', 'ghost']);
+      const { rows: [stored] } = await db.query('SELECT created_by, updated_by FROM scenarios WHERE id = $1', [saved.id]);
+      assert.deepEqual(stored, { created_by: null, updated_by: null });
+      const stale = await db.query(scenarios.UPDATE_SCENARIO_SQL, scenarios.updateScenarioParams(saved.id, 'Ghost', {}, 2, { userId: 999999, username: 'ghost' }));
+      assert.equal(stale.rowCount, 0);
+      const current = await db.query(scenarios.UPDATE_SCENARIO_SQL, scenarios.updateScenarioParams(saved.id, 'Ghost 2', {}, 1, { userId: 999999, username: 'ghost' }));
+      assert.deepEqual([current.rowCount, current.rows[0].version, current.rows[0].name], [1, 2, 'Ghost 2']);
+      await db.query('ROLLBACK');
+
+      await applyInit(db);
+      assert.deepEqual(await scenariosCatalog(db), catalog, 'the second start dropped or changed something');
+    });
+  });
+
+  test('applying init-db.sql again leaves saved scenarios as they are', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveScenarios(db);
+      const before = await scenarioRows(db);
+      assert.equal(before.length, 2);
+      await applyInit(db);
+      assert.deepEqual(await scenarioRows(db), before);
+    });
+  });
+
+  test('a pre-WP8 database migrates with every client, revenue row, person, answer and change intact, and an empty scenarios', async () => {
+    await withDatabase(async (db) => {
+      await db.query(preScenariosSql);
+      await seedBook(db);
+      await saveAnswers(db);
+      await logChanges(db);
+      const state = async () => ({ book: await bookSnapshot(db), answers: await answersRows(db), changes: await changesRows(db) });
+      const before = await state();
+      assert.equal((await db.query("SELECT to_regclass('scenarios') AS t")).rows[0].t, null);
+
+      await applyInit(db);
+      assert.deepEqual(await state(), before);
+      assert.deepEqual(await scenarioRows(db), []);
+    });
+  });
+
+  test('a rollback start (the pre-WP8 file on a migrated database) succeeds and leaves the table and its rows', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveScenarios(db);
+      const state = async () => ({ catalog: await scenariosCatalog(db), scenarios: await scenarioRows(db), book: await bookSnapshot(db) });
+      const before = await state();
+      assert.equal(before.scenarios.length, 2);
+
+      await db.query(preScenariosSql);
+      assert.deepEqual(await state(), before);
+      // And forward again
+      await applyInit(db);
+      assert.deepEqual(await state(), before);
+    });
+  });
+
+  test('check-schema still ends OK: scenarios.created_by and scenarios.updated_by are SET NULL', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveScenarios(db);
+      const result = await runScript('scripts/check-schema.cjs', url);
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^ok {2}scenarios\.scenarios_created_by_fkey: FOREIGN KEY \(created_by\) REFERENCES users\(id\) ON DELETE SET NULL$/m);
+      assert.match(result.stdout, /^ok {2}scenarios\.scenarios_updated_by_fkey: FOREIGN KEY \(updated_by\) REFERENCES users\(id\) ON DELETE SET NULL$/m);
+      assert.match(result.stdout, /^OK: /m);
+    });
+  });
+
+  test('delete-user keeps an account\'s scenarios, with created_by and updated_by null and the usernames kept; nothing else changes', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveScenarios(db);
+      const before = await scenarioRows(db);
+      const partnerA = (await db.query("SELECT id FROM users WHERE username = 'partner-a'")).rows[0].id;
+      const partnerB = (await db.query("SELECT id FROM users WHERE username = 'partner-b'")).rows[0].id;
+      assert.deepEqual(before.map(({ row }) => [row.created_by, row.updated_by, row.version]), [[partnerA, partnerA, 1], [partnerB, partnerA, 2]]);
+
+      const result = await runScript('scripts/delete-user.cjs', url, 'partner-a');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+
+      const after = await scenarioRows(db);
+      assert.deepEqual(after.map(({ row }) => [row.created_by, row.created_by_username, row.updated_by, row.updated_by_username]), [
+        [null, 'partner-a', null, 'partner-a'],
+        [partnerB, 'partner-b', null, 'partner-a'],
+      ]);
+      const unset = ({ row }) => ({
+        ...row,
+        created_by: row.created_by === partnerA ? null : row.created_by,
+        updated_by: row.updated_by === partnerA ? null : row.updated_by,
+      });
+      assert.deepEqual(after.map(unset), before.map(unset));
+      assert.deepEqual(await counts(db), { users: 1, clients: 5, revenues: 10 });
+    });
+  });
+
+  test('reset-book --confirm with scenarios saved succeeds and leaves them untouched; the preview does not name them', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await saveScenarios(db);
+      const before = await scenarioRows(db);
+
+      let result = await runScript('scripts/reset-book.cjs', url);
+      assert.equal(result.code, 1, result.stdout + result.stderr);
+      assert.doesNotMatch(result.stdout, /scenarios/, 'not a table that references clients');
+
+      result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^Removed 5 clients and 10 revenue rows\. Accounts: 2 and people: 9, unchanged\.$/m);
+      assert.deepEqual(await scenarioRows(db), before);
     });
   });
 });

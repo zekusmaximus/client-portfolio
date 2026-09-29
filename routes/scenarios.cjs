@@ -7,6 +7,8 @@ const { AI_MODEL, complete, describeError } = require('../services/anthropic.cjs
 const { answerRow } = require('../utils/aiAnswers.cjs');
 const { saveAnswer } = require('../models/aiAnswerModel.cjs');
 const { loadBook } = require('../models/bookModel.cjs');
+const db = require('../db.cjs');
+const scenarioState = require('../utils/scenarioState.cjs');
 const {
   checkPlanRequest,
   checkRoster,
@@ -16,12 +18,17 @@ const {
   parseTransitionPlanResponse,
 } = require('../utils/transitionPlan.cjs');
 
-// Apply middleware: auth first, then the AI budgets (D11) shared with routes/ai.cjs
+// Sign-in for every route. The AI budgets (D11, T16), shared with
+// routes/ai.cjs, are on the transition-plan route alone: until Tier 2 WP8 they
+// were mounted here for every route, and the saved scenarios' routes below
+// call no model, so they must not spend the budget (docs/plans/tier-2.md,
+// section 13). The budget itself is unchanged.
 router.use(auth);
-router.use(aiUserLimiter);
-router.use(aiGlobalLimiter);
 // Every string trimmed, as the request sanitizer trimmed it until WP5, and not
-// escaped (docs/plans/tier-2.md, S8)
+// escaped (docs/plans/tier-2.md, S8). A saved scenario's state is trimmed
+// too, its text included (a plan's edited strategy, a communication's notes);
+// the page trims it the same way before it compares or saves
+// (src/utils/scenarioState.js), so what it holds is what is stored.
 router.use(trimRequestBody);
 
 /* -------------------------------------------------------------------------- */
@@ -61,7 +68,7 @@ const MAX_TOKENS = 16000;
 // the book's hash and its reporting year. The response keeps its shape (T14)
 // and adds answerId and saved beside plan: a failed save returns the plan
 // with saved: false and answerId null, never an error.
-router.post('/transition-plan', async (req, res) => {
+router.post('/transition-plan', aiUserLimiter, aiGlobalLimiter, async (req, res) => {
   const { client, stage1Data, roster } = req.body || {};
   const refusal = checkPlanRequest(req.body);
   if (refusal) {
@@ -129,6 +136,111 @@ router.post('/transition-plan', async (req, res) => {
     console.error(`Error generating transition plan for client ${client.id}:`, expected ? error.message : error);
     const { status, message } = describeError(error);
     res.status(status).json({ success: false, error: message });
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/*                              SAVED SCENARIOS                               */
+/* -------------------------------------------------------------------------- */
+
+// Saved Scenarios (docs/plans/tier-2.md, S12, WP8): named scenarios every
+// partner can list, open, save and delete (P2: no roles). A scenario's state
+// is what partners entered, checked by checkScenario (utils/scenarioState.cjs),
+// never what the departure engine derives from the book. A save names the
+// version it opened; a stale one answers 409 naming who saved last and when.
+// None of these routes is behind the AI limiters (T16). A failed query is
+// logged by its code and message only: PostgreSQL's `detail` for a refused
+// row would print the whole state, partners' notes included.
+const {
+  checkScenario,
+  readScenarioId,
+  LIST_SCENARIOS_SQL,
+  ONE_SCENARIO_SQL,
+  INSERT_SCENARIO_SQL,
+  UPDATE_SCENARIO_SQL,
+  LATEST_SAVE_SQL,
+  DELETE_SCENARIO_SQL,
+  insertScenarioParams,
+  updateScenarioParams,
+  conflictBody,
+} = scenarioState;
+
+const NOT_FOUND = { success: false, error: 'Scenario not found.' };
+const validationFailed = (details) => ({ success: false, error: 'Validation failed', details });
+const failed = (res, what, error) => {
+  console.error(`Error ${what}:`, error?.code, error?.message);
+  res.status(500).json({ success: false, error: `Failed ${what}.` });
+};
+
+// GET /api/scenarios - every saved scenario, newest save first:
+// { success, scenarios: [{ id, name, kind, current_stage, version,
+//   created_by_username, updated_by_username, created_at, updated_at,
+//   leaving: [{ id, name }] }] }, a leaving person's name as the People list
+// has it now (null for an id no longer on it)
+router.get('/', async (req, res) => {
+  try {
+    const { rows } = await db.query(LIST_SCENARIOS_SQL);
+    res.json({ success: true, scenarios: rows });
+  } catch (error) {
+    failed(res, 'listing the scenarios', error);
+  }
+});
+
+// GET /api/scenarios/:id - one scenario with its state: { success, scenario }
+router.get('/:id', async (req, res) => {
+  const id = readScenarioId(req.params.id);
+  if (id === null) return res.status(404).json(NOT_FOUND);
+  try {
+    const { rows: [scenario] } = await db.query(ONE_SCENARIO_SQL, [id]);
+    if (!scenario) return res.status(404).json(NOT_FOUND);
+    res.json({ success: true, scenario });
+  } catch (error) {
+    failed(res, 'reading the scenario', error);
+  }
+});
+
+// POST /api/scenarios { name, state } - 201 { success, scenario } at version 1
+router.post('/', async (req, res) => {
+  const details = checkScenario(req.body);
+  if (details.length > 0) return res.status(400).json(validationFailed(details));
+  try {
+    const { rows: [scenario] } = await db.query(INSERT_SCENARIO_SQL, insertScenarioParams(req.body.name, req.body.state, req.user));
+    res.status(201).json({ success: true, scenario });
+  } catch (error) {
+    failed(res, 'saving the scenario', error);
+  }
+});
+
+// PUT /api/scenarios/:id { name, state, version } - { success, scenario } at
+// the next version. The order: the body's 400 (before the id is looked up),
+// then 404, then 409 when another save came first (nothing written)
+router.put('/:id', async (req, res) => {
+  const details = checkScenario(req.body, { update: true });
+  if (details.length > 0) return res.status(400).json(validationFailed(details));
+  const id = readScenarioId(req.params.id);
+  if (id === null) return res.status(404).json(NOT_FOUND);
+  try {
+    const { name, state, version } = req.body;
+    const { rows: [scenario] } = await db.query(UPDATE_SCENARIO_SQL, updateScenarioParams(id, name, state, version, req.user));
+    if (scenario) return res.json({ success: true, scenario });
+    const { rows: [latest] } = await db.query(LATEST_SAVE_SQL, [id]);
+    if (!latest) return res.status(404).json(NOT_FOUND);
+    res.status(409).json(conflictBody(latest));
+  } catch (error) {
+    failed(res, 'saving the scenario', error);
+  }
+});
+
+// DELETE /api/scenarios/:id - { success: true }; any partner (P2)
+router.delete('/:id', async (req, res) => {
+  const id = readScenarioId(req.params.id);
+  if (id === null) return res.status(404).json(NOT_FOUND);
+  try {
+    const { rows: [deleted] } = await db.query(DELETE_SCENARIO_SQL, [id]);
+    if (!deleted) return res.status(404).json(NOT_FOUND);
+    res.json({ success: true });
+  } catch (error) {
+    failed(res, 'deleting the scenario', error);
   }
 });
 

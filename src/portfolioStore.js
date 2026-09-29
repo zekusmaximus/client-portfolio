@@ -7,6 +7,14 @@ import { toggleId, withChoice } from './utils/departure';
 import { approvalBlocker, pinnedChoice, syncTransitions } from './utils/transitionPlans';
 import { appendAnswers } from './utils/recentAnswers';
 import { clientRequestBody } from './utils/clientForm';
+import {
+  emptyPlan,
+  emptyState,
+  openState,
+  planViews,
+  stateFromStore,
+  stateJson,
+} from './utils/scenarioState';
 
 // The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
 // brief. They start empty and go back to empty on logout.
@@ -53,7 +61,26 @@ const emptySuccessionWorkflow = () => ({ currentStage: 'impact', departingIds: [
 // Stage 3: the approved plans' transitions, their tasks and the
 // communications the partner logs. Counts are computed from these
 // (executionSummary in src/utils/transitionPlans.js); nothing is estimated.
-const emptyExecution = () => ({ activeTransitions: [], transitionTasks: [], communicationLog: [] });
+// heldTransitions are the Stage 3 records of a saved scenario that opening it
+// could not show (their approved seats no longer apply on the book), kept so
+// that saving it again loses nothing (Tier 2 WP8).
+const emptyExecution = () => ({ activeTransitions: [], heldTransitions: [], transitionTasks: [], communicationLog: [] });
+// Saved Scenarios (docs/plans/tier-2.md, S12, WP8): the saved scenario open
+// in Scenarios (null for one not saved yet), its state as last opened or
+// saved (as text, for "Unsaved changes"), and the notices opening it gave.
+// The scenario itself is the store's successionWorkflow, transitionPlans and
+// Stage 3 state, as before.
+const EMPTY_STATE_JSON = stateJson(emptyState());
+const closedScenario = () => ({ savedScenario: null, savedStateJson: EMPTY_STATE_JSON, scenarioNotices: [] });
+const emptyScenarioList = () => ({ items: [], loaded: false, loading: false, error: null });
+// A saved scenario's fields the page keeps while it is open
+const scenarioMeta = (scenario) => ({
+  id: scenario.id,
+  name: scenario.name,
+  version: scenario.version,
+  updated_by_username: scenario.updated_by_username ?? null,
+  updated_at: scenario.updated_at,
+});
 const usePortfolioStore = create(
   persist(
     (set, get) => ({
@@ -112,10 +139,20 @@ const usePortfolioStore = create(
       // cleared on logout. currentStage is 'impact', 'mitigation' or
       // 'implementation'.
       successionWorkflow: emptySuccessionWorkflow(),
-      transitionPlans: {}, // { clientId: transitionPlan }, Stage 2
+      // { clientId: { answerId, ai, edits, status, updatedAt } }, Stage 2: the
+      // AI's fields and the partner's edits kept apart (Tier 2 WP8,
+      // src/utils/scenarioState.js); planViews gives what the stages read
+      transitionPlans: {},
 
       // Execution state, Stage 3
       ...emptyExecution(),
+
+      // Saved Scenarios (WP8): whether the API has them (null until asked,
+      // then /api/health's saved-scenarios), the saved list, and the open one.
+      // Not persisted; cleared on logout.
+      scenarioFeature: null,
+      scenarioList: emptyScenarioList(),
+      ...closedScenario(),
       
       // Actions
       // Each client's succession metrics are the API's since Tier 2 WP7
@@ -504,7 +541,10 @@ const usePortfolioStore = create(
             aiAnswers: emptyAiAnswers(),
             successionWorkflow: emptySuccessionWorkflow(),
             transitionPlans: {},
-            ...emptyExecution()
+            ...emptyExecution(),
+            scenarioFeature: null,
+            scenarioList: emptyScenarioList(),
+            ...closedScenario()
           });
         }
       },
@@ -600,13 +640,14 @@ const usePortfolioStore = create(
         }));
       },
 
-      // Stage 2: one client's plan (the AI's answer, the timeline, the
-      // status). `update` is the fields to merge, or a function of the plan.
-      // The plan's seats are the scenario's choices, not fields here.
+      // Stage 2: one client's plan, { answerId, ai, edits, status, updatedAt }.
+      // `update` is the fields to merge, or a function of the plan (withAiPlan,
+      // withEdits and withoutEdit in src/utils/scenarioState.js). The plan's
+      // seats are the scenario's choices, not fields here.
       updateTransitionPlan: (clientId, update) => {
         set((state) => {
           const id = String(clientId);
-          const current = state.transitionPlans[id] || { clientId: id, status: 'pending' };
+          const current = state.transitionPlans[id] || emptyPlan();
           const next = typeof update === 'function' ? update(current) : { ...current, ...update };
           return {
             transitionPlans: { ...state.transitionPlans, [id]: { ...next, updatedAt: new Date().toISOString() } }
@@ -627,7 +668,7 @@ const usePortfolioStore = create(
             if (approvalBlocker(decision)) continue;
             const id = String(decision.client.id);
             choices = withChoice(choices, id, pinnedChoice(decision));
-            plans[id] = { ...(plans[id] || { clientId: id }), status: 'approved', updatedAt: now };
+            plans[id] = { ...(plans[id] || emptyPlan()), status: 'approved', updatedAt: now };
           }
           return { transitionPlans: plans, successionWorkflow: { ...state.successionWorkflow, choices } };
         });
@@ -640,18 +681,20 @@ const usePortfolioStore = create(
           const now = new Date().toISOString();
           for (const clientId of clientIds) {
             const id = String(clientId);
-            plans[id] = { ...(plans[id] || { clientId: id }), status, updatedAt: now };
+            plans[id] = { ...(plans[id] || emptyPlan()), status, updatedAt: now };
           }
           return { transitionPlans: plans };
         });
       },
 
-      // Start the scenario over: nobody leaving, no picks, no plans
+      // Start the scenario over: nobody leaving, no picks, no plans. A saved
+      // scenario stays open (its next save stores the empty scenario)
       resetSuccessionWorkflow: () => {
         set({
           successionWorkflow: emptySuccessionWorkflow(),
           transitionPlans: {},
-          ...emptyExecution()
+          ...emptyExecution(),
+          scenarioNotices: []
         });
       },
 
@@ -661,13 +704,17 @@ const usePortfolioStore = create(
         set((state) => {
           const { transitions, tasks } = syncTransitions({
             decisions,
-            plans: state.transitionPlans,
+            plans: planViews(state.transitionPlans),
             transitions: state.activeTransitions,
             tasks: state.transitionTasks,
             today: new Date().toISOString().split('T')[0]
           });
+          // Stage 3 is set afresh from the plans approved now, so the records
+          // an opened scenario could not show go, as syncTransitions drops a
+          // client no longer approved
           return {
             activeTransitions: transitions,
+            heldTransitions: [],
             transitionTasks: tasks,
             successionWorkflow: { ...state.successionWorkflow, currentStage: 'implementation' }
           };
@@ -698,7 +745,101 @@ const usePortfolioStore = create(
 
       addCommunication: (communication) => {
         set((state) => ({ communicationLog: [...state.communicationLog, communication] }));
-      }
+      },
+
+      // Saved Scenarios (docs/plans/tier-2.md, S12, WP8). Whether the API
+      // saves scenarios: without saved-scenarios in /api/health (an API older
+      // than WP8), Scenarios works in the browser only, as before
+      checkScenarioFeature: async () => {
+        const health = await apiClient.get('/api/health').catch(() => null);
+        const available = Array.isArray(health?.features) && health.features.includes('saved-scenarios');
+        set({ scenarioFeature: available });
+        return available;
+      },
+
+      // The saved scenarios, newest save first, for the list
+      fetchScenarios: async () => {
+        set((state) => ({ scenarioList: { ...state.scenarioList, loading: true, error: null } }));
+        try {
+          const response = await apiClient.get('/scenarios');
+          set({ scenarioList: { items: response.scenarios || [], loaded: true, loading: false, error: null } });
+        } catch (err) {
+          set((state) => ({ scenarioList: { ...state.scenarioList, loading: false, error: apiErrorMessage(err, 'Could not load the saved scenarios.') } }));
+        }
+      },
+
+      // Open a saved scenario on the current book: the book and the People
+      // list are loaded again first, so the scenario is re-derived from them
+      // as they are now (openState); nothing opens if either fails to load.
+      // Throws with a message the page shows.
+      openScenario: async (id) => {
+        const { scenario } = await apiClient.get(`/scenarios/${id}`);
+        if (scenario?.state?.kind !== 'departure') {
+          throw new Error('This scenario is of a kind this page cannot show. Reload the page and try again.');
+        }
+        await get().fetchClients({ force: true });
+        await get().fetchPeople();
+        const { fetchError, peopleError, isAuthenticated } = get();
+        // An expired session logs out while the book reloads: open nothing
+        if (!isAuthenticated) throw new Error('Your session has ended. Sign in again to open the scenario.');
+        if (fetchError || peopleError) {
+          throw new Error('The book or the People list could not be loaded, so the scenario was not opened. Try again.');
+        }
+        const opened = openState(scenario.state, {
+          people: get().people,
+          clients: get().clients,
+          reportingYear: get().getReportingYear(),
+          today: new Date().toISOString().split('T')[0]
+        });
+        set({
+          successionWorkflow: opened.successionWorkflow,
+          transitionPlans: opened.transitionPlans,
+          activeTransitions: opened.activeTransitions,
+          heldTransitions: opened.heldTransitions,
+          transitionTasks: opened.transitionTasks,
+          communicationLog: opened.communicationLog,
+          savedScenario: scenarioMeta(scenario),
+          savedStateJson: stateJson(scenario.state),
+          scenarioNotices: opened.notices
+        });
+        return scenario;
+      },
+
+      // Save the open scenario: a new one (POST) when none is open or
+      // `asNew`, under `name`; otherwise the open one (PUT, with the version it
+      // was opened or last saved at), keeping its name unless `name` is given.
+      // A stale save answers 409, a deleted scenario 404: both throw, and
+      // nothing on the page changes.
+      saveScenario: async ({ name, asNew = false } = {}) => {
+        const state = stateFromStore(get());
+        const open = get().savedScenario;
+        const response = open && !asNew
+          ? await apiClient.put(`/scenarios/${open.id}`, { name: name ?? open.name, state, version: open.version })
+          : await apiClient.post('/scenarios', { name, state });
+        set({ savedScenario: scenarioMeta(response.scenario), savedStateJson: stateJson(state) });
+        if (get().scenarioList.loaded) get().fetchScenarios();
+        return response.scenario;
+      },
+
+      // Delete a saved scenario (any partner, P2). Deleting the open one
+      // leaves what is on screen as a scenario not saved yet
+      deleteScenario: async (id) => {
+        await apiClient.del(`/scenarios/${id}`);
+        if (get().savedScenario?.id === id) set({ savedScenario: null, savedStateJson: EMPTY_STATE_JSON });
+        await get().fetchScenarios();
+      },
+
+      // A new scenario: nothing leaving, no picks or plans, nothing saved yet
+      newScenario: () => {
+        set({
+          successionWorkflow: emptySuccessionWorkflow(),
+          transitionPlans: {},
+          ...emptyExecution(),
+          ...closedScenario()
+        });
+      },
+
+      dismissScenarioNotices: () => set({ scenarioNotices: [] })
     }),
     {
       name: 'portfolio-storage',
