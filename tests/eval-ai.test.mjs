@@ -293,6 +293,8 @@ test('estimateLines: nothing sent, each configuration\'s range, the ceiling, whe
   assert.equal(lines.at(-1), '  node scripts/eval-ai.cjs --ids 1,2 --opus-5-5 medium --confirm 0.61');
   assert.equal(confirmCommand({ ids: [5], out: 'a b.md', figure: '1.00' }), 'node scripts/eval-ai.cjs --ids 5 --out "a b.md" --confirm 1.00');
   assert.equal(confirmCommand({ ids: [5], stdout: true, figure: '1.00' }), 'node scripts/eval-ai.cjs --ids 5 --stdout --confirm 1.00');
+  assert.equal(confirmCommand({ ids: [5], out: 'C:\\Users\\jeff\\eval-ai.md', figure: '1.00' }), 'node scripts/eval-ai.cjs --ids 5 --out C:\\Users\\jeff\\eval-ai.md --confirm 1.00', 'a Windows path as typed');
+  assert.equal(confirmCommand({ ids: [5], out: '/tmp/eval-ai.md', figure: '1.00' }), 'node scripts/eval-ai.cjs --ids 5 --out /tmp/eval-ai.md --confirm 1.00');
 });
 
 test('shownAnswer: a decline and a cut-off as the AI tab words them', () => {
@@ -548,6 +550,7 @@ describe('scripts/eval-ai.cjs on PostgreSQL and the fake Anthropic server', { sk
       let r = await runEval(url, ['--ids', String(id), '--out', out, '--confirm', '999.00']);
       assert.equal(r.code, 1);
       assert.match(r.stderr, new RegExp(`Refused: --confirm 999\\.00 is not this estimate's figure, \\$${figure.replace('.', '\\.')}`));
+      assert.ok(!r.stderr.includes('Evaluation run'), 'no run header on a refusal');
       r = await runEval(url, ['--ids', String(id), '--out', out, '--confirm', figure], { ANTHROPIC_API_KEY: '' });
       assert.equal(r.code, 1);
       assert.match(r.stderr, /Refused: ANTHROPIC_API_KEY is not set\. Nothing was sent\./);
@@ -624,6 +627,8 @@ describe('scripts/eval-ai.cjs on PostgreSQL and the fake Anthropic server', { sk
       assert.match(md, /The saved answers, for reference: 3 answers, 2,400 output tokens, \$0\.0834 as saved/);
       // The fake's answer names what it received: the book's rows and the question
       assert.match(md, /Who carries the most effort\?/);
+      assert.match(r.stderr, /^Evaluation run: the estimate you approved\.\n/);
+      assert.ok(!r.stderr.includes('Nothing has been sent') && !r.stderr.includes('--confirm'), 'the header is the estimate without its closing command');
       assert.match(r.stderr, /"event":"ai_call","label":"eval"/);
       assert.match(r.stderr, /\[6\/6\] claude-opus-5, effort medium/);
 

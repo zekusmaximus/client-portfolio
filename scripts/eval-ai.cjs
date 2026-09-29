@@ -175,7 +175,6 @@ async function prepare(client, args, now) {
   }
 
   // --confirm: the figure must be this estimate's
-  lines.slice(0, -2).forEach((line) => say(line));
   const approvedCents = E.readConfirm(args.confirm);
   const figureCents = E.readConfirm(estimate.figure);
   if (approvedCents !== figureCents) {
@@ -186,6 +185,8 @@ async function prepare(client, args, now) {
     console.error('Refused: ANTHROPIC_API_KEY is not set. Nothing was sent.');
     return 1;
   }
+  // The estimate again, as the run's header, without its closing command
+  ['Evaluation run: the estimate you approved.', ...lines.slice(1, -2)].forEach((line) => say(line));
   return { today, answers: chosen.answers, configs, estimate, target, apiKey, now };
 }
 

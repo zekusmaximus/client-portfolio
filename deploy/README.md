@@ -486,8 +486,9 @@ account adds nobody to it, and associates get no account
 
 A partner changes their own password from the header's **Change password**
 button. The scripts below are for adding a partner, for a forgotten password,
-for removing an account (7.3), for starting the book over (7.4) and for
-repairing text stored escaped (7.5). Neither a reset nor a deletion ends
+for removing an account (7.3), for starting the book over (7.4), for
+repairing text stored escaped (7.5) and for comparing AI models and effort
+on the firm's own questions (7.6). Neither a reset nor a deletion ends
 sessions already issued; section 8.1 does.
 
 ### 7.1 From the Render Shell (paid instances only)
@@ -831,6 +832,127 @@ refuse (safely) until the preview runs again.
    backup (`backup/RESTORE.md` (e2)), which also undoes every other change
    since step 1.
 
+### 7.6 Choosing the AI model and effort (`eval-ai`)
+
+Tier 2 WP11 (`docs/plans/tier-2.md`, section 16, S16). `scripts/eval-ai.cjs`
+asks 10 to 20 questions partners have already asked again, on today's book,
+under each configuration, and writes each saved answer beside each
+configuration's answer, with the tokens, the estimated cost and the time.
+You choose the questions, approve the spend and run it; the model (D7) and
+the effort are your choice, made from what it writes.
+
+The configurations, in the order they run:
+
+1. `claude-opus-5` at the API's default effort (`high`): what production
+   sends while `AI_EFFORT` is not set on Render.
+2. `claude-opus-5` at effort `medium`.
+3. Only if you add `--opus-5-5 medium` (or several efforts,
+   `--opus-5-5 medium,high`): `claude-opus-5-5` at that effort. Its default
+   effort is `medium`, one level below `claude-opus-5`'s, so it always runs
+   with its effort set. In this comparison it runs without the server-side
+   refusal fallback (`FALLBACK_MODELS` lists only `claude-opus-5` until you
+   choose), so a question it declines shows as declined.
+
+What it does not do. It writes nothing to the database: every read is in one
+read-only transaction, closed before the first call, and no answer is saved,
+so nothing appears under Recent answers, and **its cost shows in the
+Anthropic Console, not in the AI tab's month total**. The app's AI rate
+limits (30 an hour per partner, 300 a day) do not apply to a script, so it
+takes at most 20 questions: 40 calls with the first two configurations, 20
+more for each `claude-opus-5-5` effort. Nothing is spent without
+`--confirm` and the dollar figure the estimate printed for exactly those
+questions and configurations, on today's book.
+
+**Where.** Your machine, which keeps the side-by-side as a file (the Render
+Shell's disk is temporary and has no download, and the side-by-side is long):
+7.2's set-up plus the Anthropic key (the one on Render, from the password
+manager, or a new one from the Console, 8.2). `NODE_ENV=production` makes
+the calls go only to `https://api.anthropic.com` (T17), whatever else is set;
+the estimate prints where they go.
+
+```powershell
+Set-Location <path to your clone of client-portfolio>
+git pull; npm ci
+$env:DATABASE_URL = Read-Host 'External Database URL' -MaskInput
+$env:DATABASE_SSL = 'no-verify'
+$env:ANTHROPIC_API_KEY = Read-Host 'Anthropic API key' -MaskInput
+$env:NODE_ENV = 'production'
+node scripts/eval-ai.cjs                                                   # 1. the saved Asks
+node scripts/eval-ai.cjs --ids 12,15,18 --out "$HOME\eval-ai.md"          # 2. the estimate; sends nothing
+node scripts/eval-ai.cjs --ids 12,15,18 --out "$HOME\eval-ai.md" --confirm <figure>   # 3. the run
+Remove-Item Env:DATABASE_URL, Env:DATABASE_SSL, Env:ANTHROPIC_API_KEY, Env:NODE_ENV
+```
+
+The list (step 1) and the transition-plan check (below) are quick from the
+Render Shell too (7.1), where the key and the database are already set:
+`node scripts/eval-ai.cjs` and `node scripts/eval-ai.cjs --plans`. A run
+there needs `--stdout`, which prints the side-by-side to the terminal (the
+progress goes to the error stream), or a file under `eval-ai-output/` that
+you then print with `cat` and delete. Call `node` directly, not `npm run`,
+which prints its own lines on standard output.
+
+1. **Choose the questions.** Without arguments it lists every saved Ask,
+   newest first: its id, the date, who asked, the saved answer's tokens and
+   cost, and marks: `follow-up of #n, asked alone` (the evaluation asks each
+   question as a new one, without its thread, so prefer first questions),
+   `hidden by <who>`, `declined`, `cut off`, `earlier book` (asked on a book
+   that has changed since). Pick 10 to 20 that cover what partners really
+   ask: loads, exposure, coverage, a client by name, a question whose answer
+   you can check by hand.
+2. **Read the estimate.** With `--ids` (and `--opus-5-5` and `--out` if you
+   want them) it prints the questions, each configuration's range, the total
+   and the most the run could cost, where the calls go, where the file goes,
+   and the command that spends it. The range takes each saved answer's
+   output from half to twice as long (output, thinking included, changes
+   with effort and model) and the book written to the cache once per
+   configuration and read after; the Console is the bill. Nothing is sent.
+3. **Run it** with the printed command, `--confirm <figure>` at the end. It
+   refuses a figure that is not this estimate's (other questions, another
+   configuration, a changed book): run the estimate again. It asks one
+   question at a time, every question under one configuration before the
+   next, as the Ask route asks it (the same system blocks, today's date, the
+   question as saved, 32,000 tokens), and prints a line per call. It stops
+   before a call once the calls so far have cost the figure (the last call
+   can take it past by one answer), after an answer whose cost it cannot
+   price, after a key Anthropic refuses and after three errors in a row;
+   Ctrl-C stops it after the call in flight. The side-by-side is rewritten
+   after every call, so a stop keeps what was paid for. Expect it to take
+   about as long as the questions took in the AI tab, once per
+   configuration.
+4. **Read the side-by-side.** At the top, a table per configuration: answers,
+   declined, cut off, fell back, errors, output tokens, estimated cost and
+   mean time. Then each question with its saved answer, labelled "given on
+   today's book" or "given on an earlier book" (an answer on an earlier book
+   can differ because the book did), and each configuration's answer as the
+   AI tab would show it (a decline's notice and category, the cut-off
+   notice, "after a decline (a fallback)"). The questions to settle: does
+   `medium` answer as well as the default for less output, cost and time;
+   and, if you compared it, does `claude-opus-5-5` answer better or as well
+   for less, and does it decline anything.
+5. **Check the bill** in the Anthropic Console (usage for the day). The AI
+   tab's month line does not include the run.
+6. **Delete the file** (`Remove-Item "$HOME\eval-ai.md"`; in the Render Shell
+   `rm -r eval-ai-output`). It holds the firm's questions, answers and client
+   names. Never commit it: inside this repository the script writes only
+   under `eval-ai-output/`, which git ignores, and refuses any other path in
+   it.
+7. **Tell the next session your choice**: the model and the effort. The
+   change is then `PRICES` and `FALLBACK_MODELS` in code (a pull request) and
+   `AI_EFFORT` on Render (section 2); a switch to `claude-opus-5-5` sets
+   `AI_EFFORT` explicitly.
+
+**The transition-plan check** (`--plans`, read-only, free). S16 asks whether
+the saved transition plans recommend people the parser cannot resolve. A
+saved plan does not store the roster it was given, so the check resolves each
+plan's `RECOMMENDED LEAD` and `RECOMMENDED SECOND CHAIR` as the parser does,
+against everyone on today's People list, and prints the counts and each plan
+not resolved with its first line. Plans with a seat no roster could resolve
+(no recommendation, or a name on nobody's list) are a lower bound; a seat
+naming several people, or a lead who is not a partner today, may have
+resolved on the plan's own roster, which left the people leaving out.
+Structured output for transition plans is proposed only if these show
+recommendations the parser could not resolve, and it is yours to approve.
+
 ---
 
 ## 8. Rotating secrets
@@ -893,7 +1015,7 @@ example `"event":"ai_error"`.
 
 | Event | Level | Fields | Meaning and what to do |
 |---|---|---|---|
-| `ai_call` | info | `label`, `userId`, `model`, `servedBy`, `fellBack`, `stop`, `refusalCategory`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `costUsd`, `ms` | One Anthropic call. `label` is `ask`, `brief`, `follow-up` (Tier 2 WP10: a question asked under an earlier answer, which sends the thread's earlier questions and answers with it) or `transition-plan`. `model` is the model requested and `servedBy` the one that answered. `fellBack` true: Anthropic's server-side fallback served it (the requested model declined, or Anthropic sent the turn straight to the fallback), and `servedBy` names the fallback model. `stop` of `max_tokens`: the answer was cut off (the page says so). `stop` of `refusal`: the AI declined, and `refusalCategory` says why. `cacheWriteTokens` above 0: this call wrote the book to Anthropic's prompt cache (the first AI call on this book in five minutes). `cacheReadTokens` above 0: it read the book from the cache, which is cheaper. A `follow-up` within five minutes of the answer before it also reads that thread's earlier turns from the cache, so its `cacheReadTokens` exceed the book's alone, and it writes only what the last turn added. `costUsd` is an estimate from list prices in `utils/aiCost.cjs`, `null` for a model without a price (`ai_cost_unknown_model`); the Anthropic Console is the bill. `ms` is how long the call took |
+| `ai_call` | info | `label`, `userId`, `model`, `servedBy`, `fellBack`, `stop`, `refusalCategory`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `costUsd`, `ms` | One Anthropic call. `label` is `ask`, `brief`, `follow-up` (Tier 2 WP10: a question asked under an earlier answer, which sends the thread's earlier questions and answers with it) or `transition-plan`; `eval` is `scripts/eval-ai.cjs` (7.6), whose lines appear in the terminal that runs it, not in the web service's logs. `model` is the model requested and `servedBy` the one that answered. `fellBack` true: Anthropic's server-side fallback served it (the requested model declined, or Anthropic sent the turn straight to the fallback), and `servedBy` names the fallback model. `stop` of `max_tokens`: the answer was cut off (the page says so). `stop` of `refusal`: the AI declined, and `refusalCategory` says why. `cacheWriteTokens` above 0: this call wrote the book to Anthropic's prompt cache (the first AI call on this book in five minutes). `cacheReadTokens` above 0: it read the book from the cache, which is cheaper. A `follow-up` within five minutes of the answer before it also reads that thread's earlier turns from the cache, so its `cacheReadTokens` exceed the book's alone, and it writes only what the last turn added. `costUsd` is an estimate from list prices in `utils/aiCost.cjs`, `null` for a model without a price (`ai_cost_unknown_model`); the Anthropic Console is the bill. `ms` is how long the call took |
 | `ai_error` | error | `label`, `userId`, `model`, `status`, `type`, `message`, `ms` | A failed Anthropic call; the partner saw an error and nothing was saved. `status` 401 or 403: the key is wrong or revoked (8.2). 429: Anthropic's rate limit. 5xx, or `type` `overloaded_error`: Anthropic's side, retry later. 400: Anthropic refused the request as we built it; report it with the line. `status` `null` with a `type`: Anthropic's stream failed in the middle of an answer, and `type` says how. Both `null`: network or timeout. A missing key writes no line: `/api/health` shows `anthropic` `not configured` |
 | `ai_stream_closed` | warn | `label`, `userId`, `opened` | `label` as in `ai_call`. The page's connection closed before a streamed answer was done (the tab was closed, the network dropped, or the partner signed out). The call carries on and the answer is saved (its `ai_call` line follows). `opened` false: it closed before the stream had started. Many of them for answers partners were watching: something between Render and the browser is cutting long connections (4.6) |
 | `ai_answer_save_failed` | error | `label`, `userId`, `kind`, `code`, `message` | An answer could not be saved. The partner still got it, marked `saved: false`, but it is not under Recent answers and not in the month's cost. `code` is PostgreSQL's error code. Check the database with `/api/health` (section 10). Many in a row: the database or the `ai_answers` table has a problem; send the `code` and `message` |

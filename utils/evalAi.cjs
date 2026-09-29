@@ -558,13 +558,18 @@ function listLines({ book, prefix, rows, todaySha }) {
   ];
 }
 
+// A path as typed on a command line: bare when it is plain, else in double
+// quotes, which bash and PowerShell both read (a Windows path keeps its
+// single backslashes)
+const shellPath = (p) => (/^[\w@%+=:,./\\-]+$/.test(p) ? p : `"${p}"`);
+
 /** The command that spends what the estimate printed. */
 function confirmCommand({ ids, opus55 = [], out = null, stdout = false, figure }) {
   return [
     'node scripts/eval-ai.cjs',
     `--ids ${ids.join(',')}`,
     ...(opus55.length ? [`--opus-5-5 ${opus55.join(',')}`] : []),
-    ...(out !== null ? [`--out ${JSON.stringify(out)}`] : []),
+    ...(out !== null ? [`--out ${shellPath(out)}`] : []),
     ...(stdout ? ['--stdout'] : []),
     `--confirm ${figure}`,
   ].join(' ');
