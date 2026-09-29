@@ -345,6 +345,19 @@ before, so do not run 7.5's repair on it; once WP5's second pull request
 (which removes the page's one-level decoders) has merged, a rollback must take
 both of WP5's pull requests together.
 
+**Tier 2 WP6** (who changed what, and edit conflicts) is safe to roll back on
+either side, but an API rolled back past it changes what is recorded. The
+older API writes clients without logging them in `client_changes` and without
+setting `clients.updated_by`, so `updated_by` goes stale; it ignores the page's
+`expected_updated_at`, so two partners editing one client can again lose the
+first save; and it has no history route, so the page (which asks `/api/health`
+for `client-edit-conflict`) shows no History. The older `init-db.sql` leaves
+the new table, its rows and `clients.updated_by` in place, and nothing needs
+undoing. After fixing forward, the saves made while the older API ran have no
+history rows: "Last changed by" is read from the newest row, so for a client
+saved in that window it names the change before it, and a 409 on such a client
+names nobody or that earlier change.
+
 ### 5.1 The page (Netlify)
 
 Deploys > the last good deploy > **Publish deploy**. It publishes that earlier
@@ -412,8 +425,8 @@ it, and its log's counts include it from the first night after the deploy.
 The backup role reads a table created after the role only through
 `pg_read_all_data` or the default privileges in INSTALL.md step 2. `people`
 (the people plan's Phase 1) was the first such table, so a nightly run that
-fails with `permission denied for table people` or `... ai_answers` means
-that grant is missing: make it as step 2 says, then run the backup by hand
+fails with `permission denied for table people`, `... ai_answers` or
+`... client_changes` (who changed what, Tier 2 WP6) means that grant is missing: make it as step 2 says, then run the backup by hand
 (INSTALL.md step 7). A job that uses the database's own URL, because step 2
 was skipped, reads every table and needs nothing.
 
@@ -510,7 +523,10 @@ cascades. It matches the username exactly, refuses the last account, and
 commits only if the numbers of clients and revenue rows are unchanged. It
 prints `Deleted user <name>. Clients: <n>, of which <k> had been created by
 this account and now have no user_id. Revenue rows: <r>. Accounts left: <a>.`
-and exits 0, or says why not, changes nothing and exits 1.
+and exits 0, or says why not, changes nothing and exits 1. The account's
+history rows (`client_changes`, Tier 2 WP6) stay, with `changed_by` empty and
+the username kept, and `clients.updated_by` becomes empty on the clients it
+saved last; `check-schema` lists both keys as `SET NULL`.
 
 A deleted account's session stays valid until it expires (`SESSION_TTL`, 7
 days), because the session token is not checked against `users`. To end it now,
@@ -631,7 +647,9 @@ book.
    unchanged.` (with `(and <k> rows of revenues)` when that table exists) and
    exits 0. Anything else starts `Refused:`, changes nothing and exits 1; if a
    save was in progress it waits 10 seconds and refuses, and running it again
-   is safe.
+   is safe. The history of who changed what (`client_changes`, Tier 2 WP6) has
+   no key to `clients`, so the reset leaves it as it is, logs nothing, and the
+   deleted clients' history stays readable by their ids.
 
 5. **Import** on gbacpod.com: **Data Upload**, the same file, **Check file**
    once more (now against the empty book), then **Upload and Process CSV**.
@@ -858,7 +876,7 @@ example `"event":"ai_error"`.
 
 ```json
 { "status": "OK", "timestamp": "<ISO time>", "uptimeSeconds": 8509, "environment": "production",
-  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text"],
+  "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text", "client-edit-conflict"],
   "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5" } }
 ```
 
@@ -868,7 +886,7 @@ example `"event":"ai_error"`.
 | `timestamp` | the server's clock when it answered |
 | `uptimeSeconds` | seconds since the process started. It resets on every deploy, restart and, on a Free instance, every spin-up |
 | `environment` | `NODE_ENV`; must be `production` on Render |
-| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). The last one added is `plain-text` (Tier 2 WP5), which the page does not read: it says this API stores text as typed, and 7.5's repair runs only on an API that lists it. A name missing after a merge means Render has not deployed that merge yet |
+| `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). `plain-text` (Tier 2 WP5), which the page does not read, says this API stores text as typed, and 7.5's repair runs only on an API that lists it. The last one added is `client-edit-conflict` (Tier 2 WP6): the client form shows "Last changed by" and History only with it, and without it saves as before. A name missing after a merge means Render has not deployed that merge yet |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
 | `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`) |

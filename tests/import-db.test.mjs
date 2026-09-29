@@ -42,7 +42,7 @@ import {
   repo, serverUrl, generatedPassword, urlFor, freePort, startServer, waitFor, SHAPES, addAccount, signIn,
 } from './helpers/server.mjs';
 import { createSseParser, eventJson } from '../src/utils/sse.js';
-import { clientFormData } from '../src/utils/clientForm.js';
+import { clientFormData, clientRequestBody, revenuesToSend } from '../src/utils/clientForm.js';
 import { sanitizeFormData } from '../src/utils/validation.js';
 import { toPersonId } from '../src/utils/people.js';
 import { departureModel } from '../src/utils/departure.js';
@@ -138,11 +138,13 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       FROM client_revenues r JOIN clients c ON c.id = r.client_id
      WHERE c.name = $1 ORDER BY r.year`, [name])).rows.map((r) => [r.year, r.amount]));
 
-  // Every client and revenue row, for "the database is unchanged"
+  // Every client and revenue row, for "the database is unchanged"; and, from
+  // Tier 2 WP6, every history row, so a refused or checked file logs nothing
   const snapshot = async () => ({
     clients: (await db.query('SELECT to_jsonb(c) AS row FROM clients c ORDER BY name')).rows,
     revenues: (await db.query('SELECT to_jsonb(r) AS row FROM client_revenues r ORDER BY client_id::text, year')).rows,
     people: (await db.query('SELECT * FROM people ORDER BY id')).rows,
+    changes: (await db.query('SELECT to_jsonb(h) AS row FROM client_changes h ORDER BY id')).rows,
   });
 
   test('the tables have this run\'s id type', async () => {
@@ -417,7 +419,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
   test('Check file (dryRun) writes nothing and answers exactly what the import would', async () => {
     // The page asks /api/health before a check (no sign-in)
     const health = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text']);
+    assert.deepEqual(health.features, ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict']);
 
     const before = await snapshot();
     const countsBefore = await peopleCounts();
@@ -1102,13 +1104,16 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       const { body: { people } } = await call('GET', '/api/people');
       return { sheet: buildBookSheet(clients, people), clientCount: clients.length };
     };
-    // Every client but its updated_at; every revenue row by client, year and
-    // amount (the import deletes and re-inserts the years a file names, so a
-    // row's id and timestamps are new); every person
+    // Every client, updated_at and updated_by included (Tier 2 WP6: a client
+    // the file leaves as it is is not written; until then every client's
+    // updated_at moved); every revenue row by client, year and amount (a
+    // client written deletes and re-inserts the years a file names, so a
+    // row's id and timestamps would be new); every person; every history row
     const book = async () => ({
-      clients: (await db.query("SELECT to_jsonb(c) - 'updated_at' AS row FROM clients c ORDER BY c.id::text")).rows.map((r) => r.row),
+      clients: (await db.query('SELECT to_jsonb(c) AS row FROM clients c ORDER BY c.id::text')).rows.map((r) => r.row),
       revenues: (await db.query('SELECT client_id::text AS client_id, year, revenue_amount::text AS amount FROM client_revenues ORDER BY client_id::text, year')).rows,
       people: (await db.query('SELECT * FROM people ORDER BY id')).rows,
+      changes: (await db.query('SELECT to_jsonb(h) AS row FROM client_changes h ORDER BY id')).rows.map((r) => r.row),
     });
 
     // The clients the P13 file added have no lead: written with a blank Lead,
@@ -1123,9 +1128,14 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.deepEqual([...new Set(res.body.errors.map((e) => e.client))].sort(), [...unled].sort());
     assert.deepEqual(await snapshot(), before);
 
-    // A partner gives each a lead
+    // A partner gives each a lead: each is changed, and logged once as `import`
+    const lastId = (await db.query('SELECT COALESCE(max(id), 0) AS id FROM client_changes')).rows[0].id;
     res = await importCsv(['CLIENT,Lead', ...unled.map((name) => `${name},Paula`)].join('\n'));
     assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual([res.body.summary.updatedClients, res.body.summary.changedClients], [unled.length, unled.length]);
+    const { rows: leadRows } = await db.query('SELECT source, client_name, changes FROM client_changes WHERE id > $1 ORDER BY id', [lastId]);
+    assert.deepEqual(leadRows.map((r) => r.client_name).sort(), [...unled].sort());
+    assert.ok(leadRows.every(({ source, changes }) => source === 'import' && Object.keys(changes).join() === 'lead_id' && changes.lead_id.to.name === 'Paula'), JSON.stringify(leadRows));
 
     // A literal entity a partner typed in a note since WP5, which is no
     // escape: the sheet writes it as it is and the import stores it as it is
@@ -1141,18 +1151,21 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     before = await snapshot();
     res = await importCsv(sheet.csv, { dryRun: true });
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.deepEqual([res.body.summary.updatedClients, res.body.summary.newClients], [clientCount, 0]);
+    assert.deepEqual([res.body.summary.updatedClients, res.body.summary.changedClients, res.body.summary.newClients], [clientCount, 0, 0]);
     assert.deepEqual(await snapshot(), before);
 
+    // A client form left open on one of them since before the upload
+    const open = (await call('GET', '/api/data/clients')).body.clients.find((c) => c.lead);
     res = await importCsv(sheet.csv);
     assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.deepEqual([res.body.summary.updatedClients, res.body.summary.newClients], [clientCount, 0]);
+    assert.deepEqual([res.body.summary.updatedClients, res.body.summary.changedClients, res.body.summary.newClients], [clientCount, 0, 0]);
     const after = await book();
     assert.deepEqual(after.revenues, stored.revenues);
     assert.deepEqual(after.people, stored.people);
-    // Byte for byte: since WP5 nothing is stored escaped. Until WP5 the client
+    assert.deepEqual(after.changes, stored.changes, 'nothing logged: the file changes nothing');
+    // Byte for byte: since WP5 nothing is stored escaped (until WP5 the client
     // form's save in the test above stored its notes two levels deep, and the
-    // round trip wrote them back as typed.
+    // round trip wrote them back as typed); since WP6 updated_at included
     const changed = stored.clients.filter((row, i) => JSON.stringify(row) !== JSON.stringify(after.clients[i]));
     assert.deepEqual(changed.map((row) => row.notes), []);
     assert.deepEqual(after.clients, stored.clients);
@@ -1163,6 +1176,16 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     res = await importCsv(again.sheet.csv);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepEqual(await book(), after);
+
+    // The form left open still saves (its updated_at never moved), and that save is logged
+    const save = await call('PUT', `/api/data/clients/${open.id}`, {
+      ...clientRequestBody({ ...clientFormData(open), lead_id: open.lead_id, stickiness: open.stickiness === 5 ? 4 : 5, revenues: revenuesToSend(clientFormData(open).revenues).revenues }),
+      expected_updated_at: open.updated_at_exact,
+    });
+    assert.equal(save.status, 200, JSON.stringify(save.body));
+    const { rows: [saved] } = await db.query('SELECT source, changes FROM client_changes WHERE client_id = $1 ORDER BY id DESC LIMIT 1', [String(open.id)]);
+    assert.equal(saved.source, 'form');
+    assert.deepEqual(saved.changes.stickiness, { from: open.stickiness, to: open.stickiness === 5 ? 4 : 5 });
   });
 
   // Tier 1 WP3 (docs/plans/tier-1.md, section 8): Ask the book and the brief,

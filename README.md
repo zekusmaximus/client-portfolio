@@ -12,7 +12,7 @@ for; `REVIEW-2026-09.md` says how well it does it.
 - **Page:** React 18, Vite 4, Zustand, Tailwind, Recharts (`src/`).
 - **API:** Express 5 (`server.cjs`), PostgreSQL through `pg`, a JWT in an
   httpOnly cookie, the Anthropic SDK behind one service (`services/anthropic.cjs`).
-- **Database:** `users`, `clients`, `client_revenues`, `people` and `ai_answers`
+- **Database:** `users`, `clients`, `client_revenues`, `people`, `ai_answers` and `client_changes`
   (`init-db.sql`, applied by the API at every start).
 
 `CLAUDE.md` is the developer reference: commands, endpoints, the scoring

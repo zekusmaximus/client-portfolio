@@ -19,6 +19,7 @@ import pg from 'pg';
 import validator from 'validator';
 import schemaCheck from '../utils/schemaCheck.cjs';
 import aiAnswers from '../utils/aiAnswers.cjs';
+import clientChanges from '../utils/clientChanges.cjs';
 import escaping from '../utils/escaping.cjs';
 import { PRODUCTION_TABLES_SQL } from './helpers/server.mjs';
 
@@ -110,13 +111,16 @@ async function counts(db) {
   return row;
 }
 
-// Foreign keys from clients to users (there is one: user_id). The keys to
-// people are covered by the people suite below.
+// Foreign keys from clients.user_id to users (there is one). The keys to
+// people are covered by the people suite below; clients.updated_by's key to
+// users (Tier 2 WP6) by the client_changes suite.
 async function clientKeys(db) {
   const { rows } = await db.query(`
-    SELECT oid::bigint::text AS oid, conname, pg_get_constraintdef(oid) AS definition
-      FROM pg_constraint
-     WHERE contype = 'f' AND conrelid = 'clients'::regclass AND confrelid = 'users'::regclass`);
+    SELECT con.oid::bigint::text AS oid, con.conname, pg_get_constraintdef(con.oid) AS definition
+      FROM pg_constraint con
+      JOIN pg_attribute att ON att.attrelid = con.conrelid AND con.conkey = ARRAY[att.attnum]
+     WHERE con.contype = 'f' AND con.conrelid = 'clients'::regclass AND con.confrelid = 'users'::regclass
+       AND att.attname = 'user_id'`);
   return rows;
 }
 
@@ -536,6 +540,10 @@ async function bookSnapshot(db) {
   };
 }
 
+// A bookSnapshot without clients.updated_by, which Tier 2 WP6 added: to
+// compare a database from before it with the same database migrated
+const withoutUpdatedBy = (book) => ({ ...book, clients: book.clients.map(({ row: { updated_by: _b, ...row } }) => ({ row })) });
+
 // seed()'s two accounts, five clients and ten revenue rows, with people
 // assigned, an associate and an inactive former partner: nine people.
 async function seedBook(db) {
@@ -795,7 +803,8 @@ describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
       assert.equal((await db.query("SELECT to_regclass('ai_answers') AS t")).rows[0].t, null);
 
       await applyInit(db);
-      assert.deepEqual(await bookSnapshot(db), before);
+      // Every client gains updated_by (NULL) from WP6's section of the file
+      assert.deepEqual(withoutUpdatedBy(await bookSnapshot(db)), before);
       assert.deepEqual(await answersRows(db), []);
       assert.equal((await answersCatalog(db)).columns.length, 25);
     });
@@ -872,6 +881,221 @@ describe('ai_answers on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SE
       assert.equal(result.code, 0, result.stdout + result.stderr);
       assert.match(result.stdout, /^Removed 5 clients and 10 revenue rows\. Accounts: 2 and people: 9, unchanged\.$/m);
       assert.deepEqual(await answersRows(db), before);
+    });
+  });
+});
+
+// --- client_changes (docs/plans/tier-2.md, S9 and S10, WP6) ---------------
+
+// init-db.sql as it was before WP6: everything above the client_changes
+// section. Applying it to a migrated database is what a Render rollback to
+// pre-WP6 code does at start.
+const CHANGES_MARKER = '-- Who changed a client, and what';
+const preChangesSql = initSql.slice(0, initSql.indexOf(CHANGES_MARKER));
+
+test('init-db.sql still contains the client_changes section marker the rollback tests cut at', () => {
+  assert.ok(initSql.indexOf(CHANGES_MARKER) > initSql.indexOf(ANSWERS_MARKER));
+  assert.doesNotMatch(preChangesSql, /client_changes|updated_by/);
+  const section = initSql.slice(initSql.indexOf(CHANGES_MARKER));
+  assert.match(section, /^CREATE TABLE IF NOT EXISTS client_changes \(/m);
+  assert.match(section, /^ALTER TABLE clients ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users\(id\) ON DELETE SET NULL;$/m);
+  // No backfill: nothing in the section writes a row
+  assert.doesNotMatch(section, /^\s*(INSERT|UPDATE|DELETE)\b/im);
+});
+
+// client_changes' columns, constraints (with their oids) and indexes, and
+// clients.updated_by with its key
+async function changesCatalog(db) {
+  const rows = async (sql) => (await db.query(sql)).rows;
+  return {
+    columns: await rows(`
+      SELECT attname AS name, format_type(atttypid, atttypmod) AS type, attnotnull AS not_null,
+             pg_get_expr(d.adbin, d.adrelid) AS default_value
+        FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+       WHERE a.attrelid = 'client_changes'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+       ORDER BY a.attnum`),
+    // Not the NOT NULLs: PostgreSQL 18 lists each as a constraint (contype 'n'), 16 does not
+    constraints: await rows(`
+      SELECT oid::bigint::text AS oid, conname, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint WHERE conrelid = 'client_changes'::regclass AND contype <> 'n' ORDER BY conname`),
+    indexes: await rows(`SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'client_changes' ORDER BY indexname`),
+    updatedBy: await rows(`
+      SELECT format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS not_null,
+             (SELECT pg_get_constraintdef(con.oid) FROM pg_constraint con
+               WHERE con.conrelid = 'clients'::regclass AND con.contype = 'f' AND con.conkey = ARRAY[a.attnum]) AS key
+        FROM pg_attribute a WHERE a.attrelid = 'clients'::regclass AND a.attname = 'updated_by' AND NOT a.attisdropped`),
+  };
+}
+
+const changesRows = async (db) =>
+  (await db.query('SELECT to_jsonb(h) AS row FROM client_changes h ORDER BY id')).rows;
+
+// Three history rows as the routes write them (utils/clientChanges.cjs): A1
+// changed by partner-a on the form, B1 by partner-b's import, and A2 deleted
+// by partner-a; and each changed client's updated_by
+async function logChanges(db) {
+  const userId = async (username) => (await db.query('SELECT id FROM users WHERE username = $1', [username])).rows[0].id;
+  const client = async (name) => (await db.query('SELECT id, name FROM clients WHERE name = $1', [name])).rows[0];
+  const a = { userId: await userId('partner-a'), username: 'partner-a' };
+  const b = { userId: await userId('partner-b'), username: 'partner-b' };
+  const a1 = await client('A1');
+  const b1 = await client('B1');
+  const a2 = await client('A2');
+  const insert = (entries, user, source) => db.query(clientChanges.INSERT_CHANGES_SQL, clientChanges.insertChangesParams(entries, user, source));
+  await insert([{ clientId: a1.id, clientName: a1.name, changes: { stickiness: { from: 3, to: 4 } } }], a, 'form');
+  await insert([{ clientId: b1.id, clientName: b1.name, changes: { revenue: { 2025: { from: 1000, to: 2000 } } } }], b, 'import');
+  await insert([{ clientId: a2.id, clientName: a2.name, changes: { name: { from: 'A2', to: null } } }], a, 'delete');
+  await db.query('UPDATE clients SET updated_by = $1 WHERE id = $2', [a.userId, a1.id]);
+  await db.query('UPDATE clients SET updated_by = $1 WHERE id = $2', [b.userId, b1.id]);
+}
+
+describe('client_changes on PostgreSQL', { skip: serverUrl ? false : 'SCHEMA_TEST_SERVER_URL is not set' }, () => {
+  test('a new database has client_changes with its columns, source check, key and index, and clients.updated_by with its key; a second start changes nothing', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      const catalog = await changesCatalog(db);
+      assert.deepEqual(catalog.columns.map((c) => [c.name, c.type, c.not_null]), [
+        ['id', 'integer', true],
+        ['client_id', 'text', true],
+        ['client_name', 'character varying(255)', false],
+        ['changed_by', 'integer', false],
+        ['changed_by_username', 'character varying(255)', false],
+        ['source', 'character varying(20)', true],
+        ['changes', 'jsonb', true],
+        ['created_at', 'timestamp with time zone', true],
+      ]);
+      assert.deepEqual(catalog.constraints.map((c) => c.conname), ['client_changes_changed_by_fkey', 'client_changes_pkey', 'client_changes_source_check']);
+      assert.equal(catalog.constraints[0].definition, 'FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE SET NULL');
+      for (const source of clientChanges.SOURCES) assert.ok(catalog.constraints[2].definition.includes(`'${source}'`), source);
+      assert.deepEqual(catalog.indexes.map((i) => i.indexname), ['client_changes_pkey', 'idx_client_changes_client']);
+      assert.match(catalog.indexes[1].indexdef, /USING btree \(client_id, created_at DESC\)$/);
+      assert.deepEqual(catalog.updatedBy, [{ type: 'integer', not_null: false, key: 'FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL' }]);
+      // No key to clients (constraint 3): reset-book would refuse, or a cascade empty the history
+      const { rows: toClients } = await db.query(CLIENT_FOREIGN_KEYS_SQL);
+      assert.deepEqual(toClients.map((k) => k.table_name), ['client_revenues']);
+
+      // The checks, and the key to users only while the account exists
+      await db.query("INSERT INTO users (username, password_hash) VALUES ('partner-a', 'x')");
+      await db.query('BEGIN');
+      assert.equal(await sqlState(db, "INSERT INTO client_changes (client_id, source, changes) VALUES ('1', 'other', '{}')"), '23514');
+      assert.equal(await sqlState(db, "INSERT INTO client_changes (client_id, source, changes) VALUES (NULL, 'form', '{}')"), '23502');
+      assert.equal(await sqlState(db, "INSERT INTO client_changes (client_id, source, changes) VALUES ('1', 'form', NULL)"), '23502');
+      assert.equal(await sqlState(db, "INSERT INTO client_changes (client_id, source, changes, changed_by) VALUES ('1', 'form', '{}', 999999)"), '23503');
+      const params = clientChanges.insertChangesParams([{ clientId: 1, clientName: 'A', changes: { stickiness: { from: null, to: 3 } } }], { userId: 999999, username: 'ghost' }, 'form');
+      assert.equal(await sqlState(db, clientChanges.INSERT_CHANGES_SQL, params), null);
+      const { rows: [saved] } = await db.query('SELECT * FROM client_changes');
+      assert.deepEqual([saved.client_id, saved.client_name, saved.changed_by, saved.changed_by_username, saved.source, saved.changes],
+        ['1', 'A', null, 'ghost', 'form', { stickiness: { from: null, to: 3 } }]);
+      assert.ok(saved.created_at instanceof Date);
+      await db.query('ROLLBACK');
+
+      await applyInit(db);
+      assert.deepEqual(await changesCatalog(db), catalog, 'the second start dropped or changed something');
+    });
+  });
+
+  test('a pre-WP6 database migrates with every client, revenue row, person and answer intact: an empty client_changes, and updated_by NULL on every client (no backfill)', async () => {
+    await withDatabase(async (db) => {
+      await db.query(preChangesSql);
+      await seedBook(db);
+      await saveAnswers(db);
+      const before = { book: await bookSnapshot(db), answers: await answersRows(db) };
+      assert.equal((await db.query("SELECT to_regclass('client_changes') AS t")).rows[0].t, null);
+
+      await applyInit(db);
+      const after = await bookSnapshot(db);
+      assert.ok(after.clients.every(({ row }) => row.updated_by === null));
+      assert.deepEqual(withoutUpdatedBy(after), before.book);
+      assert.deepEqual(await answersRows(db), before.answers);
+      assert.deepEqual(await changesRows(db), []);
+    });
+  });
+
+  test('a rollback start (the pre-WP6 file on a migrated database) succeeds and leaves the table, its rows and updated_by', async () => {
+    await withDatabase(async (db) => {
+      await applyInit(db);
+      await seedBook(db);
+      await logChanges(db);
+      const state = async () => ({ catalog: await changesCatalog(db), changes: await changesRows(db), book: await bookSnapshot(db) });
+      const before = await state();
+      assert.equal(before.changes.length, 3);
+
+      await db.query(preChangesSql);
+      assert.deepEqual(await state(), before);
+      // And forward again
+      await applyInit(db);
+      assert.deepEqual(await state(), before);
+    });
+  });
+
+  test('check-schema still ends OK: clients.updated_by and client_changes.changed_by are SET NULL', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await logChanges(db);
+      const result = await runScript('scripts/check-schema.cjs', url);
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^ok {2}client_changes\.client_changes_changed_by_fkey: FOREIGN KEY \(changed_by\) REFERENCES users\(id\) ON DELETE SET NULL$/m);
+      assert.match(result.stdout, /^ok {2}clients\.clients_updated_by_fkey: FOREIGN KEY \(updated_by\) REFERENCES users\(id\) ON DELETE SET NULL$/m);
+      assert.match(result.stdout, /^OK: /m);
+    });
+  });
+
+  test('delete-user keeps an account\'s changes, with changed_by null and the username kept, and sets clients.updated_by null; nothing else changes and nothing is logged', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await logChanges(db);
+      const before = { changes: await changesRows(db), book: await bookSnapshot(db) };
+      const partnerA = (await db.query("SELECT id FROM users WHERE username = 'partner-a'")).rows[0].id;
+
+      const result = await runScript('scripts/delete-user.cjs', url, 'partner-a');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+
+      const after = await changesRows(db);
+      assert.deepEqual(after.map(({ row }) => [row.source, row.changed_by === null, row.changed_by_username]), [
+        ['form', true, 'partner-a'],
+        ['import', false, 'partner-b'],
+        ['delete', true, 'partner-a'],
+      ]);
+      const strip = ({ row }) => ({ ...row, changed_by: null });
+      assert.deepEqual(after.map(strip), before.changes.map(strip));
+      const updatedBy = async (name) => (await db.query('SELECT updated_by FROM clients WHERE name = $1', [name])).rows[0].updated_by;
+      assert.equal(await updatedBy('A1'), null);
+      assert.notEqual(await updatedBy('B1'), null);
+      // Every client as it was, updated_at included, but the two keys to the
+      // account: A1's updated_by, and user_id on the clients it created
+      const book = await bookSnapshot(db);
+      const unset = ({ row }) => ({ row: {
+        ...row,
+        updated_by: row.updated_by === partnerA ? null : row.updated_by,
+        user_id: row.user_id === partnerA ? null : row.user_id,
+      } });
+      assert.deepEqual(book.clients, before.book.clients.map(unset));
+      assert.deepEqual(await counts(db), { users: 1, clients: 5, revenues: 10 });
+    });
+  });
+
+  test('reset-book --confirm with history saved succeeds, leaves client_changes untouched and logs nothing; the preview does not name it', async () => {
+    await withDatabase(async (db, url) => {
+      await applyInit(db);
+      await seedBook(db);
+      await logChanges(db);
+      const before = await changesRows(db);
+
+      let result = await runScript('scripts/reset-book.cjs', url);
+      assert.equal(result.code, 1, result.stdout + result.stderr);
+      assert.doesNotMatch(result.stdout, /client_changes/, 'not a table that references clients');
+
+      result = await runScript('scripts/reset-book.cjs', url, '--confirm');
+      assert.equal(result.code, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /^Removed 5 clients and 10 revenue rows\. Accounts: 2 and people: 9, unchanged\.$/m);
+      assert.deepEqual(await changesRows(db), before);
+      // Ids are never reused: the history of a client deleted by the reset
+      // stays its own. init-db.sql's uuids are random; production's integer
+      // ids come from a sequence the reset's DELETE does not restart
+      const { rows: [{ last_value: lastBefore }] } = await db.query("SELECT last_value FROM pg_sequences WHERE sequencename = 'client_changes_id_seq'");
+      assert.equal(Number(lastBefore), 3);
     });
   });
 });

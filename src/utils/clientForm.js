@@ -15,7 +15,9 @@
 //
 // The save's side too: the body the API receives (clientRequestBody, the
 // store's formatClientForAPI), the revenue rows it sends (revenuesToSend) and
-// a 400's details as the form's errors (formErrors; docs/plans/tier-2.md, WP4).
+// a 400's details as the form's errors (formErrors; docs/plans/tier-2.md, WP4);
+// and after a stale save's 409 (WP6, S10), the form as it should then be
+// (mergeAfterConflict).
 
 /** The form's state for `client`; a client with no revenue gets one empty row for `now`'s year. */
 export function clientFormData(client, now = new Date()) {
@@ -66,10 +68,15 @@ export function revenuesToSend(rows = []) {
  * formatClientForAPI). People go as ids (docs/plans/people-and-second-chair.md,
  * P3, P4); the server writes the legacy primary_lobbyist, lobbyist_team and
  * client_originator text from them. The retired retention fields and the
- * phantom strategic_fit_score are not sent.
+ * phantom strategic_fit_score are not sent. `expected_updated_at` (WP6, S10)
+ * goes only when the form gives one: the client's updated_at_exact as the
+ * form loaded it, which only an API with client-edit-conflict sends, so the
+ * API refuses a save over a newer one (409); an older API ignores it.
  */
 export function clientRequestBody(clientData) {
+  const expected = clientData.expected_updated_at === undefined ? {} : { expected_updated_at: clientData.expected_updated_at };
   return {
+    ...expected,
     name: clientData.name || '',
     practice_area: clientData.practiceArea || [],
     conflict_risk: clientData.conflict_risk || 'Medium',
@@ -126,4 +133,52 @@ export function formErrors(details = [], formRows = []) {
   if (Object.keys(errors).length > 0) general.push(SEE_ABOVE);
   if (general.length > 0) errors.general = general.join(' ');
   return errors;
+}
+
+// The form's fields, in the order it shows them (ClientEnhancementForm.jsx)
+export const FORM_FIELDS = [
+  'name', 'practiceArea', 'revenues', 'conflict_risk', 'lead_id', 'second_chair_id', 'originator_id',
+  'originator_is_firm', 'interaction_frequency', 'high_maintenance', 'stickiness', 'notes'
+];
+
+// A field's value as a save would send it, for comparing two forms: practice
+// areas as a set, revenue as the rows a save sends (revenuesToSend), by year
+function comparable(field, value) {
+  if (field === 'practiceArea') return JSON.stringify([...(value || [])].sort());
+  if (field === 'revenues') {
+    return JSON.stringify(revenuesToSend(value || []).revenues.slice().sort((a, b) => a.year - b.year));
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/**
+ * The form after a stale save's 409 (docs/plans/tier-2.md, S10, WP6): `base`
+ * is the form as it was filled from the client the partner opened
+ * (clientFormData), `mine` the form as the partner left it, `theirs` the form
+ * filled from the client as it is now. A field the partner did not touch takes
+ * the saved value; one the partner edited keeps the edit, so nothing typed is
+ * lost; one both changed, differently, keeps the partner's and is named as a
+ * clash; one both changed to the same value is simply the saved value. Saving the result writes the partner's edits over the newer client
+ * without undoing the other save's changes.
+ *
+ * Returns { formData, theirs, kept, clashes }: `theirs` the fields the other
+ * save changed, `kept` the partner's edits kept, `clashes` both; each a list of
+ * FORM_FIELDS keys.
+ */
+export function mergeAfterConflict(base, mine, theirs) {
+  const formData = { ...mine };
+  const changedByThem = [];
+  const kept = [];
+  const clashes = [];
+  for (const field of FORM_FIELDS) {
+    const b = comparable(field, base[field]);
+    const m = comparable(field, mine[field]);
+    const t = comparable(field, theirs[field]);
+    if (t !== b) changedByThem.push(field);
+    if (m === b) formData[field] = theirs[field];
+    else if (t === b) kept.push(field);
+    else if (t !== m) clashes.push(field);
+    // else both made the same change: nothing of the partner's to keep
+  }
+  return { formData, theirs: changedByThem, kept, clashes };
 }

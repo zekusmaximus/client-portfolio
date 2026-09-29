@@ -134,8 +134,13 @@ app.get('/api/health', async (req, res) => {
     // answers JSON once the whole answer is written. plain-text is not for
     // the page: it tells Jeff, before he repairs the stored text
     // (scripts/unescape-book.cjs, deploy/README.md 7.5), that this API stores
-    // text as typed; an API without it escapes every save again.
-    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text'],
+    // text as typed; an API without it escapes every save again. And before
+    // the client form shows a client's history (client-edit-conflict): an
+    // API without it logs no changes, has no GET
+    // /api/data/clients/:id/changes and never answers a stale save with 409
+    // (the page sends expected_updated_at only for a client whose response
+    // carried updated_at_exact, which only this API sends).
+    features: ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict'],
     services: {}
   };
 

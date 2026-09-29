@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import jwt from 'jsonwebtoken';
 import aiAnswers from '../utils/aiAnswers.cjs';
+import clientChanges from '../utils/clientChanges.cjs';
 import { startFakeAnthropic } from './helpers/fakeAnthropic.mjs';
 import {
   repo, serverUrl, generatedPassword, urlFor, freePort, startServer, SHAPES, addAccount, cookieOf, signIn,
@@ -54,6 +55,7 @@ const CONTRACTS = {
   'PUT /api/data/clients/:id': { signIn: true, page: 'src/portfolioStore.js (updateClient), src/ClientEnhancementForm.jsx' },
   'PUT /api/data/clients/:id/second-chair': { signIn: true, page: 'src/portfolioStore.js (assignSecondChair), src/components/AssociateSplit.jsx' },
   'DELETE /api/data/clients/:id': { signIn: true, page: 'src/portfolioStore.js (deleteClient)' },
+  'GET /api/data/clients/:id/changes': { signIn: true, page: 'src/ClientEnhancementForm.jsx (fetchHistory), src/utils/clientHistory.js' },
   'GET /api/people': { signIn: true, page: 'src/portfolioStore.js (fetchPeople), src/PeopleDialog.jsx' },
   'POST /api/people': { signIn: true, page: 'src/portfolioStore.js (addPerson), src/PeopleDialog.jsx' },
   'PUT /api/people/:id': { signIn: true, page: 'src/portfolioStore.js (updatePerson), src/PeopleDialog.jsx' },
@@ -64,7 +66,7 @@ const CONTRACTS = {
   'GET /api/ai/answers/summary': { signIn: true, page: 'src/portfolioStore.js (fetchAiAnswers), src/utils/recentAnswers.js' },
   'GET /api/ai/answers/:id': { signIn: true, page: 'src/portfolioStore.js (toggleAiAnswer), src/AIAdvisor.jsx' },
   'POST /api/scenarios/transition-plan': { signIn: true, page: 'src/components/succession/ClientReviewInterface.jsx' },
-  'GET /api/health': { signIn: false, page: 'src/DataUploadManager.jsx, src/components/AIBookPanel.jsx, src/AIAdvisor.jsx, src/components/AssociateSplit.jsx, src/components/succession/ClientReviewInterface.jsx' },
+  'GET /api/health': { signIn: false, page: 'src/DataUploadManager.jsx, src/components/AIBookPanel.jsx, src/AIAdvisor.jsx, src/components/AssociateSplit.jsx, src/components/succession/ClientReviewInterface.jsx, src/ClientEnhancementForm.jsx' },
 };
 
 // Routes deleted in earlier packages: none may be registered again, and each
@@ -136,8 +138,8 @@ test('inventory: every registered route has a contract with tests, every contrac
   assert.deepEqual(blocks.filter((r) => !contracts.includes(r)), [], 'a route() block without a contract');
   assert.equal(new Set(blocks).size, blocks.length, 'a route() block written twice');
   // The plan's count (docs/plans/tier-2.md, section 6): 21 live routes, once
-  // WP2 deleted S3's three
-  assert.equal(routes.length, 21);
+  // WP2 deleted S3's three; 22 with WP6's GET /api/data/clients/:id/changes
+  assert.equal(routes.length, 22);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -152,7 +154,7 @@ const TOO_MANY = { success: false, error: 'Too many requests. Try again later.' 
 const MISSING_TOKEN = { error: 'Missing token' };
 const INVALID_TOKEN = { error: 'Invalid token' };
 const NOT_CONFIGURED = { success: false, error: 'AI is not configured on the server (missing API key).' };
-const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text'];
+const FEATURES = ['check-file', 'transition-plan-roster', 'second-chair-assign', 'ai-book', 'ask-the-book', 'ai-answers', 'ai-stream', 'plain-text', 'client-edit-conflict'];
 // The seed people init-db.sql adds to a new database (docs/plans/people-and-second-chair.md, P1)
 const SEED = { Brendan: 'partner', Jeff: 'partner', Joe: 'partner', Kevin: 'partner', Mike: 'partner', Paula: 'partner', Jay: 'emeritus' };
 const PERSON_KEYS = ['active', 'id', 'lead_count', 'name', 'originator_count', 'role', 'second_chair_count'];
@@ -171,12 +173,17 @@ const NESTED_PERSON_KEYS = ['active', 'id', 'name', 'role'];
 //   primary_lobbyist, lobbyist_team, client_originator: src/utils/successionUtils.js
 //   (the store's succession metrics, src/portfolioStore.js)
 //   strategicValue: src/ClientListView.jsx, src/DashboardView.jsx
+//   updated_at_exact: src/ClientEnhancementForm.jsx, sent back as
+//   expected_updated_at (Tier 2 WP6, S10)
 const CLIENT_KEYS_THE_PAGE_READS = [
   'id', 'name', 'notes', 'practiceArea', 'practice_area', 'conflict_risk', 'interaction_frequency', 'stickiness',
   'high_maintenance', 'lead_id', 'second_chair_id', 'originator_id', 'originator_is_firm', 'revenues', 'lead',
   'secondChair', 'originator', 'effort', 'stickinessScore', 'primary_lobbyist', 'lobbyist_team', 'client_originator',
-  'strategicValue',
+  'strategicValue', 'updated_at_exact',
 ];
+// A client_changes row as GET /api/data/clients/:id/changes answers it (WP6)
+const CHANGE_KEYS = ['changed_by_username', 'changes', 'client_id', 'client_name', 'created_at', 'id', 'source'];
+const EXACT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/;
 
 // The field rules POST and PUT /api/data/clients apply (utils/clientRules.cjs,
 // docs/plans/tier-2.md, WP4): [what, the body's fields over a valid form body,
@@ -386,6 +393,24 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
   const revenueRows = async (id) => (await db.query(
     'SELECT year, revenue_amount::float AS amount FROM client_revenues WHERE client_id::text = $1 ORDER BY year', [String(id)])).rows;
   const clientCount = async () => (await db.query('SELECT count(*)::int AS n FROM clients')).rows[0].n;
+  // Who changed what (WP6): a client's history rows, oldest first, and its
+  // updated_at as the API sends it (updated_at_exact)
+  const changeRows = async (id) => (await db.query(
+    'SELECT * FROM client_changes WHERE client_id = $1 ORDER BY id', [String(id)])).rows;
+  const changeCount = async () => (await db.query('SELECT count(*)::int AS n FROM client_changes')).rows[0].n;
+  const exactOf = async (id) => (await db.query(
+    `SELECT ${clientChanges.updatedAtExactSql('updated_at')} AS t FROM clients WHERE id::text = $1`, [String(id)])).rows[0].t;
+  const accountId = async (username = account.username) => (await db.query('SELECT id FROM users WHERE username = $1', [username])).rows[0].id;
+  // The client as GET /api/data/clients lists it, which is what the page loads
+  const listedClient = async (id, base = api.base, as = cookie) => (await request(base, 'GET', '/api/data/clients', { as })).body
+    .clients.find((c) => String(c.id) === String(id));
+  // A form body equal to what addClient stored: a save of it changes nothing
+  const storedBody = (created, lead, overrides = {}) => formBody({
+    name: created.name, practice_area: ['Healthcare'], conflict_risk: 'Low', notes: '', lead_id: lead.id,
+    interaction_frequency: 'Monthly', stickiness: 3, revenues: [{ year: 2026, revenue_amount: 100000 }], ...overrides,
+  });
+  // The 409 a stale save answers, for its latest history row (or none)
+  const conflictOf = (latest) => JSON.parse(JSON.stringify(clientChanges.conflictBody(latest)));
   // The body the client form sends (formatClientForAPI in src/portfolioStore.js)
   const formBody = (overrides = {}) => ({
     name: uniqueName('Form Client'),
@@ -652,14 +677,15 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(keysOf(res.body), ['clients', 'success', 'summary', 'validation']);
       assert.equal(res.body.success, true);
       assert.equal(res.body.clients.length, 1);
+      // changedClients from Tier 2 WP6: the stored clients the file changed
       assert.deepEqual(keysOf(res.body.summary), [
-        'newClients', 'revenueTotals', 'revenueYears', 'sheetColumns', 'totalClients', 'totalRevenue', 'updatedClients',
+        'changedClients', 'newClients', 'revenueTotals', 'revenueYears', 'sheetColumns', 'totalClients', 'totalRevenue', 'updatedClients',
       ]);
       assert.deepEqual(res.body.summary.revenueYears, [2025, 2026]);
       assert.deepEqual(res.body.summary.revenueTotals, { 2025: 1000, 2026: 2500 });
       assert.deepEqual(res.body.summary.sheetColumns, ['Lead']);
       assert.equal(typeof res.body.summary.totalRevenue, 'number');
-      assert.deepEqual([res.body.summary.newClients, res.body.summary.updatedClients, res.body.summary.totalClients], [1, 0, 1]);
+      assert.deepEqual([res.body.summary.newClients, res.body.summary.updatedClients, res.body.summary.changedClients, res.body.summary.totalClients], [1, 0, 0, 1]);
       assert.deepEqual(keysOf(res.body.validation), ['clientCount', 'isValid', 'issues', 'validClients', 'warnings']);
       assert.deepEqual([res.body.validation.issues, res.body.validation.warnings], [[], []]);
       const { rows } = await db.query('SELECT id FROM clients WHERE name = $1', [name]);
@@ -675,6 +701,67 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(keysOf(res.body), ['dryRun', 'success', 'summary', 'validation']);
       assert.deepEqual([res.body.success, res.body.dryRun, res.body.summary.totalClients, res.body.summary.newClients], [true, true, 1, 1]);
       assert.equal(await clientCount(), before);
+    });
+
+    // Tier 2 WP6 (S9): until then every matched client was rewritten, its
+    // updated_at moved, by any import; now only the clients the file changes
+    // are written, and each is logged as `import`
+    test('an import logs only the clients it changes or creates, as `import`, and does not write a client the file leaves as it is (updated_at unchanged)', async () => {
+      const kevin = await seed('Kevin');
+      const joe = await seed('Joe');
+      const same = await addClient({ lead: kevin, revenues: { 2025: 1000, 2026: 2000 } });
+      const changed = await addClient({ lead: kevin, revenues: { 2025: 1000, 2026: 2000 } });
+      // updated_at as stored before, and what makes a no-op: '' notes and a
+      // blank cadence cell against NULL, an unordered practice area
+      await db.query("UPDATE clients SET notes = NULL, practice_area = ARRAY['Healthcare', 'Energy'] WHERE id::text = ANY($1)", [[String(same.id), String(changed.id)]]);
+      const before = { same: await storedClient(same.id), changed: await storedClient(changed.id) };
+      const created = uniqueName('Imported Client');
+      const logged = await changeCount();
+      const res = await call('POST', '/api/data/process-csv', { csvData: [
+        { CLIENT: same.name, '2025 Contracts': '$1,000.00', '2026 Contracts': '2000', Lead: 'Kevin', 'Practice Area': 'Energy; Healthcare', Notes: '' },
+        { CLIENT: changed.name, '2025 Contracts': '$1,000', '2026 Contracts': '$2,500', Lead: 'Joe', 'Practice Area': 'Energy; Healthcare', Notes: 'New note' },
+        { CLIENT: created, '2025 Contracts': '', '2026 Contracts': '$700', Lead: 'Joe', 'Practice Area': '', Notes: '' },
+      ] });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual([res.body.summary.updatedClients, res.body.summary.changedClients, res.body.summary.newClients], [2, 1, 1]);
+      assert.deepEqual(res.body.summary.revenueTotals, { 2025: 2000, 2026: 5200 }, 'every client the file names, written or not');
+      assert.deepEqual(await storedClient(same.id), before.same, 'not written: updated_at and updated_by as they were');
+      assert.deepEqual(await changeRows(same.id), []);
+      assert.equal(await changeCount(), logged + 2);
+
+      const [row] = await changeRows(changed.id);
+      assert.deepEqual([row.source, row.client_name, row.changed_by, row.changed_by_username], ['import', changed.name, await accountId(), account.username]);
+      assert.deepEqual(row.changes, {
+        lead_id: { from: { id: kevin.id, name: 'Kevin' }, to: { id: joe.id, name: 'Joe' } },
+        notes: { from: null, to: 'New note' },
+        revenue: { 2026: { from: 2000, to: 2500 } },
+      });
+      const after = await storedClient(changed.id);
+      assert.notDeepEqual(after.updated_at, before.changed.updated_at);
+      assert.equal(after.updated_by, await accountId());
+
+      const { rows: [newClient] } = await db.query('SELECT * FROM clients WHERE name = $1', [created]);
+      assert.equal(newClient.updated_by, await accountId());
+      const [creation] = await changeRows(newClient.id);
+      assert.equal(creation.source, 'import');
+      assert.deepEqual(creation.changes.name, { from: null, to: created });
+      assert.deepEqual(creation.changes.lead_id, { from: null, to: { id: joe.id, name: 'Joe' } });
+      assert.deepEqual(creation.changes.revenue, { 2026: { from: null, to: 700 } });
+      assert.equal('notes' in creation.changes, false, 'a blank note is none');
+    });
+
+    test('Check file logs nothing: the rows it would log are rolled back with its writes', async () => {
+      const kevin = await seed('Kevin');
+      const existing = await addClient({ lead: kevin });
+      const before = { client: await storedClient(existing.id), changes: await changeCount() };
+      const res = await call('POST', '/api/data/process-csv', {
+        csvData: [{ CLIENT: existing.name, '2026 Contracts': '$5', Stickiness: '5' }, { CLIENT: uniqueName('Checked New'), '2026 Contracts': '$9' }],
+        dryRun: true,
+      });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual([res.body.summary.updatedClients, res.body.summary.changedClients, res.body.summary.newClients], [1, 1, 1]);
+      assert.equal(await changeCount(), before.changes);
+      assert.deepEqual(await storedClient(existing.id), before.client);
     });
 
     // The request check (csvValidationRules). Until Tier 2 WP2 each detail
@@ -767,6 +854,11 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual([client.practiceArea, client.practice_area], [['Healthcare'], ['Healthcare']]);
       assert.equal(client.effort, 2, 'Monthly');
       for (const key of ['strategicValue', 'stickinessScore']) assert.equal(typeof client[key], 'number', key);
+      // WP6: updated_at to the microsecond as PostgreSQL holds it (the page
+      // sends it back as expected_updated_at), and who saved last (c.*)
+      assert.match(client.updated_at_exact, EXACT);
+      assert.equal(client.updated_at_exact, await exactOf(created.id));
+      assert.equal(client.updated_by, null, 'written by the test, not through the API');
     });
 
     test('a client without a lead has null people and its stored legacy text', async () => {
@@ -799,6 +891,28 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(keysOf(client), keysOf(listed), 'the same fields as GET');
       const stored = await storedClient(client.id);
       assert.deepEqual([stored.primary_lobbyist, stored.lobbyist_team, stored.client_originator], ['Paula', ['Paula', 'Jay'], 'Paula']);
+      // WP6: logged once as `form`, every field it was given from none, by
+      // this account, which is also its updated_by
+      assert.equal(stored.updated_by, await accountId());
+      assert.equal(client.updated_at_exact, await exactOf(client.id));
+      const rows = await changeRows(client.id);
+      assert.equal(rows.length, 1);
+      assert.deepEqual([rows[0].source, rows[0].client_name, rows[0].changed_by, rows[0].changed_by_username],
+        ['form', body.name, await accountId(), account.username]);
+      assert.deepEqual(rows[0].changes, {
+        name: { from: null, to: body.name },
+        lead_id: { from: null, to: { id: paula.id, name: 'Paula' } },
+        second_chair_id: { from: null, to: { id: jay.id, name: 'Jay' } },
+        originator_id: { from: null, to: { id: paula.id, name: 'Paula' } },
+        originator_is_firm: { from: null, to: false },
+        stickiness: { from: null, to: 4 },
+        interaction_frequency: { from: null, to: 'Weekly' },
+        high_maintenance: { from: null, to: false },
+        conflict_risk: { from: null, to: 'Low' },
+        practice_area: { from: null, to: ['Healthcare'] },
+        notes: { from: null, to: 'A note' },
+        revenue: { 2025: { from: null, to: 50000 }, 2026: { from: null, to: 60000 } },
+      });
     });
 
     test('400 { success: false, error: "Validation failed", details: [{ field, message }] } for each rule on the people; nothing written', async () => {
@@ -815,11 +929,13 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         [{ lead_id: kevin.id, second_chair_id: inactive.id }, [{ field: 'second_chair_id', message: 'The second chair must be an active person on the People list.' }]],
         [{ lead_id: kevin.id, originator_id: 2147483000 }, [{ field: 'originator_id', message: 'The originator must be on the People list.' }]],
       ];
+      const logged = await changeCount();
       for (const [people, details] of refusals) {
         const res = await call('POST', '/api/data/clients', formBody(people));
         assert.deepEqual([res.status, res.body], [400, { success: false, error: 'Validation failed', details }], JSON.stringify(people));
       }
       assert.equal(await clientCount(), before);
+      assert.equal(await changeCount(), logged, 'a refused write logs nothing (WP6)');
     });
 
     // Until Tier 2 WP4 only the people were checked (docs/plans/tier-2.md,
@@ -1109,6 +1225,247 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(res.status, 200, res.text);
       assert.equal((await storedClient(created.id)).name, name, 'the name as the form shows it repairs the stored text');
     });
+    /* WP6: who changed what (S9), and edit conflicts (S10) */
+
+    test('S10: a save with the updated_at_exact the page loaded is accepted and logged once as `form`, with exactly what changed and who; updated_at and updated_by move', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin, revenues: { 2025: 1000, 2026: 100000 } });
+      const loaded = await listedClient(created.id);
+      const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, {
+        stickiness: 4, notes: 'Called the director', revenues: [{ year: 2026, revenue_amount: 120000 }],
+        expected_updated_at: loaded.updated_at_exact,
+      }));
+      assert.equal(res.status, 200, res.text);
+      const rows = await changeRows(created.id);
+      assert.equal(rows.length, 1);
+      assert.deepEqual([rows[0].source, rows[0].client_name, rows[0].changed_by, rows[0].changed_by_username],
+        ['form', created.name, await accountId(), account.username]);
+      assert.deepEqual(rows[0].changes, {
+        stickiness: { from: 3, to: 4 },
+        notes: { from: null, to: 'Called the director' },
+        revenue: { 2025: { from: 1000, to: null }, 2026: { from: 100000, to: 120000 } },
+      });
+      assert.ok(rows[0].created_at instanceof Date);
+      const stored = await storedClient(created.id);
+      assert.equal(stored.updated_by, await accountId());
+      assert.notEqual(await exactOf(created.id), loaded.updated_at_exact);
+      assert.equal(res.body.client.updated_at_exact, await exactOf(created.id), 'the next save sends this one');
+    });
+
+    test('S10: 409 { success: false, error, latest_change } for a stale expected_updated_at, naming who saved last and when; nothing written, nothing logged', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const loaded = await listedClient(created.id);
+      // Another partner saves first
+      const other = { username: `other-${letters(6)}`, password: generatedPassword() };
+      await addAccount(env, other);
+      const first = await request(api.base, 'PUT', `/api/data/clients/${created.id}`, {
+        as: await signIn(api.base, other), body: storedBody(created, kevin, { stickiness: 4, expected_updated_at: loaded.updated_at_exact }),
+      });
+      assert.equal(first.status, 200, first.text);
+      const stored = await storedClient(created.id);
+      const [latest] = await changeRows(created.id);
+
+      const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, {
+        interaction_frequency: 'Weekly', notes: 'Mine', revenues: [], expected_updated_at: loaded.updated_at_exact,
+      }));
+      assert.equal(res.status, 409, res.text);
+      assert.deepEqual(keysOf(res.body), ['error', 'latest_change', 'success']);
+      assert.deepEqual(res.body, conflictOf(latest));
+      assert.deepEqual(res.body.latest_change, { changed_by_username: other.username, source: 'form', created_at: latest.created_at.toISOString() });
+      assert.equal(res.body.error, `This client was saved after you opened it, by ${other.username} on ${clientChanges.firmTime(latest.created_at)}. Nothing was saved.`);
+      assert.deepEqual(await storedClient(created.id), stored);
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
+      assert.equal((await changeRows(created.id)).length, 1);
+      // Loaded again, the same save is accepted
+      const again = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, {
+        stickiness: 4, interaction_frequency: 'Weekly', expected_updated_at: (await listedClient(created.id)).updated_at_exact,
+      }));
+      assert.equal(again.status, 200, again.text);
+      assert.deepEqual((await changeRows(created.id)).map((r) => [r.changed_by_username, r.changes]), [
+        [other.username, { stickiness: { from: 3, to: 4 } }],
+        [account.username, { interaction_frequency: { from: 'Monthly', to: 'Weekly' } }],
+      ]);
+    });
+
+    test('S10: two saves in flight with the same expected_updated_at: one answers 200, the other 409, and one row is logged', async () => {
+      const kevin = await seed('Kevin');
+      for (let round = 0; round < 3; round += 1) {
+        const created = await addClient({ lead: kevin });
+        const { updated_at_exact: token } = await listedClient(created.id);
+        const [a, b] = await Promise.all([
+          call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 5, expected_updated_at: token })),
+          call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { interaction_frequency: 'Daily', expected_updated_at: token })),
+        ]);
+        assert.deepEqual([a.status, b.status].sort(), [200, 409], `${a.text} ${b.text}`);
+        const rows = await changeRows(created.id);
+        assert.equal(rows.length, 1);
+        const stored = await storedClient(created.id);
+        const winner = a.status === 200 ? { stickiness: 5, interaction_frequency: 'Monthly' } : { stickiness: 3, interaction_frequency: 'Daily' };
+        assert.deepEqual({ stickiness: stored.stickiness, interaction_frequency: stored.interaction_frequency }, winner);
+        assert.deepEqual((a.status === 409 ? a : b).body, conflictOf(rows[0]));
+      }
+    });
+
+    test('a save without expected_updated_at (the older page, a direct request) is not checked, and is logged', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const loaded = await listedClient(created.id);
+      assert.equal((await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 4, expected_updated_at: loaded.updated_at_exact }))).status, 200);
+      const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 1 }));
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual((await changeRows(created.id)).map((r) => r.changes), [{ stickiness: { from: 3, to: 4 } }, { stickiness: { from: 4, to: 1 } }]);
+    });
+
+    test('a save that changes nothing writes nothing: 200 with the client, updated_at and updated_by as they were, no row logged', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const loaded = await listedClient(created.id);
+      // As stored, and in the import's spelling of none: '' cadence stays '' against NULL...
+      for (const body of [storedBody(created, kevin, { expected_updated_at: loaded.updated_at_exact }), storedBody(created, kevin, { revenues: undefined })]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}`, body);
+        assert.equal(res.status, 200, res.text);
+        assert.equal(res.body.client.updated_at_exact, loaded.updated_at_exact);
+      }
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await changeRows(created.id), []);
+      // ...and practice areas ticked in another order are the same set
+      await db.query("UPDATE clients SET practice_area = ARRAY['Healthcare', 'Energy'] WHERE id::text = $1", [String(created.id)]);
+      const reordered = await storedClient(created.id);
+      const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { practice_area: ['Energy', 'Healthcare'] }));
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(await storedClient(created.id), reordered);
+      assert.deepEqual(await changeRows(created.id), []);
+    });
+
+    test('400 "Validation failed" with a detail for an expected_updated_at that is not the updated_at_exact the API sent, the Date JSON gives among them; before the client is looked up; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const token = detail('expected_updated_at', "expected_updated_at must be the client's updated_at_exact as the API sent it, or null.");
+      const loaded = await listedClient(created.id);
+      const asJson = new Date(before.updated_at).toISOString();
+      for (const value of [asJson, loaded.updated_at_exact.slice(0, -3), 'garbage', 12345, true, {}]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 5, expected_updated_at: value }));
+        assert.deepEqual([res.status, res.body], [400, failed(token)], JSON.stringify(value));
+      }
+      // With a missing id, and after the fields' details
+      let res = await call('PUT', `/api/data/clients/${missingId}`, storedBody(created, kevin, { expected_updated_at: 'garbage' }));
+      assert.deepEqual([res.status, res.body], [400, failed(token)]);
+      res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { conflict_risk: 'Severe', expected_updated_at: 'garbage', lead_id: null }));
+      assert.deepEqual([res.status, res.body], [400, failed([
+        ...detail('conflict_risk', 'Conflict risk "Severe" must be Low, Medium or High.'),
+        ...token,
+        ...detail('lead_id', 'Choose a lead partner.'),
+      ])]);
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await changeRows(created.id), []);
+    });
+
+    // WP4 pinned the fields' 400 before the id is looked up; WP6 pins the rest:
+    // everything about the body first (fields, expected_updated_at's form, the
+    // people), then the client (404, then 409)
+    test('the order of refusals: the body\'s 400 (the people\'s included) before the client is looked up, then 404, then 409', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const stale = '2000-01-01T00:00:00.000000';
+      const people = [{ field: 'second_chair_id', message: 'The second chair cannot be the lead.' }];
+      // The people's 400 before a missing id's 404 and before a stale token's 409
+      for (const id of [missingId, created.id]) {
+        const res = await call('PUT', `/api/data/clients/${id}`, storedBody(created, kevin, { second_chair_id: kevin.id, expected_updated_at: stale }));
+        assert.deepEqual([res.status, res.body], [400, failed(people)], String(id));
+      }
+      // A missing id's 404 before any token
+      let res = await call('PUT', `/api/data/clients/${missingId}`, storedBody(created, kevin, { expected_updated_at: stale }));
+      assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
+      res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { expected_updated_at: stale }));
+      assert.deepEqual([res.status, res.body], [409, conflictOf(undefined)], 'no history row yet: nobody named');
+      assert.deepEqual(await changeRows(created.id), []);
+    });
+
+    test('a client whose updated_at is NULL saves with expected_updated_at null (IS NOT DISTINCT FROM), and conflicts with any other value', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      await db.query('UPDATE clients SET updated_at = NULL WHERE id::text = $1', [String(created.id)]);
+      const loaded = await listedClient(created.id);
+      assert.equal(loaded.updated_at_exact, null);
+      let res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 4, expected_updated_at: '2026-01-01T00:00:00.000000' }));
+      assert.equal(res.status, 409, res.text);
+      res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 4, expected_updated_at: null }));
+      assert.equal(res.status, 200, res.text);
+      assert.match(res.body.client.updated_at_exact, EXACT, 'written now');
+      // Stale once it has one
+      res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 2, expected_updated_at: null }));
+      assert.equal(res.status, 409, res.text);
+      assert.equal((await storedClient(created.id)).stickiness, 4);
+      assert.equal((await changeRows(created.id)).length, 1);
+    });
+
+    // pg reads a TIMESTAMP into a JS Date in the Node process's zone, with
+    // milliseconds only: compared that way, every save would answer 409. The
+    // token is PostgreSQL's own text, so the zone of the server that sent it,
+    // or of the one checking it, changes nothing.
+    test('the check does not depend on the server process\'s time zone: a server under TZ=America/New_York loads and saves, and takes a token another server sent', async () => {
+      const server = await launch({ TZ: 'America/New_York' });
+      try {
+        const kevin = await seed('Kevin');
+        const created = await addClient({ lead: kevin });
+        const session = await signIn(server.base, account);
+        let loaded = await listedClient(created.id, server.base, session);
+        assert.equal(loaded.updated_at_exact, await exactOf(created.id));
+        assert.equal(loaded.updated_at_exact, (await listedClient(created.id)).updated_at_exact, 'the same text from a server in UTC');
+        let res = await request(server.base, 'PUT', `/api/data/clients/${created.id}`, {
+          as: session, body: storedBody(created, kevin, { stickiness: 4, expected_updated_at: loaded.updated_at_exact }),
+        });
+        assert.equal(res.status, 200, res.text);
+        // Loaded from this suite's server, saved through the New York one, and back
+        loaded = await listedClient(created.id);
+        res = await request(server.base, 'PUT', `/api/data/clients/${created.id}`, {
+          as: session, body: storedBody(created, kevin, { stickiness: 5, expected_updated_at: loaded.updated_at_exact }),
+        });
+        assert.equal(res.status, 200, res.text);
+        res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 2, expected_updated_at: res.body.client.updated_at_exact }));
+        assert.equal(res.status, 200, res.text);
+        assert.deepEqual((await changeRows(created.id)).map((r) => r.changes.stickiness.to), [4, 5, 2]);
+      } finally {
+        stop(server);
+      }
+    });
+
+    test('a session whose account is gone still saves: changed_by and updated_by null, the username kept', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const ghost = jwt.sign({ userId: 2147483000, username: 'ghost' }, env.JWT_SECRET, { expiresIn: '1h' });
+      const res = await request(api.base, 'PUT', `/api/data/clients/${created.id}`, {
+        as: `authToken=${ghost}`, body: storedBody(created, kevin, { stickiness: 4 }),
+      });
+      assert.equal(res.status, 200, res.text);
+      const [row] = await changeRows(created.id);
+      assert.deepEqual([row.changed_by, row.changed_by_username, row.source], [null, 'ghost', 'form']);
+      assert.equal((await storedClient(created.id)).updated_by, null);
+    });
+
+    // S9: "a change never lands without its row"; unlike a saved answer
+    // (ai_answers), which is returned even when its save fails
+    test('a failed history insert fails the write: 500, the client and its revenue unchanged', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const note = `Private note ${letters(12)}`;
+      await db.query('ALTER TABLE client_changes ADD CONSTRAINT routes_test_refuse CHECK (false) NOT VALID');
+      try {
+        const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 5, notes: note, revenues: [] }));
+        assert.deepEqual([res.status, res.body.error], [500, 'Failed to update client']);
+      } finally {
+        await db.query('ALTER TABLE client_changes DROP CONSTRAINT routes_test_refuse');
+      }
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
+      // The failure is logged without the refused row: no note reaches a log line
+      assert.match(api.output, /client_changes insert failed: new row for relation "client_changes" violates check constraint "routes_test_refuse"/);
+      assert.ok(!api.output.includes(note), 'the note is not in the log');
+    });
   });
 
   route('PUT /api/data/clients/:id/second-chair', () => {
@@ -1127,9 +1484,28 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       const listed = (await call('GET', '/api/data/clients')).body.clients.find((c) => String(c.id) === String(created.id));
       assert.deepEqual(keysOf(res.body.client), keysOf(listed), 'the same fields as GET');
       const after = await storedClient(created.id);
-      const rest = ({ second_chair_id: _s, lobbyist_team: _t, updated_at: _u, ...other }) => other;
+      const rest = ({ second_chair_id: _s, lobbyist_team: _t, updated_at: _u, updated_by: _b, ...other }) => other;
       assert.deepEqual(rest(after), rest(before));
       assert.deepEqual([after.second_chair_id, after.lobbyist_team], [associate.id, ['Kevin', associate.name]]);
+      // WP6: logged as `second-chair`, the seat alone, and updated_by set
+      assert.equal(after.updated_by, await accountId());
+      const rows = await changeRows(created.id);
+      assert.deepEqual(rows.map((r) => [r.source, r.changed_by_username, r.client_name, r.changes]), [
+        ['second-chair', account.username, created.name, { second_chair_id: { from: null, to: { id: associate.id, name: associate.name } } }],
+      ]);
+    });
+
+    test('a request that sets the seat the client already holds changes nothing: 200, updated_at as it was, no row (WP6)', async () => {
+      const kevin = await seed('Kevin');
+      const jay = await seed('Jay');
+      for (const [second, expected] of [[jay, jay.id], [null, null]]) {
+        const created = await addClient({ lead: kevin, second });
+        const before = await storedClient(created.id);
+        const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: expected, expected_second_chair_id: expected });
+        assert.equal(res.status, 200, res.text);
+        assert.deepEqual(await storedClient(created.id), before);
+        assert.deepEqual(await changeRows(created.id), []);
+      }
     });
 
     test('409 { success: false, error } when the seat changed since the page loaded, or the client has no lead; nothing written', async () => {
@@ -1147,6 +1523,7 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         success: false, error: 'This client has no lead yet. Give it a lead in Client Details first.',
       }]);
       assert.equal((await storedClient(leadless.id)).second_chair_id, null);
+      assert.deepEqual([...await changeRows(seated.id), ...await changeRows(leadless.id)], [], 'nothing logged (WP6)');
     });
 
     test('400: a body without both ids, and "Validation failed" with details for the lead, an inactive or an unknown person; nothing written', async () => {
@@ -1199,9 +1576,37 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(await revenueRows(created.id), []);
     });
 
-    test('404 { error: "Client not found" } for a well-formed id no client has', async () => {
+    // WP6: no expected_updated_at on DELETE (docs/plans/tier-2.md, section 11)
+    test('the delete is logged as `delete`: every field the client had and its revenue, to none, its name kept; the history outlives it', async () => {
+      const kevin = await seed('Kevin');
+      const jay = await seed('Jay');
+      const created = await addClient({ lead: kevin, second: jay, originator: jay, firm: true, revenues: { 2025: 1500.5, 2026: 2000 } });
+      const res = await call('DELETE', `/api/data/clients/${created.id}`);
+      assert.equal(res.status, 204);
+      const rows = await changeRows(created.id);
+      assert.equal(rows.length, 1);
+      assert.deepEqual([rows[0].source, rows[0].client_name, rows[0].changed_by, rows[0].changed_by_username],
+        ['delete', created.name, await accountId(), account.username]);
+      assert.deepEqual(rows[0].changes, {
+        name: { from: created.name, to: null },
+        lead_id: { from: { id: kevin.id, name: 'Kevin' }, to: null },
+        second_chair_id: { from: { id: jay.id, name: 'Jay' }, to: null },
+        originator_id: { from: { id: jay.id, name: 'Jay' }, to: null },
+        originator_is_firm: { from: true, to: null },
+        stickiness: { from: 3, to: null },
+        interaction_frequency: { from: 'Monthly', to: null },
+        high_maintenance: { from: false, to: null },
+        conflict_risk: { from: 'Low', to: null },
+        practice_area: { from: ['Healthcare'], to: null },
+        revenue: { 2025: { from: 1500.5, to: null }, 2026: { from: 2000, to: null } },
+      });
+    });
+
+    test('404 { error: "Client not found" } for a well-formed id no client has; nothing logged', async () => {
+      const logged = await changeCount();
       const res = await call('DELETE', `/api/data/clients/${missingId}`);
       assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
+      assert.equal(await changeCount(), logged);
     });
 
     // As PUT's: compared in the column's type until Tier 2 WP2 (500), as text now
@@ -1214,6 +1619,45 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       }
       assert.equal(await clientCount(), count);
       assert.deepEqual(await revenueRows(bystander.id), [{ year: 2026, amount: 3000 }]);
+    });
+  });
+
+  route('GET /api/data/clients/:id/changes', () => {
+    // The page reads changes[] and on each row id, source, changed_by_username,
+    // created_at and changes (src/ClientEnhancementForm.jsx through
+    // src/utils/clientHistory.js)
+    test('200 { success, changes }: the client\'s history, newest first, each row with who, when, the source and what changed', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      for (const stickiness of [4, 5]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness }));
+        assert.equal(res.status, 200, res.text);
+      }
+      const res = await call('GET', `/api/data/clients/${created.id}/changes`);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(keysOf(res.body), ['changes', 'success']);
+      assert.equal(res.body.changes.length, 2);
+      for (const row of res.body.changes) assert.deepEqual(keysOf(row), CHANGE_KEYS);
+      assert.deepEqual(res.body.changes.map((r) => r.changes.stickiness), [{ from: 4, to: 5 }, { from: 3, to: 4 }]);
+      const [newest] = res.body.changes;
+      assert.deepEqual([newest.client_id, newest.client_name, newest.changed_by_username, newest.source],
+        [String(created.id), created.name, account.username, 'form']);
+      assert.ok(!Number.isNaN(Date.parse(newest.created_at)));
+      assert.ok(res.body.changes[0].id > res.body.changes[1].id);
+    });
+
+    test('a deleted client\'s history answers 200 with every row, the delete first; an id with no history, of either type or none, answers an empty list', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      assert.equal((await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 1 }))).status, 200);
+      assert.equal((await call('DELETE', `/api/data/clients/${created.id}`)).status, 204);
+      const res = await call('GET', `/api/data/clients/${created.id}/changes`);
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(res.body.changes.map((r) => r.source), ['delete', 'form']);
+      for (const id of [missingId, otherShapeId, 'not-an-id']) {
+        const none = await call('GET', `/api/data/clients/${id}/changes`);
+        assert.deepEqual([none.status, none.body], [200, { success: true, changes: [] }], id);
+      }
     });
   });
 
@@ -1331,6 +1775,24 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       // The API's nested people carry the new name too
       const { body } = await call('GET', '/api/data/clients');
       assert.equal(body.clients.find((c) => String(c.id) === String(leads.id)).lead.name, renamed);
+    });
+
+    // WP6: a rename changes no client field (the people are ids), so it
+    // writes no history and moves no updated_at: a form open on a client of
+    // the person renamed still saves
+    test('a rename logs nothing and leaves updated_at as it was: a client form loaded before it still saves (no 409)', async () => {
+      const person = await addPerson('partner', 'History Partner');
+      const created = await addClient({ lead: person });
+      const loaded = await listedClient(created.id);
+      const logged = await changeCount();
+      const res = await call('PUT', `/api/people/${person.id}`, { name: uniqueName('History Renamed') });
+      assert.equal(res.status, 200, res.text);
+      assert.equal(await changeCount(), logged);
+      assert.equal(await exactOf(created.id), loaded.updated_at_exact);
+      const save = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, person, { stickiness: 4, expected_updated_at: loaded.updated_at_exact }));
+      assert.equal(save.status, 200, save.text);
+      const [row] = await changeRows(created.id);
+      assert.deepEqual(row.changes, { stickiness: { from: 3, to: 4 } }, 'the lead is the same id: not a change');
     });
 
     test('a role change and a (de)activation leave the legacy text as it is', async () => {
