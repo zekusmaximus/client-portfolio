@@ -65,7 +65,7 @@ Read through the Netlify connector on 2026-09-25 unless marked otherwise.
 | Base directory | repository root (`netlify.toml` sets none; Netlify's default is the root) |
 | Build command | `npm run build:prod` (`netlify.toml`) |
 | Publish directory | `dist` (`netlify.toml`) |
-| Node version | `22` (`NODE_VERSION` in `netlify.toml`) |
+| Node version | `22` (`NODE_VERSION` in `netlify.toml`), Netlify's latest 22 release. Since Tier 3 WP9 the build needs 22.12 or later (Vite 8, `@vitejs/plugin-react` 6 and Rolldown declare `^20.19.0 \|\| >=22.12.0`); never pin a 22 release below it. The deploy log names the release used |
 | Build variables | `VITE_API_BASE_URL` = `https://client-portfolio-backend.onrender.com`; any others: confirm in the dashboard |
 | Headers and redirects | from `netlify.toml` only. The deploy of `0507a49`, before this file existed, processed no header rules and no redirect rules, so none are configured elsewhere |
 | Password protection, forms | off, not enabled |
@@ -84,9 +84,9 @@ the build log names the Node version it used.
 |---|---|
 | Instance type (Free or paid) | confirm in the dashboard; it decides sections 7, 11 and the Shell |
 | Region | confirm in the dashboard; the database should be in the same one |
-| Node version | 22.16.0, Render's default for the service, not pinned (confirmed by Jeff on 2026-09-26, and in the deploy log of `3b5a246` on 2026-09-27). Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22, `@anthropic-ai/sdk` 0.128.0 supports Node 20 or later, and `bcrypt` 6 Node 18 or later |
+| Node version | 22.16.0, Render's default for the service, not pinned (confirmed by Jeff on 2026-09-26, and in the deploy log of `3b5a246` on 2026-09-27). Without `NODE_VERSION`, `.node-version` or `engines`, a service keeps the default it was created with (<https://render.com/docs/node-version>); CI tests Node 22, `@anthropic-ai/sdk` 0.128.0 supports Node 20 or later, and `bcrypt` 6 Node 18 or later. The API does not use Vite, whose 8 needs 22.12 or later (Tier 3 WP9); 22.16.0 meets it anyway. Do not add `engines` to `package.json` for the page's tooling: Render would read it to choose the API's Node |
 | Root directory | confirm in the dashboard (the repository root is what the code needs) |
-| Build command | `npm install` (the deploy log of `3b5a246`, 2026-09-27). The code needs `npm ci`, which CI already runs: with `npm install`, a lockfile that does not match `package.json` installs other versions instead of failing the build. Jeff may switch it (the service's Settings, Build Command). Each build restores a cache of `node_modules` from the one before and installs the dev dependencies too, so the log counts them ("audited 609 packages" on 2026-09-27) |
+| Build command | `npm install` (the deploy log of `3b5a246`, 2026-09-27). The code needs `npm ci`, which CI already runs: with `npm install`, a lockfile that does not match `package.json` installs other versions instead of failing the build. Jeff may switch it (the service's Settings, Build Command). Each build restores a cache of `node_modules` from the one before and installs the dev dependencies too, so the log counts them ("audited 609 packages" on 2026-09-27, when `npm ci` installed 608). `npm ci` installs 566 since Tier 3 WP3 and 544 since Tier 3 WP9, so expect about 545 audited after WP9's deploy; the build then also installs Vite 8's Linux packages (`@rolldown/binding-linux-x64-gnu`, `lightningcss-linux-x64-gnu`), which the API never loads |
 | Start command | `npm start`, which runs `node server.cjs` (the deploy log of `3b5a246`, 2026-09-27) |
 | Pre-deploy command | confirm in the dashboard (none is needed; pre-deploy commands exist on paid instances only: <https://render.com/docs/deploys>) |
 | Auto-deploy and branch | confirm in the dashboard (Settings: On Commit, After CI Checks Pass, or Off: <https://render.com/docs/deploys>) |
@@ -1131,17 +1131,25 @@ What that means here:
 
 ## 12. Dependency advisories that remain
 
-After Tier 2 WP3's upgrade to `bcrypt` 6, on 2026-09-27, `npm audit`
-reports 2 (1 high, 1 moderate) and `npm audit --omit=dev` reports 0: no
-dependency the API or the built page runs has a known advisory. Both that
-remain are dev dependencies and need Vite 8, a major version.
+None remain. Since Tier 3 WP9 (`vite` 8.3.1 and `@vitejs/plugin-react`
+6.1.1; `docs/plans/tier-3.md` section 12), `npm audit` and
+`npm audit --omit=dev` both report 0.
 
-| Package | Severity | Comes from | Where it runs | Fix | When |
-|---|---|---|---|---|---|
-| `vite` 4.5.14 | high (dev-server file serving: `server.fs.deny` bypasses on Windows, optimized-deps path traversal, `server.fs` not applied to HTML files, files whose names start with the public directory's served; and, on Windows, the dev server's open-in-editor endpoint, `launch-editor`: command injection from a crafted request and NTLMv2 hash disclosure through a UNC path) | direct dev dependency | `npm run dev` only. Production is static files Vite built; the dev server never runs on Netlify | Vite 8 | not in Tier 2 (plan S13 bars a Vite major). Until then run `npm run dev` only while working on the page and stop it afterwards, and never `npm run dev -- --host` on an untrusted network |
-| `esbuild` 0.18.20 | moderate (dev server answers any website) | `vite` 4 | `npm run dev` only | Vite 8 | with Vite |
+Until WP9, `npm audit` reported 2 and `npm audit --omit=dev` 0. Both were
+dev dependencies, reachable only through `npm run dev`; production is static
+files Vite built, and the dev server never runs on Netlify.
 
-Until WP3 the table also listed `tar` 6.2.1 (critical), `@mapbox/node-pre-gyp`
+| Package | Severity | Comes from | Fixed by |
+|---|---|---|---|
+| `vite` 4.5.14 | high (seven advisories in the dev server's file serving: `server.fs.deny` bypasses on Windows, optimized-deps path traversal, `server.fs` not applied to HTML files, files whose names start with the public directory's served; and, on Windows, its open-in-editor endpoint, `launch-editor`: command injection from a crafted request and NTLMv2 hash disclosure through a UNC path) | direct dev dependency | Vite 8 (Tier 3 WP9) |
+| `esbuild` 0.18.20 | moderate (dev server answers any website) | `vite` 4 | Vite 8, which no longer uses esbuild (Tier 3 WP9) |
+
+The habits the table asked for stay good practice: run `npm run dev` only
+while working on the page and stop it afterwards, and never
+`npm run dev -- --host` on an untrusted network. Vite 8 needs Node 20.19, or
+22.12 and later, on the machine that runs it.
+
+Until Tier 2 WP3 the table also listed `tar` 6.2.1 (critical), `@mapbox/node-pre-gyp`
 1.0.11 and `bcrypt` 5.1.1 (high): bcrypt 5's install script, run by Render's
 build (`npm install`, section 1.2), downloaded its binary from GitHub and
 unpacked it with `tar`. bcrypt 6 ships its binaries inside the npm package
@@ -1153,7 +1161,9 @@ the install compile bcrypt from source, which needs Python, `make` and a C++
 compiler and downloads Node's headers from nodejs.org.
 
 Re-check with `npm audit` and `npm audit --omit=dev`. Do not run
-`npm audit fix --force`: it installs these majors unreviewed.
+`npm audit fix --force`: it installs majors unreviewed, and moves a package
+without the ones that must move with it (for Vite 8 it wrote `vite` `^8.3.1`
+and left `@vitejs/plugin-react` on 4.x, which cannot run on Vite 8).
 
 ---
 
@@ -1171,5 +1181,7 @@ Re-check with `npm audit` and `npm audit --omit=dev`. Do not run
 | `/api/health` says `database: disconnected` | the database's page on Render; `pg_pool_error` lines |
 | The API is slow for a minute, then fine | a Free instance spinning up (section 11.3) |
 | The Netlify build fails with "VITE_API_BASE_URL must be set" | the variable is missing for that deploy context (section 2) |
+| The Netlify build fails with `[lightningcss minify]` | invalid CSS in the change (since Tier 3 WP9, Vite 8's CSS minifier refuses what Vite 4 only warned about); the line named after the message is the one to fix. It is a code fix, not a setting |
+| The Netlify build fails naming Node or `engines` | the Node release in the deploy log is below 22.12 (section 1.1): check `NODE_VERSION` in `netlify.toml` and that the UI has no second one |
 | A partner sees "Failed to ..." or "Server error" (a 500) | the line Render logged at that moment, which starts with what failed (`Error updating client:`, `Error updating person:`, `Error assigning a second chair:`, `ai_ask failed:`, ...) and carries the failure as JSON: `code` (PostgreSQL's error code, or Node's), `message` and, for a row the database refused, the `constraint`, `table` and `column` it names. Since Tier 3 WP2 the line never holds the row itself (PostgreSQL's `detail`, a client's note included) or a stack trace; send the line as it is. `40P01` (`deadlock detected`): two writes at the same moment each waited for the other, and PostgreSQL stopped this one (the other saved); try it again, and report the line if it recurs (WP2 removed the two known cases, an Accept or a rename during a rename) |
 | A partner cannot save a client under a name, "Another client is already named ..." beside the name | another client has that name in some case (Tier 3 WP2). Rename or delete one of them on Client Details; two clients stored with one name before WP2 stay editable, and each still refuses its row in an import until one is renamed or deleted |

@@ -9,7 +9,7 @@ and Scenarios (a succession workflow). It runs at <https://gbacpod.com> for the
 partners only and is not sold or packaged. `PRODUCT_BRIEF.md` says what it is
 for; `REVIEW-2026-09.md` says how well it does it.
 
-- **Page:** React 18, Vite 4, Zustand, Tailwind, Recharts (`src/`).
+- **Page:** React 18, Vite 8, Zustand, Tailwind, Recharts (`src/`).
 - **API:** Express 5 (`server.cjs`), PostgreSQL through `pg`, a JWT in an
   httpOnly cookie, the Anthropic SDK behind one service (`services/anthropic.cjs`).
 - **Database:** `users`, `clients`, `client_revenues`, `people`, `ai_answers`,
@@ -21,8 +21,8 @@ formula, conventions.
 
 ## Run it locally
 
-Needs Node 22 (what CI uses), npm, and a PostgreSQL you can create a database
-in.
+Needs Node 22 (what CI uses; 22.12 or later, which Vite 8 requires), npm, and a
+PostgreSQL you can create a database in.
 
 ```powershell
 git clone https://github.com/zekusmaximus/client-portfolio.git
