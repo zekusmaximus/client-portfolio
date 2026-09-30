@@ -67,7 +67,7 @@ GitGuardian). WP2, WP3 and WP4 were verified on gbacpod.com by Jeff on
 2026-09-30 (their after-deploy checks all as expected). WP9's section
 (tier-3.md section 12, Vite 8) merged as PR #59 (`c919c59`) on 2026-09-30, and
 Jeff approved it that day with its decisions U14 to U16 as recommended; WP9's
-code is in its PR, which waits for Jeff's merge, and its after-deploy checks
+code is in its PR (#60), which waits for Jeff's merge, and its after-deploy checks
 may trail the next package by one. Next in the table's order: WP5, then WP6,
 each with its section 9 sketch expanded and approved by Jeff first; WP1 when
 Jeff's evaluation run and choice arrive (about 2026-10-10). Run the packages in
