@@ -67,7 +67,7 @@ SCHEMA_TEST_SERVER_URL=postgresql://postgres:postgres@127.0.0.1:5432 node --test
 
 | WP | Title | Size | Needs | Status | Branch / PR | Notes |
 |---|---|---|---|---|---|---|
-| — | Tier 2's close-out and this plan | 1 session | — | PR open | `claude/gifted-johnson-kmng62` | WP11 recorded as merged (`fc2f671`) in Tier 2's section 2 and `CLAUDE.md`; this plan written against `fc2f671`. Baselines measured there: section 0.2 item 2. No code, test or schema changed |
+| — | Tier 2's close-out and this plan | 1 session | — | PR open | `claude/gifted-johnson-kmng62`, [PR #54](https://github.com/zekusmaximus/client-portfolio/pull/54) | WP11 recorded as merged (`fc2f671`) in Tier 2's section 2 and `CLAUDE.md`; this plan written against `fc2f671`. Baselines measured there: section 0.2 item 2. No code, test or schema changed |
 | WP1 | The model and effort Jeff chooses (WP11's later change) | 0.5 to 1 session | U1, U2, Jeff's run and choice; U3, U4 | not started | | Waits for Jeff's run (runbook 7.6; after about 2026-10-10) |
 | WP2 | Write-path defects | 1 to 1.5 sessions | U1, U5; U6 for (e) | not started | | |
 | WP3 | Start-up, scripts, dependencies and docs | 0.5 to 1 session | U1, U5 | not started | | |
