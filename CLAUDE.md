@@ -69,7 +69,7 @@ GitGuardian); its after-deploy checks are Jeff's, and may trail the next package
 by one. Next in the table's order: WP9 (Vite 8), then WP5 and WP6; WP1 when
 Jeff's evaluation run and choice arrive (about 2026-10-10). WP9's section
 (tier-3.md section 12, with its decisions U14 to U16) was written on 2026-09-30
-and waits in its PR for Jeff's approval; no WP9 code, dependency or lockfile
+and waits in its PR (#59) for Jeff's approval; no WP9 code, dependency or lockfile
 change before it, and WP9's code also waits for WP2's and WP3's after-deploy
 checks. Run the packages in its status table's order, and update that table when
 you finish one. A package that changes a
