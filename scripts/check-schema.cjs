@@ -17,7 +17,7 @@
  * after a deploy this confirms the change reached the live database.
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const { USER_FOREIGN_KEYS_SQL, CLIENTS_BY_ACCOUNT_SQL, checkUserForeignKeys } = require('../utils/schemaCheck.cjs');
 
 async function main() {

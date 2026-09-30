@@ -15,7 +15,7 @@
  * - Connects through db.cjs (DATABASE_URL, DATABASE_SSL)
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const { hash } = require('./utils/hash.cjs');
 const { validatePassword, validateUsername } = require('./utils/passwordPolicy.cjs');
 

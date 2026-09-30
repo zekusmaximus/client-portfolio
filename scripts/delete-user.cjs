@@ -20,7 +20,7 @@
  * JWT is not checked against users; rotating JWT_SECRET signs everyone out.
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const { USER_FOREIGN_KEYS_SQL, checkUserForeignKeys } = require('../utils/schemaCheck.cjs');
 
 const COUNTS_SQL = `
