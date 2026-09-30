@@ -21,7 +21,7 @@
  * JWT_SECRET signs everyone out.
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const { hash } = require('../utils/hash.cjs');
 const { validatePassword } = require('../utils/passwordPolicy.cjs');
 

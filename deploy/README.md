@@ -1002,11 +1002,21 @@ workspace plan: confirm in the dashboard.
 A healthy start prints, in order: `Testing database connection...`,
 `PostgreSQL connection OK`, `Initializing database tables...`,
 `Database tables initialized`, `Server running on port <n>`,
-`Environment: production`. Warnings to act on:
+`Environment: production`. The API opens its port only after
+`Database tables initialized` (since Tier 3 WP3), so a deploy takes requests
+only once `init-db.sql` has run; until then `Server running on port` came
+second, right after `Testing database connection...`. Warnings to act on come before
+`Testing database connection...`:
 `FRONTEND_URL is not set: no browser origin is allowed to call the API.`
-(section 2) and a `SESSION_TTL` fallback warning. In production a database
-failure at start prints `Cannot start server without database in production`
-and the process exits.
+(section 2), a `SESSION_TTL` fallback warning
+(`SESSION_TTL="<value>" is not <number><d|h|m>; using 7d.`) and
+`anthropic_base_url_ignored` (9.3). In production a database failure at start
+prints `Database initialization failed:` with the error's code and message,
+then `Cannot start server without database in production`, and the process
+exits without opening its port (no `Server running on port` line). Until
+Tier 3 WP3 a start also began with a
+`[dotenv@17.2.0] injecting env (0) from .env` line; it no longer does, and
+neither do the scripts in section 7.
 
 ### 9.3 The structured lines
 

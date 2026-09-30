@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const db = require('./db.cjs');
 const { isConfigured, AI_MODEL } = require('./services/anthropic.cjs');
 const { logError } = require('./utils/errorLog.cjs');
@@ -184,7 +184,14 @@ app.use((err, req, res, _next) => {
   });
 });
  
-// Health check for DB on boot and initialize tables
+// Start-up: the database check and init-db.sql, then listen. The port opens
+// only once init-db.sql has run (Tier 3 WP3, candidate (o)), so on Render a
+// deploy takes traffic only when its tables exist, and no route answers 500 in
+// the moments before; until WP3 it listened at once, and a request could reach
+// a route before its table did. In production a failure exits before
+// listening. In development the server still listens without a database, so a
+// local run without PostgreSQL gets the sign-in page's error, not a process
+// that never answers. deploy/README.md 9.2 lists the lines in this order.
 (async () => {
   try {
     console.log('🔍 Testing database connection...');
@@ -212,12 +219,12 @@ app.use((err, req, res, _next) => {
       console.log('📝 Make sure your DATABASE_URL is correct in .env file');
     }
   }
-})();
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+})();
 
 module.exports = app;
 

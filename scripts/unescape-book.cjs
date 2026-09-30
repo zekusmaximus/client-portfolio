@@ -42,7 +42,7 @@
  * init-db.sql, which runs at every start.
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const {
   REPAIR_COLUMNS,
   ENTITY_LIKE_SQL,

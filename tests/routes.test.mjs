@@ -607,7 +607,13 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         assert.deepEqual([refused.status, refused.body], [429, TOO_MANY], 'the sixth, with the right password');
         assert.deepEqual(refused.headers.getSetCookie(), []);
         assert.equal((await login(other)).status, 200, 'another username is not locked');
-        assert.deepEqual(logLines(server, 'rate_limited').map((l) => [l.limiter, l.key, l.path]),
+        // Read once the line has arrived: the output comes on a pipe and can
+        // lag the answer (waitFor, constraint 8; Tier 3 WP3, candidate (i))
+        const limited = await waitFor(() => {
+          const lines = logLines(server, 'rate_limited');
+          return lines.length > 0 && lines;
+        }, 'the rate_limited line');
+        assert.deepEqual(limited.map((l) => [l.limiter, l.key, l.path]),
           [['login_user', `user:${partner.username}`, '/api/auth/login']]);
       } finally {
         stop(server);
@@ -631,7 +637,12 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
           body: { currentPassword: account.password, newPassword: generatedPassword() },
         });
         assert.deepEqual([changeSignedIn.status, changeSignedIn.body], [429, TOO_MANY]);
-        assert.deepEqual([...new Set(logLines(server, 'rate_limited').map((l) => l.limiter))], ['login_ip']);
+        // Both refusals' lines, once they have arrived (waitFor, constraint 8)
+        const limited = await waitFor(() => {
+          const lines = logLines(server, 'rate_limited');
+          return lines.length >= 2 && lines;
+        }, 'two rate_limited lines');
+        assert.deepEqual([...new Set(limited.map((l) => l.limiter))], ['login_ip']);
       } finally {
         stop(server);
       }
@@ -3568,7 +3579,9 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       const refused = await call('POST', '/api/people', { name, role: 'associate' }, { headers: { Origin: 'https://example.com' } });
       assert.deepEqual([refused.status, refused.body], [403, { success: false, error: 'Cross-origin request refused' }]);
       assert.equal((await db.query('SELECT count(*)::int AS n FROM people WHERE name = $1', [name])).rows[0].n, 0);
-      assert.ok(logLines(api, 'origin_refused').some((l) => l.origin === 'https://example.com' && l.path === '/api/people'));
+      // The line, once it has arrived (waitFor, constraint 8)
+      await waitFor(() => logLines(api, 'origin_refused').some((l) => l.origin === 'https://example.com' && l.path === '/api/people'),
+        'the origin_refused line');
       const allowed = await call('POST', '/api/people', { name, role: 'associate' }, { headers: { Origin: 'http://localhost:5173' } });
       assert.equal(allowed.status, 201, allowed.text);
     });
@@ -3589,6 +3602,53 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         const [method, path] = key.split(' ');
         const res = await call(method, path, {});
         assert.equal(res.status, 404, key);
+      }
+    });
+  });
+
+  /* -------------------------------- Start-up ------------------------------- */
+
+  // server.cjs listens only once its start-up, the connection test and
+  // init-db.sql, has finished (Tier 3 WP3, candidate (o)); until then it
+  // listened at once, and a request could reach a route before init-db.sql had
+  // run. On one table shape: the order does not depend on it, and production's
+  // older tables are Render's (docs/plans/tier-3.md section 7). Its
+  // development path without a database, which still listens, is
+  // /api/health's DEGRADED test above.
+  if (shape.tables) describe('start-up', () => {
+    test('nothing listens while init-db.sql waits for a lock it needs; once it has run the server listens, its lines in the order deploy/README.md 9.2 gives', async () => {
+      // init-db.sql's ALTER TABLE clients takes ACCESS EXCLUSIVE, which waits
+      // for this ACCESS SHARE until the holder's transaction ends
+      const holder = await lockHolder();
+      const port = await freePort();
+      const base = `http://127.0.0.1:${port}`;
+      const answer = () => fetch(`${base}/api/health`).then((res) => res.status, (error) => error.cause?.code ?? error.message);
+      let server;
+      try {
+        await holder.query('BEGIN');
+        await holder.query('LOCK TABLE clients IN ACCESS SHARE MODE');
+        server = startServer({ ...env, PORT: String(port) });
+        servers.push(server);
+        server.ready.catch(() => {});
+        await waitFor(async () => (await lockWaiters()) > 0, 'init-db.sql to wait for the lock');
+        assert.equal(await answer(), 'ECONNREFUSED', 'the port answers nothing while init-db.sql waits');
+        assert.ok(!server.output.includes('Server running on port'), server.output);
+        await holder.query('COMMIT');
+        await server.ready;
+        await waitFor(() => server.output.includes('Environment: '), 'the last start-up line');
+        assert.deepEqual(server.output.trim().split('\n').map((line) => line.replace(/^\W+/, '')), [
+          'Testing database connection...',
+          'PostgreSQL connection OK',
+          'Initializing database tables...',
+          'Database tables initialized',
+          `Server running on port ${port}`,
+          'Environment: development',
+        ]);
+        assert.equal(await answer(), 200, 'and answers once it listens');
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+        if (server) stop(server);
       }
     });
   });

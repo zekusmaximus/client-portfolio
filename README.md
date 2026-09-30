@@ -12,8 +12,9 @@ for; `REVIEW-2026-09.md` says how well it does it.
 - **Page:** React 18, Vite 4, Zustand, Tailwind, Recharts (`src/`).
 - **API:** Express 5 (`server.cjs`), PostgreSQL through `pg`, a JWT in an
   httpOnly cookie, the Anthropic SDK behind one service (`services/anthropic.cjs`).
-- **Database:** `users`, `clients`, `client_revenues`, `people`, `ai_answers` and `client_changes`
-  (`init-db.sql`, applied by the API at every start).
+- **Database:** `users`, `clients`, `client_revenues`, `people`, `ai_answers`,
+  `client_changes` and `scenarios` (`init-db.sql`, applied by the API at every
+  start, before it opens its port).
 
 `CLAUDE.md` is the developer reference: commands, endpoints, the scoring
 formula, conventions.
@@ -83,8 +84,10 @@ passwords, secrets, logs, health, the uptime monitor. Backups:
 
 ## Where the plan lives
 
-[`docs/plans/tier-0.md`](docs/plans/tier-0.md) is the current plan
-(stabilisation, work packages WP0 to WP5) and its status table says what is
-merged, deployed and verified. Tier 1 (the AI rebuild) and Tier 2 (a shared
-six-partner tool) are previewed at its end. Earlier status and fix notes are in
-`docs/archive/`, kept for history only.
+The plans are in [`docs/plans/`](docs/plans/): Tier 0 (stabilisation), Tier 1
+(the AI rebuild) and Tier 2 (a shared six-partner tool) are done in code, each
+status table recording Jeff's checks on the live site, and
+[`docs/plans/tier-3.md`](docs/plans/tier-3.md), approved on 2026-09-29, is under
+way. `CLAUDE.md`'s "Current work plan" says which package is next and what
+waits on Jeff. Earlier status and fix notes are in `docs/archive/`, kept for
+history only.

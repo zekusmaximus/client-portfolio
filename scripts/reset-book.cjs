@@ -31,7 +31,7 @@
  * 7.1 and 7.2). There is deliberately no API endpoint or button for this.
  */
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const {
   CLIENT_FOREIGN_KEYS_SQL,
   checkClientForeignKeys,
