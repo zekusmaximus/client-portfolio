@@ -36,7 +36,7 @@ import {
 import { candidateReason } from '../../utils/departure';
 import { formatMoney } from '../../utils/load';
 import { approvalBlocker, planRequest } from '../../utils/transitionPlans';
-import { planViews, withAiPlan, withEdits, withoutEdit } from '../../utils/scenarioState';
+import { hasAiPlan, planViews, withAiPlan, withEdits, withoutEdit } from '../../utils/scenarioState';
 import TransitionSheetPanel from './TransitionSheetPanel';
 
 // Stage 2 (docs/plans/people-and-second-chair.md, Phase 5): each affected
@@ -474,7 +474,7 @@ const ClientTriageGrid = ({ decisions, selected, onSelect, onSelectAll, renderCa
       (riskFilter === 'high' && risk > 6);
     const plan = plans[String(client.id)];
     const matchesStatus = statusFilter === 'all' ||
-      (statusFilter === 'no-plan' && !plan?.strategy) ||
+      (statusFilter === 'no-plan' && !hasAiPlan(plan)) ||
       (plan?.status || 'pending') === statusFilter;
     return matchesSearch && matchesRisk && matchesStatus;
   }), [decisions, searchTerm, riskFilter, statusFilter, plans]);
@@ -667,7 +667,8 @@ const ClientReviewInterface = ({ departure, reportingYear, onProceedToStage3, on
   };
 
   const approvedCount = decisions.filter((d) => plans[String(d.client.id)]?.status === 'approved').length;
-  const generatedCount = decisions.filter((d) => plans[String(d.client.id)]?.strategy).length;
+  // The AI's own strategy, not a partner's text laid over it (hasAiPlan)
+  const generatedCount = decisions.filter((d) => hasAiPlan(plans[String(d.client.id)])).length;
 
   return (
     <div className="space-y-6">

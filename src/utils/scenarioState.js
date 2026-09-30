@@ -240,6 +240,15 @@ export function planView(plan, id) {
   };
 }
 
+/**
+ * Whether the AI has written a strategy for this plan (a stored plan or its
+ * planView): its own field, not the partner's text planView lays over it.
+ * Stage 2's "AI Plans" count and its "No AI plan" filter read it; until Tier 3
+ * WP4 (candidate (n)) they read the view's strategy, so a plan holding only a
+ * partner's text counted as an AI plan.
+ */
+export const hasAiPlan = (plan) => Boolean(plan?.ai?.strategy);
+
 /** planView for every plan in the store's transitionPlans. */
 export function planViews(plans = {}) {
   return Object.fromEntries(Object.entries(plans || {}).map(([id, plan]) => [id, planView(plan, id)]));

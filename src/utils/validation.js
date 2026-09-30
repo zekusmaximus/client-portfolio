@@ -30,17 +30,19 @@ export const VALIDATION_RULES = {
     }
   },
   
+  // None is allowed, as the server, the import and the book allow it
+  // (utils/clientRules.cjs; docs/plans/tier-3.md, U7 (b), WP4): the form used
+  // to require one, so a client the import created with no practice area
+  // could not be saved from the form, for its Stickiness or anything else,
+  // until someone picked an area nobody had chosen
   practiceArea: {
-    required: true,
-    minItems: 1,
+    required: false,
     allowedValues: [
-      'Healthcare', 'Municipal', 'Corporate', 'Energy', 
-      'Financial', 'Education', 'Transportation', 'Environmental', 
+      'Healthcare', 'Municipal', 'Corporate', 'Energy',
+      'Financial', 'Education', 'Transportation', 'Environmental',
       'Technology', 'Real Estate', 'Non-Profit', 'Other'
     ],
     errorMessages: {
-      required: 'At least one practice area must be selected',
-      minItems: 'At least one practice area must be selected',
       allowedValues: 'Please select valid practice areas only'
     }
   },
@@ -163,33 +165,42 @@ export const validateField = (fieldName, value, rules = VALIDATION_RULES[fieldNa
   return null;
 };
 
-// Validate revenue entry
+// A revenue row's amount is given when it has a value, 0 included: the API
+// sends a stored $0 row's amount as the number 0, which read as missing until
+// Tier 3 WP4 (candidate (x)), so such a client could not be saved again. ''
+// and a missing amount are none.
+const hasAmount = (amount) => amount !== undefined && amount !== null && String(amount).trim() !== '';
+
+// Validate revenue entry. A year with no amount is not an error (Tier 3 WP4,
+// candidate (j)): the save sends only the rows with a year and an amount
+// (revenuesToSend, src/utils/clientForm.js), so a new client, or a stored one
+// with no revenue, saves without any, and the empty row stays in the form for
+// the partner to fill.
 export const validateRevenueEntry = (revenue, _index) => {
   const errors = {};
   const currentYear = new Date().getFullYear();
-  
+  const amountGiven = hasAmount(revenue.revenue_amount);
+
   // Year validation
   if (revenue.year) {
     const year = parseInt(revenue.year);
     if (isNaN(year) || year < 1900 || year > currentYear + 10) {
       errors.year = `Year must be between 1900 and ${currentYear + 10}`;
     }
-  } else if (revenue.revenue_amount) {
+  } else if (amountGiven) {
     errors.year = 'Year is required when revenue amount is specified';
   }
-  
+
   // Revenue amount validation
-  if (revenue.revenue_amount) {
+  if (amountGiven) {
     const amount = parseFloat(revenue.revenue_amount);
     if (isNaN(amount) || amount < 0) {
       errors.revenue_amount = 'Revenue amount must be a positive number';
     } else if (amount > 1000000000) {
       errors.revenue_amount = 'Revenue amount exceeds maximum limit (1 billion)';
     }
-  } else if (revenue.year) {
-    errors.revenue_amount = 'Revenue amount is required when year is specified';
   }
-  
+
   return errors;
 };
 
