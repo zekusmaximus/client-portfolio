@@ -52,10 +52,11 @@ backup gate (its section 17). Jeff runs the tool once there are two weeks of
 saved answers (about 2026-10-10), and his choice's change is Tier 3's WP1.
 Next: `docs/plans/tier-3.md` (Tier 2's close-out, its open candidates and
 decisions, and what comes after), written 2026-09-29 against `fc2f671`,
-**proposed: not approved**. Read it before any change, and build nothing from
-it until Jeff has approved it, decision by decision (U1 onward), and its gate
-(U1) is met; then run its packages in its status table's order, and update
-that table when you finish one. A package that changes a
+approved by Jeff on 2026-09-29 (U1 to U13 as recommended). Read it before any
+change, and build nothing from it until U1's gate is met: Jeff's open Tier 2
+after-deploy checks (WP6, WP8, WP9, WP10) done and a green nightly backup;
+then run its packages in its status table's order, and update that table
+when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
 `PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
