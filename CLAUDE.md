@@ -83,9 +83,9 @@ schema, GitGuardian and the Deploy Preview); page only (no route, schema,
 feature name or write), so no backup gate; its after-deploy checks (tier-3.md
 section 13.10) are Jeff's and may trail WP6 by one. Then WP6 (where a new
 client fits): its section, tier-3.md section 14 with decisions U21 to U26,
-written 2026-09-30 against `2989622` on `claude/serene-clarke-ab14oy`, is in a
-docs-only PR, proposed for Jeff's approval; no WP6 code before he approves it
-(its 0.2 item 1). WP1 when Jeff's evaluation run and choice arrive (about
+written 2026-09-30 against `2989622` on `claude/serene-clarke-ab14oy`, is in
+PR #63 (docs only), proposed for Jeff's approval; no WP6 code before he
+approves it (its 0.2 item 1). WP1 when Jeff's evaluation run and choice arrive (about
 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
