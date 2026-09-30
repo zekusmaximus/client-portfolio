@@ -10,6 +10,7 @@ const {
   systemHash, turnContent, threadHistory, readParentId, checkFollowUp, threadPlace, earlierTurns,
 } = require('../utils/aiThreads.cjs');
 const { sseEvent, ssePing, wantsStream, pingInterval, SSE_HEADERS } = require('../utils/sse.cjs');
+const { logError } = require('../utils/errorLog.cjs');
 const {
   saveAnswer, listAnswers, getAnswer, getThread, setHidden, monthSummary,
 } = require('../models/aiAnswerModel.cjs');
@@ -188,10 +189,11 @@ async function answer(req, res, { kind, question, parentId = null }) {
     stopPing();
     // An API error is already described by the ai_error log line. A missing
     // key writes no line (complete() refuses it before any call; /api/health
-    // shows it) and needs no stack trace. Keep the stack trace for unexpected
-    // failures only.
+    // shows it). An unexpected failure (the database, a bug) is logged by its
+    // code and message (logError, Tier 3 WP2): never the error object, which
+    // for a failed query carries the refused row, so no stack trace either.
     const expected = error?.code === 'AI_NOT_CONFIGURED' || typeof error?.status === 'number';
-    if (!expected) console.error(`ai_${label} failed:`, error);
+    if (!expected) logError(`ai_${label} failed`, error);
     const { status, message } = describeError(error);
     if (open) {
       write(sseEvent('error', { error: message }));

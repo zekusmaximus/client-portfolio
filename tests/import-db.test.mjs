@@ -975,8 +975,12 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.equal((await clientRow(OBRIEN)).id.toString(), ids[OBRIEN]);
 
     // Two stored clients with one name (a duplicate the old matching made):
-    // refused, nothing written, until a partner deletes one
+    // refused, nothing written, until a partner deletes one. The client form
+    // no longer makes one (Tier 3 WP2, candidate (g)): its POST of a name
+    // another client has answers 400 beside the name, so the pair is written
+    // here as the old POST wrote it (201 until WP2)
     const paula = (await db.query("SELECT id FROM people WHERE name = 'Paula'")).rows[0].id;
+    const beforePost = await snapshot();
     const posted = await call('POST', '/api/data/clients', {
       name: BARNES,
       practice_area: ['Education'],
@@ -991,8 +995,17 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
       originator_is_firm: false,
       revenues: [{ year: 2026, revenue_amount: 40000 }],
     });
-    assert.equal(posted.status, 201, JSON.stringify(posted.body));
-    assert.equal(posted.body.client.name, BARNES, 'stored as typed (escaped until WP5)');
+    assert.deepEqual([posted.status, posted.body], [400, {
+      success: false,
+      error: 'Validation failed',
+      details: [{ field: 'name', message: `Another client is already named "${BARNES}" (names are compared regardless of case). Give this client a different name.` }],
+    }]);
+    assert.deepEqual(await snapshot(), beforePost, 'the refused POST wrote nothing');
+    const { rows: [duplicate] } = await db.query(`
+      INSERT INTO clients (name, practice_area, conflict_risk, notes, interaction_frequency, stickiness, high_maintenance,
+                           lead_id, primary_lobbyist, lobbyist_team, client_originator)
+      VALUES ($1, ARRAY['Education'], 'Medium', '', 'Monthly', 3, false, $2, 'Paula', ARRAY['Paula'], '')
+      RETURNING id`, [BARNES, paula]);
     const withDuplicate = await snapshot();
     const refused = await importCsv(sheet);
     assert.equal(refused.status, 400, JSON.stringify(refused.body));
@@ -1003,7 +1016,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     }]);
     assert.deepEqual(await snapshot(), withDuplicate);
 
-    const deleted = await fetch(`${base}/api/data/clients/${posted.body.client.id}`, { method: 'DELETE', headers: { Cookie: cookie } });
+    const deleted = await fetch(`${base}/api/data/clients/${duplicate.id}`, { method: 'DELETE', headers: { Cookie: cookie } });
     assert.equal(deleted.status, 204);
     result = await importCsv(sheet);
     assert.equal(result.status, 200, JSON.stringify(result.body));

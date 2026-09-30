@@ -8,7 +8,9 @@
 // stored before (on 2026-09-28 it found none on production). What remains
 // here is a guard where a stored name is compared or saved: the import's
 // matching (unescapeStoredSql, and indexStoredClients in utils/csvImport.cjs),
-// a transition plan's saved client name (answerRow) and the repair itself.
+// the client form's one-name-per-client check (utils/clientNames.cjs, Tier 3
+// WP2), a transition plan's saved client name (answerRow) and the repair
+// itself.
 // Nothing shows or sends text through it any more (WP5's second PR removed the
 // display decoders). Pure: no I/O and no env, so tests can import it.
 

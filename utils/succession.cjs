@@ -14,7 +14,8 @@
 // by its last bit.
 //
 // The rules are the page's as they were until WP7, with S11's four changes
-// (approved by Jeff on 2026-09-27) and nothing else:
+// (approved by Jeff on 2026-09-27) and, from Tier 3 WP2, Financial among the
+// complex areas (below), and nothing else:
 //   1. The relationship type reads the people by id, not the legacy text:
 //      orphaned without a lead; primary when the lead is the recorded
 //      originator and there is no second chair, whatever originator_is_firm
@@ -33,12 +34,14 @@
 //      integer result differs between the two, and tests/succession.test.mjs
 //      checks that too.
 //
-// Kept as they were: the weights, the 0.3 factors, the rounding, the cap of
-// 10 and the complex areas, which are 'healthcare', 'energy' and 'financial
-// services'. The practice-area vocabulary says 'Financial'
-// (utils/clientRules.cjs), which does not contain 'financial services', so a
-// Financial client adds no complexity; that is how the page has always
-// computed it, and changing it moves badges, so it is Jeff's call (WP7's PR).
+// Kept as they were: the weights, the 0.3 factors, the rounding and the cap
+// of 10. The complex areas are 'healthcare', 'energy' and 'financial', each
+// matched as part of a practice area's name in any case. Until Tier 3 WP2
+// the third was 'financial services', which the practice-area vocabulary's
+// 'Financial' (utils/clientRules.cjs) does not contain, so a Financial client
+// added no complexity; counting it was Jeff's call (Tier 3, U6 (b), approved
+// 2026-09-29). 'financial' still matches 'Financial Services', as stored
+// before the vocabulary.
 
 const { getStickiness, EFFORT_BY_CADENCE, HANDFUL_MULTIPLIER } = require('./strategic.cjs');
 const { clientEffort } = require('./book.cjs');
@@ -47,7 +50,7 @@ const { clientEffort } = require('./book.cjs');
 // on a 0 to 10 scale against it
 const MAX_EFFORT = EFFORT_BY_CADENCE.Daily * HANDFUL_MULTIPLIER;
 
-const COMPLEX_AREAS = ['healthcare', 'energy', 'financial services'];
+const COMPLEX_AREAS = ['healthcare', 'energy', 'financial'];
 const TYPE_RISK = { primary: 3, secondary: 2, shared: 1, orphaned: 5 };
 const RELATIONSHIP_TYPES = Object.keys(TYPE_RISK);
 

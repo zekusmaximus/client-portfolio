@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import Papa from 'papaparse';
 import csvImport from '../utils/csvImport.cjs';
 import analyzer from '../clientAnalyzer.cjs';
+import clientRules from '../utils/clientRules.cjs';
 
 const {
   findSheetColumns,
@@ -417,6 +418,29 @@ describe('processCSVData and checkSheet', () => {
       { row: 3, client: 'Barnes & Noble Education Fund', message: 'The book has 2 clients named "Barnes & Noble Education Fund", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.' },
       { row: 4, client: 'Acme', message: 'The book has 3 clients named "Acme", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.' },
     ]);
+  });
+
+  // Tier 3 WP2, candidate (w): until then the import stored an amount the
+  // client form refuses (from 1,000,000,000.01 up), and from 10,000,000,000 up
+  // it failed in client_revenues.revenue_amount, NUMERIC(12, 2) (a 500)
+  test('an amount over 1,000,000,000, the client form\'s limit, refuses its row, one sentence a year; 1,000,000,000 itself is accepted', () => {
+    const rows = [
+      { CLIENT: 'Acme', '2025 Contracts': '$1,000,000,000', '2026 Contracts': '$1,000,000,000.01' },
+      { CLIENT: 'Beta', '2025 Contracts': '10000000000', '2026 Contracts': '$1,500,000,000' },
+      { CLIENT: 'Gamma', '2025 Contracts': '(5,000,000,000)', '2026 Contracts': '' },
+    ];
+    const { errors } = checkSheet(file(rows), { roster: ROSTER });
+    assert.deepEqual(errors, [
+      { row: 2, client: 'Acme', message: "2026 Contracts is 1,000,000,000.01: a year's revenue can be at most 1,000,000,000, as on the client form." },
+      { row: 3, client: 'Beta', message: "2025 Contracts is 10,000,000,000: a year's revenue can be at most 1,000,000,000, as on the client form." },
+      { row: 3, client: 'Beta', message: "2026 Contracts is 1,500,000,000: a year's revenue can be at most 1,000,000,000, as on the client form." },
+    ], 'a negative amount deletes the year (D5), as before');
+    // The limit is the form's and the API's, one constant
+    assert.equal(clientRules.REVENUE_AMOUNT_MAX, 1e9);
+    // Before the people and the values, in the sheet's column order
+    const [mixed] = checkSheet(file([{ CLIENT: 'Delta', '2026 Contracts': '2000000000', Lead: 'Nobody', Stickiness: '9' }]), { roster: ROSTER }).errors
+      .map((e) => e.message);
+    assert.match(mixed, /^2026 Contracts is 2,000,000,000/);
   });
 
   test('the template and the plan\'s section 3 example import cleanly', () => {
