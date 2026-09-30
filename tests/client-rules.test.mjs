@@ -123,6 +123,26 @@ describe('the page\'s copy (src/utils/validation.js) equals the server\'s', () =
     }
   });
 
+  // Tier 3 WP4, U7 (b), candidate (k): the form required a practice area,
+  // though the server, the import and the book allow none, so a client the
+  // import created with a blank Practice Area could not be saved from the
+  // form until someone picked an area nobody chose
+  test('no practice area: allowed by the form, as by the server; an area off the list refused by both', () => {
+    const page = VALIDATION_RULES.practiceArea;
+    assert.equal(page.required, false);
+    assert.equal(page.minItems, undefined);
+    for (const none of [[], null, undefined]) {
+      assert.equal(validateField('practiceArea', none), null, JSON.stringify(none));
+      assert.deepEqual(detailsFor({ practice_area: none }), [], JSON.stringify(none));
+    }
+    const imported = clientFormData({ id: 1, name: 'Imported', lead_id: 2, revenues: [{ year: 2026, revenue_amount: 5000 }] });
+    assert.deepEqual(validateClientForm({ ...imported, stickiness: 3 }), {}, 'an imported client with none, saved for its Stickiness');
+    for (const other of [['Tax'], ['healthcare'], ['Energy', 'Law']]) {
+      assert.equal(validateField('practiceArea', other), page.errorMessages.allowedValues, JSON.stringify(other));
+      assert.deepEqual(detailsFor({ practice_area: other }).map((d) => d.field), ['practice_area'], JSON.stringify(other));
+    }
+  });
+
   test('the name\'s pattern, length and messages', () => {
     const page = VALIDATION_RULES.name;
     assert.deepEqual([page.pattern.source, page.pattern.flags], [NAME_PATTERN.source, NAME_PATTERN.flags]);
@@ -401,6 +421,10 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
         notes: null, revenues: [{ year: 2024, revenue_amount: 1000.5 }, { year: 2026, revenue_amount: 999999999.99 }],
       },
       { id: 9, name: 'Plain Client', practiceArea: ['Healthcare'], conflict_risk: null, lead_id: 2, revenues: [{ year: 2025, revenue_amount: 7500 }] },
+      // Tier 3 WP4: as the import creates one with blank Practice Area and
+      // no revenue ((k), (j)), and one with a $0 row the form stored ((x))
+      { id: 10, name: 'Imported Blank', practiceArea: [], conflict_risk: 'Medium', lead_id: 4, second_chair_id: null, revenues: [] },
+      { id: 11, name: 'Zero Row Co', practiceArea: ['Energy'], conflict_risk: 'Low', lead_id: 5, revenues: [{ year: 2025, revenue_amount: 0 }, { year: 2026, revenue_amount: 12000 }] },
     ];
     for (const client of stored) {
       const form = clientFormData(client, new Date('2026-09-27T12:00:00Z'));
@@ -412,6 +436,10 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
       assert.deepEqual([body.name, body.notes], [client.name, client.notes || '']);
       // and no cadence as none (WP6's candidate (a); the form sent As-Needed)
       assert.equal(body.interaction_frequency, client.interaction_frequency || '', `${client.name}: the cadence as stored`);
+      // The practice areas as stored, none included; the revenue rows above
+      // $0, none for a client with none (the form's empty row is not sent)
+      assert.deepEqual(body.practice_area, client.practiceArea, `${client.name}: the practice areas as stored`);
+      assert.deepEqual(body.revenues, client.revenues.filter((r) => r.revenue_amount > 0), `${client.name}: the revenue sent`);
     }
   });
 
@@ -426,6 +454,11 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
       const years = [...new Set(Array.from({ length: Math.floor(next() * 5) }, () => 1900 + Math.floor(next() * 137)))];
       const rows = years.map((year) => ({ year: String(year), revenue_amount: String(Math.round(next() * 1e11) / 100) }));
       if (next() < 0.3) rows.splice(Math.floor(next() * (rows.length + 1)), 0, { year: '', revenue_amount: '' });
+      const filled = [...rows];
+      // Tier 3 WP4: a year with no amount, as the form's empty row (j), and a
+      // $0 row as the API sends a stored one (x); the save sends neither
+      if (next() < 0.3) rows.splice(Math.floor(next() * (rows.length + 1)), 0, { year: String(1900 + Math.floor(next() * 137)), revenue_amount: '' });
+      if (next() < 0.3) rows.splice(Math.floor(next() * (rows.length + 1)), 0, { year: 1900 + Math.floor(next() * 137), revenue_amount: 0 });
       const form = {
         name,
         practiceArea: PRACTICE_AREAS.filter(() => next() < 0.25).concat(next() < 0.5 ? [] : [pick(PRACTICE_AREAS)]).filter((a, j, all) => all.indexOf(a) === j),
@@ -441,9 +474,11 @@ describe('the page\'s own values pass (src/utils/clientForm.js, the save path of
         notes: Array.from({ length: Math.floor(next() * 30) }, () => pick(noteChars)).join(''),
         revenues: rows,
       };
-      if (form.practiceArea.length === 0) form.practiceArea.push(pick(PRACTICE_AREAS));
+      // No practice area is allowed (Tier 3 WP4, U7 (b)); until then this
+      // test gave every form one, since the form required it
       assert.deepEqual(validateClientForm(form), {}, JSON.stringify(form));
       const body = pageBody(form);
+      assert.deepEqual(body.revenues, revenuesToSend(filled).revenues, 'no year without an amount, and no $0 row the API sent');
       assert.deepEqual(checkClient(asRouteSees(body)), [], JSON.stringify(body));
       assert.deepEqual(checkClient(body), [], JSON.stringify(body));
       assert.deepEqual([body.name, body.notes], [form.name.trim(), form.notes.trim()], 'sanitizeFormData trims and nothing else');

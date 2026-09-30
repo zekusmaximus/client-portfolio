@@ -85,13 +85,3 @@ export const resolveStickinessScore = (client) => {
   }
   return UNRATED_STICKINESS;
 };
-
-/**
- * Resolve both axes at once. Convenience for callers (e.g. succession utils)
- * that need stickiness and effort together.
- * @returns {{ stickinessScore: number, effort: number }}
- */
-export const resolveClientAxes = (client) => ({
-  stickinessScore: resolveStickinessScore(client),
-  effort: resolveEffort(client),
-});

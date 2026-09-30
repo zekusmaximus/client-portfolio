@@ -379,11 +379,12 @@ const ClientEnhancementForm = ({ onClose }) => {
             </div>
           </div>
 
-          {/* Practice Areas */}
+          {/* Practice Areas: none is allowed, as the API and the import
+              allow it (docs/plans/tier-3.md, U7 (b)) */}
           <div className="space-y-3">
             <Label className="flex items-center gap-2">
               <Building className="h-4 w-4" />
-              Practice Areas *
+              Practice Areas
             </Label>
             {errors.practiceArea && (
               <p className="text-sm text-red-500 flex items-center gap-1">

@@ -110,7 +110,6 @@ const usePortfolioStore = create(
     (set, get) => ({
       // Client data - fetched from server, not persisted locally
       clients: [],
-      originalClients: [], // Keep original data for comparison
       reportingYear: null, // D4: latest year with any revenue row > 0; set with clients, null when logged out
       clientsLoading: false,
       fetchError: null,
@@ -120,16 +119,7 @@ const usePortfolioStore = create(
       // leads, seconds and originated. From GET /api/people; not persisted.
       people: [],
       peopleError: null,
-      
-      // Upload state
-      isUploading: false,
-      uploadError: null,
-      
-      // Analysis state
-      isAnalyzing: false,
-      analysisError: null,
-      analytics: null,
-      
+
       // AI Advisor answers (WP2): kept in the store rather than the component so
       // switching tabs (which unmounts the tab content) does not discard a paid
       // answer. Not persisted (see partialize); cleared on logout.
@@ -142,12 +132,6 @@ const usePortfolioStore = create(
       // on logout. After a refresh the list comes back from the API, with the
       // answer just given at its top.
       aiAnswers: emptyAiAnswers(),
-
-      // Optimization state
-      optimization: null,
-      optimizationParams: {
-        maxCapacity: 2000
-      },
 
       // Authentication state
       isAuthenticated: false,
@@ -282,8 +266,6 @@ const usePortfolioStore = create(
         await get().fetchClients();
       },
       
-      setOriginalClients: (clients) => set({ originalClients: clients }),
-      
       // Add new client
       addClient: async (clientData) => {
         try {
@@ -341,16 +323,6 @@ const usePortfolioStore = create(
           throw err;
         }
       },
-      
-      setUploadState: (isUploading, error = null) => set({ 
-        isUploading, 
-        uploadError: error 
-      }),
-      
-      setAnalysisState: (isAnalyzing, error = null) => set({ 
-        isAnalyzing, 
-        analysisError: error 
-      }),
       
       setSelectedClient: (client) => set({ selectedClient: client }),
 
@@ -671,13 +643,6 @@ const usePortfolioStore = create(
         }, 0);
       },
       
-      getTopClients: (limit = 10) => {
-        const state = get();
-        return [...state.clients]
-          .sort((a, b) => (b.strategicValue || 0) - (a.strategicValue || 0))
-          .slice(0, limit);
-      },
-      
       // Succession planning analytics
       getSuccessionAnalytics: () => {
         const state = get();
@@ -990,9 +955,11 @@ const usePortfolioStore = create(
     {
       name: 'portfolio-storage',
       partialize: (state) => ({
-        // Persist only non-authoritative, UI-specific state
-        // Removed clients and originalClients - these should come from server
-        optimizationParams: state.optimizationParams,
+        // Persist only non-authoritative, UI-specific state; clients come
+        // from the server. optimizationParams, which nothing read, went in
+        // Tier 3 WP4: a copy left in a partner's localStorage is merged into
+        // the state on load as a key nothing reads, and dropped at the next
+        // write.
         currentView: state.currentView,
         isModalOpen: state.isModalOpen,
         selectedClient: state.selectedClient

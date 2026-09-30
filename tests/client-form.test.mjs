@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { clientFormData, clientRequestBody, revenuesToSend, formErrors, mergeAfterConflict, SEE_ABOVE } from '../src/utils/clientForm.js';
-import { validateField, validateClientForm, sanitizeFormData } from '../src/utils/validation.js';
+import { validateField, validateClientForm, validateRevenueEntry, sanitizeFormData } from '../src/utils/validation.js';
 
 // What the database holds after the form saves `form`
 const stored = (form) => {
@@ -127,6 +127,64 @@ test('a client with no cadence opens as Not set, so saving it for another reason
   // A value off the list is still refused
   assert.equal(validateField('interaction_frequency', 'Hourly'),
     'Interaction frequency must be one of: Daily, Weekly, Monthly, Quarterly, As-Needed, or Not set');
+});
+
+// Tier 3 WP4, candidate (j): the form starts a new client, and a stored client
+// with no revenue, with one row for this year and no amount, and required an
+// amount once a year was set, so neither could be saved without inventing
+// revenue. The save sends only the rows with both (revenuesToSend), so the row
+// is no error and stays in the form for the partner to fill.
+const NEW_CLIENT = {
+  name: 'New Co', practiceArea: ['Energy'], conflict_risk: 'Medium', lead_id: '3', second_chair_id: '', originator_id: '',
+  originator_is_firm: false, interaction_frequency: '', stickiness: null, high_maintenance: false, notes: '',
+  revenues: [{ year: 2026, revenue_amount: '' }],
+};
+
+test('a revenue row with a year and no amount is no error: a new client and a stored client with no revenue save without revenue, and the save leaves the row out', () => {
+  for (const amount of ['', '  ', null, undefined]) {
+    assert.deepEqual(validateRevenueEntry({ year: 2026, revenue_amount: amount }, 0), {}, JSON.stringify(amount));
+    assert.deepEqual(validateRevenueEntry({ year: '2026', revenue_amount: amount }, 0), {}, `"2026", ${JSON.stringify(amount)}`);
+  }
+  const stored = clientFormData({ ...CLIENT, revenues: [] }, new Date('2026-09-30T12:00:00Z'));
+  assert.deepEqual(stored.revenues, [{ year: 2026, revenue_amount: '' }], 'the empty row the form opens with');
+  for (const form of [NEW_CLIENT, stored]) {
+    assert.deepEqual(validateClientForm(form), {}, form.name);
+    const body = clientRequestBody({ ...sanitizeFormData(form), revenues: revenuesToSend(sanitizeFormData(form).revenues).revenues });
+    assert.deepEqual(body.revenues, [], `${form.name}: no revenue sent`);
+  }
+  // A row filled beside it is sent, from its own form row
+  const filled = { ...NEW_CLIENT, revenues: [{ year: 2026, revenue_amount: '' }, { year: '2025', revenue_amount: '1200' }] };
+  assert.deepEqual(validateClientForm(filled), {});
+  assert.deepEqual(revenuesToSend(filled.revenues), { revenues: [{ year: 2025, revenue_amount: 1200 }], formRows: [1] });
+  // An amount without a year, a bad year, and a bad amount are still errors
+  assert.deepEqual(validateRevenueEntry({ year: '', revenue_amount: '5' }, 0), { year: 'Year is required when revenue amount is specified' });
+  assert.deepEqual(validateRevenueEntry({ year: '', revenue_amount: 0 }, 0), { year: 'Year is required when revenue amount is specified' });
+  assert.match(validateRevenueEntry({ year: '1899', revenue_amount: '' }, 0).year || '', /^Year must be between 1900 and /);
+  for (const amount of ['-1', 'abc']) {
+    assert.deepEqual(validateRevenueEntry({ year: '2026', revenue_amount: amount }, 0), { revenue_amount: 'Revenue amount must be a positive number' }, amount);
+  }
+  assert.deepEqual(validateRevenueEntry({ year: '2026', revenue_amount: '1000000000.01' }, 0), { revenue_amount: 'Revenue amount exceeds maximum limit (1 billion)' });
+  assert.deepEqual(validateRevenueEntry({ year: '', revenue_amount: '' }, 0), {}, 'an empty row, as before');
+});
+
+// Tier 3 WP4, candidate (x): the API sends a stored $0 row's amount as the
+// number 0, which the form read as missing ("Revenue amount is required"), so
+// such a client could not be saved again. Only the form stores a $0 row (the
+// import deletes one, D5). The save still leaves it out: revenuesToSend reads
+// the number 0 as none, as the import's year rule reads `$0`, and the history
+// reads a $0 row as none (utils/clientChanges.cjs), so the row goes at the
+// next save that changes something, with nothing logged for it.
+test('a stored $0 row is a value, not missing: the client saves again, and the save leaves the $0 row out', () => {
+  assert.deepEqual(validateRevenueEntry({ year: 2025, revenue_amount: 0 }, 0), {});
+  assert.deepEqual(validateRevenueEntry({ year: '2025', revenue_amount: '0' }, 0), {}, 'typed, as before');
+  const form = clientFormData({ ...CLIENT, revenues: [{ year: 2025, revenue_amount: 0 }, { year: 2026, revenue_amount: 40000 }] });
+  assert.deepEqual(form.revenues, [{ year: 2025, revenue_amount: 0 }, { year: 2026, revenue_amount: 40000 }]);
+  assert.deepEqual(validateClientForm(form), {});
+  assert.deepEqual(revenuesToSend(sanitizeFormData(form).revenues), { revenues: [{ year: 2026, revenue_amount: 40000 }], formRows: [1] });
+  // A client whose only row is $0 sends none
+  const only = clientFormData({ ...CLIENT, revenues: [{ year: 2025, revenue_amount: 0 }] });
+  assert.deepEqual(validateClientForm(only), {});
+  assert.deepEqual(revenuesToSend(only.revenues).revenues, []);
 });
 
 // The save's side (docs/plans/tier-2.md, WP4): handleSave's revenue rows and the

@@ -304,6 +304,34 @@ test('a plan keeps the AI\'s fields and the partner\'s edits apart: regenerating
   assert.equal(page.withAiPlan(undefined, { ...aiResponse(1), answerId: null, saved: false }, AT).answerId, null);
 });
 
+// Tier 3 WP4, candidate (n): Stage 2's "AI Plans" count and its "No AI plan"
+// filter (ClientReviewInterface.jsx) read the view's strategy, which planView
+// lays the partner's edits over, so a plan holding only a partner's text
+// counted as an AI plan. They read hasAiPlan now: the AI's own strategy.
+test('Stage 2\'s AI plan count reads the AI\'s own strategy: a plan holding only a partner\'s text is not an AI plan; an AI plan the partner edited, or whose strategy the partner cleared, still is', () => {
+  // The component's predicate until WP4, frozen, over planViews
+  const oldCounted = (view) => Boolean(view?.strategy);
+  const plans = {
+    1: page.withAiPlan(undefined, aiResponse(1), AT),
+    2: page.withEdits(undefined, { strategy: 'Hand over at lunch.' }, AT),
+    3: page.withEdits(page.withAiPlan(undefined, aiResponse(3), AT), { strategy: 'Ours' }, AT),
+    4: page.withEdits(page.withAiPlan(undefined, aiResponse(4), AT), { strategy: '' }, AT),
+    5: page.withEdits(undefined, { timelineDays: 30 }, AT),
+    6: page.withAiPlan(undefined, aiResponse(6, { strategy: '', refused: true }), AT),
+  };
+  const views = page.planViews(plans);
+  const ids = ['1', '2', '3', '4', '5', '6', '7'];
+  // The defect, as the component read it: the partner-only plan (2) counted,
+  // and the AI plan whose strategy the partner cleared (4) did not
+  assert.deepEqual(ids.filter((id) => oldCounted(views[id])), ['1', '2', '3']);
+  // Now: the plans the AI wrote a strategy for, whatever the partner's edits
+  assert.deepEqual(ids.filter((id) => page.hasAiPlan(views[id])), ['1', '3', '4']);
+  // A stored plan reads the same as its view; none, and a declined answer
+  // with no strategy, are no AI plan ("No AI plan")
+  for (const id of ids) assert.equal(page.hasAiPlan(plans[id]), page.hasAiPlan(views[id]), id);
+  assert.deepEqual([page.hasAiPlan(undefined), page.hasAiPlan(null), page.hasAiPlan(page.emptyPlan())], [false, false, false]);
+});
+
 test('Stage 3 and the sheet read the plan with its edits: an edited timeline sets the end date; the tasks are the AI\'s', () => {
   const store = builtStore();
   const first = FIRST;
