@@ -3,7 +3,11 @@
 // to the page's own modules (src/utils/load.js, src/utils/revenue.js) on the
 // fixture book of tests/load.test.mjs and on 200 random books; then the text:
 // deterministic, every client once, names as stored, no notes, defaults
-// labelled as defaults.
+// labelled as defaults. Tier 3 WP5 adds the other pair: the page's port of the
+// book's exposure (src/utils/exposure.js, the Dashboard's exposure card and
+// sub-tab), held equal to the book's with ===, on the same books and on odd
+// picks and shuffled books, its figures in the book's words equal to the
+// book's `## Exposure` lines.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import book from '../utils/book.cjs';
@@ -16,6 +20,14 @@ import {
   formatRatio as pageRatio,
 } from '../src/utils/load.js';
 import { computeReportingYear, revenueForYear } from '../src/utils/revenue.js';
+import {
+  exposureModel,
+  stickinessPick as pagePick,
+  stickinessText as pageStickinessText,
+  STICKINESS_LABELS as PAGE_LABELS,
+  THIN_STICKINESS,
+} from '../src/utils/exposure.js';
+import { ratedForStickiness } from '../src/utils/askTheBook.js';
 import { PEOPLE, CLIENTS, person } from './fixtures/books.mjs';
 
 const { bookModel, renderBook, buildBook, reportingYear } = book;
@@ -55,14 +67,72 @@ const assertClose = (actual, expected, label) => {
 };
 const idSet = (clients) => clients.map((c) => String(c.id)).sort();
 
+// Bit for bit: the exposure's port sorts the clients as the book does before
+// it sums, so its figures are the book's with no tolerance
+const same = (actual, expected, label) => assert.ok(actual === expected, `${label}: ${actual} !== ${expected}`);
+
 /** The page's picture of the same book, at the page's reporting year. */
 function pageSide(people, clients, now) {
   const year = computeReportingYear(clients, now);
-  return { year, model: partnershipModel(people, clients, (c) => revenueForYear(c, year)) };
+  const revenueOf = (c) => revenueForYear(c, year);
+  return { year, model: partnershipModel(people, clients, revenueOf), exposure: exposureModel(clients, revenueOf) };
+}
+
+// The port's figures in the book's words (exposureSection, utils/book.cjs),
+// the money through the page's formatMoney: what the Dashboard shows
+function pageExposureLines(exposure, year) {
+  const clients = (n) => `${n} ${n === 1 ? 'client' : 'clients'}`;
+  const share = (b) => (b.share === null ? '' : ` (${b.share}% of the book's revenue)`);
+  const line = (label, b, withLeads) => {
+    const head = `- ${label}: ${clients(b.count)}, ${pageMoney(b.revenue)} in ${year}${share(b)}.`;
+    const leads = b.byLead.map((e) => `${e.name} ${clients(e.count)}, ${pageMoney(e.revenue)}`).join('; ');
+    return withLeads && b.count > 0 ? `${head} By lead: ${leads}.` : head;
+  };
+  return [
+    `## Exposure (${year} revenue on thin relationships)`,
+    '',
+    line('Rated 1 or 2 (thin)', exposure.thin, true),
+    line('Not rated (unknown, not safe)', exposure.unrated, true),
+    line('Rated 3 to 5', exposure.solid, false),
+  ];
+}
+
+// The book's `## Exposure` section, line by line
+function bookExposureLines(bookText) {
+  const start = bookText.indexOf('## Exposure');
+  return start < 0 ? [] : bookText.slice(start, bookText.indexOf('\n\n## Coverage', start)).split('\n');
+}
+
+/** The page's exposure (src/utils/exposure.js) against the book's, with ===. */
+function assertExposure(clients, exposure, server, label) {
+  same(exposure.total, server.totals.revenue, `${label}: the book's revenue`);
+  same(exposure.count, server.totals.clients, `${label}: clients`);
+  for (const key of ['thin', 'unrated', 'solid']) {
+    const [p, s] = [exposure[key], server.exposure[key]];
+    same(p.count, s.count, `${label}: ${key} count`);
+    same(p.revenue, s.revenue, `${label}: ${key} revenue`);
+    same(p.byLead.length, s.byLead.length, `${label}: ${key} leads`);
+    s.byLead.forEach((e, i) => {
+      const q = p.byLead[i];
+      same(q.person === null ? null : q.person.id, e.person === null ? null : e.person.id, `${label}: ${key} lead ${i}`);
+      same(q.count, e.count, `${label}: ${key} lead ${i} count`);
+      same(q.revenue, e.revenue, `${label}: ${key} lead ${i} revenue`);
+      same(q.clients.length, q.count, `${label}: ${key} lead ${i} clients`);
+    });
+  }
+  same(exposure.rated, server.exposure.thin.count + server.exposure.solid.count, `${label}: rated`);
+  same(ratedForStickiness(clients), exposure.rated, `${label}: "Rated for Stickiness"`);
+  // What the page shows, written in the book's words, is the book's text
+  const text = renderBook(server);
+  if (server.clients.length) {
+    assert.deepEqual(pageExposureLines(exposure, server.reportingYear), bookExposureLines(text), `${label}: the lines`);
+  } else {
+    assert.deepEqual(bookExposureLines(text), [], `${label}: an empty book has no exposure`);
+  }
 }
 
 function assertParity(people, clients, now, label) {
-  const { year, model: page } = pageSide(people, clients, now);
+  const { year, model: page, exposure } = pageSide(people, clients, now);
   const server = bookModel({ people, clients, now });
   assert.equal(server.reportingYear, year, `${label}: reporting year`);
   assert.equal(server.rows.length, page.rows.length, `${label}: one row per person`);
@@ -101,6 +171,7 @@ function assertParity(people, clients, now, label) {
   assertClose(server.totals.effort, page.totals.effort, `${label}: total effort`);
   assert.deepEqual(idSet(server.unled), idSet(page.unled), `${label}: unled`);
   assert.deepEqual(idSet(server.noSecondChair), idSet(page.noSecondChair), `${label}: no second chair`);
+  assertExposure(clients, exposure, server, label);
 }
 
 const ROLES = ['partner', 'emeritus', 'associate'];
@@ -203,6 +274,105 @@ test('reportingYear is computeReportingYear, and the two effort shares are one n
     const { clients, now } = randomBook(seed);
     assert.equal(reportingYear(clients, now), computeReportingYear(clients, now), `seed ${seed}`);
   }
+});
+
+/* ------------------------------------------------------------------------ */
+/*               Exposure on the page (Tier 3 WP5; T3, T5)                   */
+/* ------------------------------------------------------------------------ */
+
+// Picks the API never sends but pg or an older page could hold: the book
+// counts '4', ' 1' and '1.0' as rated (parseFloat), the rest as not rated
+const ODD_PICKS = ['4', ' 1', '1.0', 0, 6, 2.5, '', 'x', null, undefined];
+
+// The same book with every pick drawn again from the picks and the odd ones
+const withOddPicks = (rand, clients) =>
+  clients.map((c) => ({ ...c, stickiness: pick(rand, [...ODD_PICKS, 1, 2, 3, 4, 5]) }));
+
+test('exposure: the fixture book with picks added (it has none), band by band and lead by lead', () => {
+  // Kevin thin and solid; Paula thin and not rated; Brendan solid; the client
+  // without a lead thin; and a thin client under Steve, a lead made inactive
+  // past P5 (older data or a direct edit)
+  const picks = [1, 4, 2, null, 3, 2];
+  const steve = { id: 78, name: 'Old Ledger', lead: PEOPLE[9], secondChair: null, effort: 1, stickiness: 1, revenues: [{ year: 2026, revenue_amount: '1000' }] };
+  const clients = [...CLIENTS.map((c, i) => ({ ...c, stickiness: picks[i] })), steve];
+  assertParity(PEOPLE, clients, NOW, 'fixture with picks');
+
+  const { total, count, rated, thin, unrated, solid } = exposureModel(clients, (c) => revenueForYear(c, 2026));
+  assert.deepEqual([total, count, rated], [166000, 7, 6]);
+  assert.deepEqual([thin.count, thin.revenue, thin.share], [4, 96000, 58]);
+  assert.deepEqual(thin.byLead.map((e) => [e.name, e.count, e.revenue]), [
+    ['Kevin', 1, 60000], ['Paula', 1, 30000], ['Steve (inactive)', 1, 1000], ['no lead', 1, 5000],
+  ]);
+  assert.deepEqual([unrated.count, unrated.revenue, unrated.share], [1, 10000, 6]);
+  assert.deepEqual(unrated.byLead.map((e) => [e.name, e.count, e.revenue]), [['Paula', 1, 10000]]);
+  assert.deepEqual([solid.count, solid.revenue, solid.share], [2, 60000, 36]);
+  // Each lead's clients are the API's own objects, for the lead's sheet
+  assert.equal(thin.byLead[0].clients[0], clients[0]);
+  assert.deepEqual(thin.byLead[0].person, { id: 4, name: 'Kevin', role: 'partner', active: true });
+  assert.equal(thin.byLead[3].person, null);
+
+  // The fixture as it is: nobody rated, so every client is not rated, never safe
+  const bare = exposureModel(CLIENTS, (c) => revenueForYear(c, 2026));
+  assert.deepEqual([bare.rated, bare.thin.count, bare.solid.count, bare.unrated.count, bare.unrated.revenue], [0, 0, 0, 6, 165000]);
+  assert.deepEqual([bare.thin.share, bare.unrated.share], [0, 100]);
+  // No revenue in the year: no share, as the book shows none
+  const none = exposureModel(clients, () => 0);
+  assert.deepEqual([none.total, none.thin.share, none.unrated.share, none.solid.share], [0, null, null, null]);
+});
+
+test('exposure: the 200 random books with odd picks, equal to the book\'s with ===', () => {
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const { people, clients, now, rand } = randomBook(seed);
+    assertParity(people, withOddPicks(rand, clients), now, `seed ${seed}, odd picks`);
+  }
+});
+
+test('exposure: the 200 random books shuffled, as generated and with odd picks, equal to the book\'s with ===', () => {
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const { people, clients, now, rand } = randomBook(seed);
+    assertParity(shuffle(rand, people), shuffle(rand, clients), now, `seed ${seed}, shuffled`);
+    assertParity(people, shuffle(rand, withOddPicks(rand, clients)), now, `seed ${seed}, odd picks shuffled`);
+  }
+});
+
+test('exposure: the page\'s picks, labels and "not rated" are the book\'s', () => {
+  assert.deepEqual(PAGE_LABELS, book.STICKINESS_LABELS);
+  assert.deepEqual(THIN_STICKINESS, [1, 2], "T5: the brief's thin relationships");
+  for (const p of [null, 1, 2, 3, 4, 5]) assert.equal(pageStickinessText(p), book.stickinessText(p), String(p));
+  assert.equal(pageStickinessText(1), '1 Cold (never met in person)');
+  assert.equal(pageStickinessText(null), 'not rated');
+  for (const stickiness of [...ODD_PICKS, 1, 2, 3, 4, 5, '5', '1abc', 'x5', true, [], {}]) {
+    assert.equal(pagePick({ stickiness }), book.stickinessPick({ stickiness }), JSON.stringify(stickiness));
+  }
+  assert.deepEqual(['4', ' 1', '1.0', 0, 6, 2.5, ''].map((stickiness) => pagePick({ stickiness })), [4, 1, 1, null, null, null, null]);
+  for (const client of [null, undefined, {}]) assert.equal(pagePick(client), book.stickinessPick(client));
+});
+
+// docs/plans/tier-3.md, 13.2: three thin clients and one rated 4, exactly
+// 12.5% of the book in decimals. Summed in the book's order (by name) the
+// floats land on the half and round up; summed in reverse, as a port summing
+// in the order clients arrive could, they land below it and read 12%
+test('exposure: a thin band of exactly 12.5% reads 13%, as the book says, whichever order the clients arrive in', () => {
+  const tree = (id, name, amount, stickiness) => ({
+    id, name, lead: PEOPLE[3], secondChair: null, effort: 1, stickiness, revenues: [{ year: 2026, revenue_amount: amount }],
+  });
+  const book13 = [
+    tree(101, 'Alder', '12389.70', 1),
+    tree(102, 'Birch', '33254.92', 2),
+    tree(103, 'Cedar', '37223.26', 1),
+    tree(104, 'Dogwood', '580075.16', 4),
+  ];
+  for (const [clients, order] of [[book13, 'by name'], [[...book13].reverse(), 'in reverse']]) {
+    const { thin, total } = exposureModel(clients, (c) => revenueForYear(c, 2026));
+    assert.equal(thin.share, 13, order);
+    assert.equal(total, 662943.04, order);
+    assert.match(renderBook(bookModel({ people: PEOPLE, clients, now: NOW })),
+      /- Rated 1 or 2 \(thin\): 3 clients, \$82,868 in 2026 \(13% of the book's revenue\)\. By lead: Kevin 3 clients, \$82,868\./, order);
+    assertParity(PEOPLE, clients, NOW, `the 13% book ${order}`);
+  }
+  // The premise: the same three amounts summed in reverse round to 12
+  assert.equal(Math.round(((37223.26 + 33254.92 + 12389.70) / 662943.04) * 100), 12);
+  assert.equal(Math.round(((12389.70 + 33254.92 + 37223.26) / 662943.04) * 100), 13);
 });
 
 /* ------------------------------------------------------------------------ */

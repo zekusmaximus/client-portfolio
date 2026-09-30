@@ -50,6 +50,9 @@ const STICKINESS_LABELS = {
   2: 'New / still shallow',
   1: 'Cold (never met in person)',
 };
+// The page's copy is THIN_STICKINESS in src/utils/exposure.js (the
+// Dashboard's exposure, Tier 3 WP5), with STICKINESS_LABELS, stickinessPick
+// and stickinessText; tests/book.test.mjs holds the two equal.
 const THIN_STICKINESS = [1, 2]; // T5: the brief's thin relationships
 const CONFLICT_RISKS = ['Low', 'Medium', 'High'];
 
@@ -176,7 +179,10 @@ function tally(entries, keyOf) {
 }
 
 // One band of clients (T5): how many, their reporting-year revenue, and the
-// same by lead ("no lead" last), heaviest revenue first.
+// same by lead ("no lead" last), heaviest revenue first. The page's copy is
+// band() in src/utils/exposure.js, which sorts the clients as bookModel does
+// before it sums, so tests/book.test.mjs holds every figure equal with ===
+// and its lines equal to exposureSection's. Change one side, change the other.
 function band(clients) {
   const byLead = new Map();
   for (const c of clients) {

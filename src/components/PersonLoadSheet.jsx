@@ -12,6 +12,7 @@ import {
   secondChairEffort,
   SECOND_CHAIR_EFFORT_SHARE,
 } from '../utils/load';
+import { stickinessPick, stickinessText } from '../utils/exposure';
 
 const num = 'text-right tabular-nums';
 const strategic = (client) => {
@@ -39,7 +40,8 @@ const clientEffort = (client) => parseFloat(client.effort) || 0;
 
 // `effortOf` is the effort this person carries on the client: all of it as
 // lead, SECOND_CHAIR_EFFORT_SHARE of it as second chair (P10), so the column
-// adds up to the figure above it.
+// adds up to the figure above it. Stickiness is the pick with the book's
+// label, or "not rated" (utils/book.cjs, through ../utils/exposure.js).
 const ClientTable = ({ clients, year, revenueOf, otherLabel, otherOf, effortOf = clientEffort, effortLabel = 'Effort' }) => (
   <Table>
     <TableHeader>
@@ -48,6 +50,7 @@ const ClientTable = ({ clients, year, revenueOf, otherLabel, otherOf, effortOf =
         <TableHead className="text-right">Revenue {year}</TableHead>
         <TableHead className="text-right">Strategic value</TableHead>
         <TableHead className="text-right">{effortLabel}</TableHead>
+        <TableHead>Stickiness</TableHead>
         <TableHead>{otherLabel}</TableHead>
         <TableHead>Practice areas</TableHead>
       </TableRow>
@@ -59,6 +62,7 @@ const ClientTable = ({ clients, year, revenueOf, otherLabel, otherOf, effortOf =
           <TableCell className={num}>{formatMoney(revenueOf(client))}</TableCell>
           <TableCell className={num}>{strategic(client)}</TableCell>
           <TableCell className={num}>{formatEffort(effortOf(client))}</TableCell>
+          <TableCell>{stickinessText(stickinessPick(client))}</TableCell>
           <TableCell>{otherOf(client) || '—'}</TableCell>
           <TableCell className="text-muted-foreground">{practiceAreasOf(client).join(', ') || '—'}</TableCell>
         </TableRow>
@@ -67,9 +71,31 @@ const ClientTable = ({ clients, year, revenueOf, otherLabel, otherOf, effortOf =
   </Table>
 );
 
+// One band of a lead's exposure: the book's by-lead figures, then the clients
+// behind them, largest revenue first; "none" when the lead has no client there
+const ExposureClients = ({ testId, label, entry, year, revenueOf, byRevenue }) => (
+  <div data-testid={testId} className="space-y-2">
+    <h3 className="text-sm font-semibold">
+      {label}: {entry ? `${entry.count} ${entry.count === 1 ? 'client' : 'clients'}, ${formatMoney(entry.revenue)}` : 'none'}
+    </h3>
+    {entry && (
+      <ClientTable
+        clients={[...entry.clients].sort(byRevenue)}
+        year={year}
+        revenueOf={revenueOf}
+        otherLabel="Second chair"
+        otherOf={(c) => c.secondChair?.name}
+      />
+    )}
+  </div>
+);
+
 // One person's lead book and second-chair seats, from the tab's model row.
-// Everything shown is the book's own data: no projections.
-const PersonLoadSheet = ({ row, year, years, revenueOf, revenueOfYear, onClose }) => {
+// Everything shown is the book's own data: no projections. `exposure`, given
+// when the Dashboard's Exposure sub-tab opens the sheet, is the lead's entries
+// in the thin and not-rated bands (../utils/exposure.js; each null when the
+// lead has no client in it), shown first.
+const PersonLoadSheet = ({ row, year, years, revenueOf, revenueOfYear, exposure = null, onClose }) => {
   if (!row) return null;
   const { person, lead, second } = row;
   const byRevenue = (a, b) => revenueOf(b) - revenueOf(a);
@@ -90,6 +116,36 @@ const PersonLoadSheet = ({ row, year, years, revenueOf, revenueOfYear, onClose }
         </SheetHeader>
 
         <div className="space-y-6 p-6">
+          {exposure && (
+            <Card data-testid="sheet-exposure">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Exposure in {year}</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  The clients {person.name} leads that are rated Stickiness 1 or 2, then those not rated: the
+                  figures the AI is given.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ExposureClients
+                  testId="sheet-exposure-thin"
+                  label="Rated 1 or 2 (thin)"
+                  entry={exposure.thin}
+                  year={year}
+                  revenueOf={revenueOf}
+                  byRevenue={byRevenue}
+                />
+                <ExposureClients
+                  testId="sheet-exposure-unrated"
+                  label="Not rated"
+                  entry={exposure.unrated}
+                  year={year}
+                  revenueOf={revenueOf}
+                  byRevenue={byRevenue}
+                />
+              </CardContent>
+            </Card>
+          )}
+
           {(person.role === 'partner' || lead.count > 0) && (
             <Card>
               <CardHeader className="pb-3"><CardTitle className="text-base">Lead book</CardTitle></CardHeader>
