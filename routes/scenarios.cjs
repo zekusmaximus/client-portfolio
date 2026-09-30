@@ -9,6 +9,7 @@ const { saveAnswer } = require('../models/aiAnswerModel.cjs');
 const { loadBook } = require('../models/bookModel.cjs');
 const db = require('../db.cjs');
 const scenarioState = require('../utils/scenarioState.cjs');
+const { logError } = require('../utils/errorLog.cjs');
 const {
   checkPlanRequest,
   checkRoster,
@@ -63,11 +64,14 @@ const MAX_TOKENS = 16000;
 // change and no feature name.
 //
 // The plan is saved (WP4, T12) as a 'transition-plan' answer with the
-// client's id as text, its name unescaped (unescapeStored: the name the page
-// sends is the stored one, which is escaped if the form saved it before WP5),
-// the book's hash and its reporting year. The response keeps its shape (T14)
-// and adds answerId and saved beside plan: a failed save returns the plan
-// with saved: false and answerId null, never an error.
+// client's id as text, its name, the book's hash and its reporting year. The
+// name, the saved answer's and the plan's clientName, is the book's entry's
+// (as stored), whatever name the request carried (Tier 3 WP2, candidate (v);
+// until then both echoed the request's); answerRow still unescapes the saved
+// one (unescapeStored), a guard for text stored escaped before Tier 2 WP5.
+// The response keeps its shape (T14) and adds answerId and saved beside plan:
+// a failed save returns the plan with saved: false and answerId null, never
+// an error.
 router.post('/transition-plan', aiUserLimiter, aiGlobalLimiter, async (req, res) => {
   const { client, stage1Data, roster } = req.body || {};
   const refusal = checkPlanRequest(req.body);
@@ -80,10 +84,11 @@ router.post('/transition-plan', aiUserLimiter, aiGlobalLimiter, async (req, res)
   try {
     book = await loadBook(now);
   } catch (error) {
-    console.error('Error reading the book for a transition plan:', error);
+    logError('Error reading the book for a transition plan', error);
     return res.status(500).json({ success: false, error: 'Failed to read the book.' });
   }
-  if (!bookClient(book, client.id)) {
+  const entry = bookClient(book, client.id);
+  if (!entry) {
     return res.status(404).json({ success: false, error: 'Client not found.' });
   }
 
@@ -104,7 +109,7 @@ router.post('/transition-plan', aiUserLimiter, aiGlobalLimiter, async (req, res)
     });
     const { id: answerId, saved } = await saveAnswer(answerRow({
       kind: 'transition-plan',
-      client,
+      client: { id: client.id, name: entry.name },
       user: req.user,
       result,
       bookText: book.text,
@@ -118,7 +123,7 @@ router.post('/transition-plan', aiUserLimiter, aiGlobalLimiter, async (req, res)
       success: true,
       plan: {
         clientId: client.id,
-        clientName: client.name,
+        clientName: entry.name,
         ...parsed,
         truncated: result.truncated,
         refused: result.refused,
@@ -128,12 +133,11 @@ router.post('/transition-plan', aiUserLimiter, aiGlobalLimiter, async (req, res)
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    // An API status error is already described by the ai_error log line. A
-    // missing key writes no line (complete() refuses it before any call;
-    // /api/health shows it) and needs no stack trace. Keep the stack trace for
-    // unexpected failures only.
-    const expected = error?.code === 'AI_NOT_CONFIGURED' || typeof error?.status === 'number';
-    console.error(`Error generating transition plan for client ${client.id}:`, expected ? error.message : error);
+    // An API status error is also described by the ai_error log line; a
+    // missing key by /api/health. Every failure is logged by its code and
+    // message (logError, Tier 3 WP2): never the error object, which for a
+    // failed query carries the refused row, so no stack trace either.
+    logError(`Error generating transition plan for client ${client.id}`, error);
     const { status, message } = describeError(error);
     res.status(status).json({ success: false, error: message });
   }
@@ -149,8 +153,9 @@ router.post('/transition-plan', aiUserLimiter, aiGlobalLimiter, async (req, res)
 // never what the departure engine derives from the book. A save names the
 // version it opened; a stale one answers 409 naming who saved last and when.
 // None of these routes is behind the AI limiters (T16). A failed query is
-// logged by its code and message only: PostgreSQL's `detail` for a refused
-// row would print the whole state, partners' notes included.
+// logged by its code and message (and the constraint, table and column it
+// names), through logError: PostgreSQL's `detail` for a refused row would
+// print the whole state, partners' notes included.
 const {
   checkScenario,
   readScenarioId,
@@ -168,7 +173,7 @@ const {
 const NOT_FOUND = { success: false, error: 'Scenario not found.' };
 const validationFailed = (details) => ({ success: false, error: 'Validation failed', details });
 const failed = (res, what, error) => {
-  console.error(`Error ${what}:`, error?.code, error?.message);
+  logError(`Error ${what}`, error);
   res.status(500).json({ success: false, error: `Failed ${what}.` });
 };
 

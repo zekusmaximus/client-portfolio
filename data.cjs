@@ -24,6 +24,14 @@ const {
 } = require('./utils/csvImport.cjs');
 const { unescapeStoredSql } = require('./utils/escaping.cjs');
 const { NAME_MAX, NAME_PATTERN, isObjectBody, checkClient } = require('./utils/clientRules.cjs');
+const {
+  CLIENT_NAME_LOCK_SQL,
+  givesNewName,
+  SAME_NAME_SQL,
+  sameNameParams,
+  duplicateNameDetail
+} = require('./utils/clientNames.cjs');
+const { logError } = require('./utils/errorLog.cjs');
 const { revenueObjectFromRows } = require('./utils/strategic.cjs');
 const { withSuccessionMetrics } = require('./utils/succession.cjs');
 const {
@@ -99,16 +107,18 @@ const csvValidationRules = [
     .withMessage('dryRun must be true or false')
 ];
 
-// Handle validation errors for CSV
+// Handle validation errors for CSV. Each detail is { field, message }: until
+// Tier 3 WP2 it also carried `value`, which for csvData is the whole file,
+// notes included, sent back to the page that had just sent it (the page reads
+// only the message)
 const handleCSVValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
-  
+
   if (!errors.isEmpty()) {
     // express-validator 7 names the field `path` (it was `param` in 6)
     const errorMessages = errors.array().map(error => ({
       field: error.path,
-      message: error.msg,
-      value: error.value
+      message: error.msg
     }));
     
     return res.status(400).json({
@@ -173,6 +183,15 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
     
     // Save to database using upsert logic
     await conn.query('BEGIN');
+
+    // The client-name lock (utils/clientNames.cjs, Tier 3 WP2, candidate
+    // (g)), first, as the client form's POST and PUT take it: the import
+    // creates a client for each name no stored client has, and only the
+    // stored names it reads below can say which, so it holds the lock before
+    // reading them. A form save giving a client one of those names at the
+    // same moment then waits, and finds the name taken; Check file takes it
+    // too, and rolls it back with the rest.
+    await conn.query(CLIENT_NAME_LOCK_SQL);
 
     // The People list, when the file assigns people. FOR SHARE, as the client
     // writes below: routes/people.cjs cannot deactivate anyone or move a lead
@@ -487,8 +506,8 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
 
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
-    console.error('CSV processing error:', error);
-    res.status(500).json({ 
+    logError('Error processing a CSV import', error);
+    res.status(500).json({
       error: 'Failed to process CSV data',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
@@ -579,14 +598,29 @@ const validationFailed = (details) => ({
 // not checked against users, so a session can outlive its account).
 const accountId = (user) => (Number.isInteger(user?.userId) ? user.userId : null);
 
-// The client as stored, locked until the write commits, with its
-// updated_at to the microsecond (S10). Ids compared as text: production's
-// client ids are integers and init-db.sql's uuids.
-const lockClient = async (conn, clientId) => (await conn.query(`
+// The client as stored, with its updated_at to the microsecond (S10). Ids
+// compared as text: production's client ids are integers and init-db.sql's
+// uuids. lockClient locks it until the write commits; readClient reads it
+// without a lock, for a write that must lock the people first.
+const CLIENT_ROW_SQL = `
   SELECT c.*, ${updatedAtExactSql('c.updated_at')} AS updated_at_exact
     FROM clients c
-   WHERE c.id::text = $1
+   WHERE c.id::text = $1`;
+const readClient = async (conn, clientId) => (await conn.query(CLIENT_ROW_SQL, [clientId])).rows[0];
+const lockClient = async (conn, clientId) => (await conn.query(`${CLIENT_ROW_SQL}
    FOR UPDATE`, [clientId])).rows[0];
+
+// One name per client (utils/clientNames.cjs, Tier 3 WP2, candidate (g)):
+// the 400 detail on `name` when another client already holds the name's key
+// (regardless of case and unescaped, as the import matches names), or null.
+// `clientId` is the client being written, as text, or null for a new one. Run
+// only by a write holding CLIENT_NAME_LOCK_SQL, and only for a name checkClient
+// accepted (a refused name has its detail already).
+const nameTaken = async (conn, name, clientId) => {
+  const { rows: [other] } = await conn.query(SAME_NAME_SQL, sameNameParams(name, clientId));
+  return other ? duplicateNameDetail(other) : null;
+};
+const nameAccepted = (fieldErrors) => !fieldErrors.some((detail) => detail.field === 'name');
 
 // A client's revenue rows, by its stored id (an untyped placeholder takes the
 // column's type, uuid or integer)
@@ -606,7 +640,8 @@ const peopleIdsOf = (...rows) => rows.filter(Boolean)
 // One statement for every client that changed; nothing when none did. A
 // failure fails the write (the caller rolls back), and is rethrown without
 // PostgreSQL's `detail`, which for a refused row prints the whole row, a
-// note's text included, into the 500's log line.
+// note's text included; the caller logs it with logError, which reads only
+// the fields copied here.
 const logChanges = async (conn, entries, user, source) => {
   const params = insertChangesParams(entries, user, source);
   if (!params) return;
@@ -615,6 +650,9 @@ const logChanges = async (conn, entries, user, source) => {
   } catch (error) {
     const failure = new Error(`client_changes insert failed: ${error.message}`);
     failure.code = error.code;
+    failure.constraint = error.constraint;
+    failure.table = error.table;
+    failure.column = error.column;
     throw failure;
   }
 };
@@ -632,8 +670,8 @@ router.get('/clients', async (req, res) => {
       clients: clientsWithScores
     });
   } catch (error) {
-    console.error('Error fetching clients:', error);
-    res.status(500).json({ 
+    logError('Error fetching clients', error);
+    res.status(500).json({
       error: 'Failed to fetch clients',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
@@ -644,16 +682,22 @@ router.get('/clients', async (req, res) => {
 // The fields are checked (checkClient, utils/clientRules.cjs), then the
 // people; any problem answers 400 validationFailed with both lists' details,
 // the fields' first, and writes nothing. A body that is not an object answers
-// its one detail before anything is read.
+// its one detail before anything is read. A name another client already has,
+// regardless of case and unescaped, is a detail on `name` among the fields'
+// (Tier 3 WP2, candidate (g)), checked under the client-name lock, which the
+// transaction takes first.
 router.post('/clients', async (req, res) => {
   const fieldErrors = checkClient(req.body);
   if (!isObjectBody(req.body)) return res.status(400).json(validationFailed(fieldErrors));
 
   const conn = await db.pool.connect();
-  
+
   try {
     await conn.query('BEGIN');
-    
+    // Before any name is read: a second save of the same name waits here
+    // until this one commits, and then finds it (utils/clientNames.cjs)
+    await conn.query(CLIENT_NAME_LOCK_SQL);
+
     // The legacy retention columns (relationship_strength, relationship_intensity,
     // renewal_probability) and the phantom strategic_fit_score are retired: no
     // longer written here. They remain in the table (nullable / defaulted) until
@@ -674,8 +718,11 @@ router.post('/clients', async (req, res) => {
       revenues = []
     } = req.body;
 
+    const taken = nameAccepted(fieldErrors) ? await nameTaken(conn, name, null) : null;
     const assignment = await resolveAssignment(conn, req.body);
-    const details = [...fieldErrors, ...assignment.errors];
+    // The name's detail first, in the body's order (checkClient's name
+    // detail, when there is one, is first already)
+    const details = [...(taken ? [taken] : []), ...fieldErrors, ...assignment.errors];
     if (details.length > 0) {
       await conn.query('ROLLBACK');
       return res.status(400).json(validationFailed(details));
@@ -738,8 +785,8 @@ router.post('/clients', async (req, res) => {
     
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
-    console.error('Error creating client:', error);
-    res.status(500).json({ 
+    logError('Error creating client', error);
+    res.status(500).json({
       error: 'Failed to create client',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
@@ -758,17 +805,26 @@ router.post('/clients', async (req, res) => {
 // a direct request) is not checked, and is logged like any other. `revenues`
 // is the client's whole revenue, as before; a body without it leaves the
 // stored revenue as it is, and `revenues: []` clears it. A save that changes
-// nothing writes nothing: no updated_at, no history row.
+// nothing writes nothing: no updated_at, no history row. A save that gives the
+// client a name another client already has, regardless of case and unescaped,
+// is refused with a detail on `name` among the fields' (Tier 3 WP2, candidate
+// (g)); one that keeps its client's name is not, so two clients already
+// sharing a name stay editable. That is a body refusal too: a missing id
+// with a name another client has answers 400, not 404.
 router.put('/clients/:id', async (req, res) => {
   const fieldErrors = checkClient(req.body);
   if (!isObjectBody(req.body)) return res.status(400).json(validationFailed(fieldErrors));
   const expected = readExpectedUpdatedAt(req.body);
 
   const conn = await db.pool.connect();
-  
+
   try {
     await conn.query('BEGIN');
-    
+    // The client-name lock first, whether or not this save renames the
+    // client: the name it keeps or changes is read below, and must not
+    // change in between (utils/clientNames.cjs)
+    await conn.query(CLIENT_NAME_LOCK_SQL);
+
     // Compared as text, as the second-chair route does: production's client
     // ids are integers and init-db.sql's uuids, so an id of the other type, or
     // a malformed one, matches nobody (404) instead of failing in PostgreSQL
@@ -790,11 +846,20 @@ router.put('/clients/:id', async (req, res) => {
       revenues
     } = req.body;
 
+    // A name another client holds, unless the client keeps its own: read
+    // without a lock (the lock below comes after the people's), which the
+    // client-name lock makes safe, since no other write can change a
+    // client's name until this one ends. No such client: its name is new.
+    const stored = await readClient(conn, clientId);
+    const taken = nameAccepted(fieldErrors) && givesNewName(stored?.name, name)
+      ? await nameTaken(conn, name, clientId)
+      : null;
+
     // The people are read FOR SHARE before the client is locked, as every
     // write does, so a rename (routes/people.cjs: the person, then its
     // clients) cannot deadlock with a save
     const assignment = await resolveAssignment(conn, req.body);
-    const details = [...fieldErrors, ...expected.errors, ...assignment.errors];
+    const details = [...(taken ? [taken] : []), ...fieldErrors, ...expected.errors, ...assignment.errors];
     if (details.length > 0) {
       await conn.query('ROLLBACK');
       return res.status(400).json(validationFailed(details));
@@ -896,8 +961,8 @@ router.put('/clients/:id', async (req, res) => {
     
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
-    console.error('Error updating client:', error);
-    res.status(500).json({ 
+    logError('Error updating client', error);
+    res.status(500).json({
       error: 'Failed to update client',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
@@ -914,10 +979,24 @@ router.put('/clients/:id', async (req, res) => {
 // seat as the page saw it (null for none): if another partner filled it in
 // the meantime, the answer is 409 and nothing is written. The second chair is
 // checked as every write checks it (validateAssignment: an active person on
-// the People list, not the lead), read FOR SHARE, and the client FOR UPDATE.
-// Ids are compared as text: production's client ids are integers. The change
-// is logged as `second-chair` (WP6); a request that sets the seat the client
-// already holds changes nothing and writes nothing, updated_at included.
+// the People list, not the lead). Ids are compared as text: production's
+// client ids are integers. The change is logged as `second-chair` (WP6); a
+// request that sets the seat the client already holds changes nothing and
+// writes nothing, updated_at included.
+//
+// The locks are taken in a rename's order (Tier 3 WP2, candidate (b)): a
+// rename (routes/people.cjs) locks the person, then the clients that name
+// them, and every client write reads the people it assigns FOR SHARE before
+// it locks the client. Until WP2 this route locked the client first, so an
+// Accept and a rename of the client's lead at the same moment each held what
+// the other needed, and PostgreSQL aborted one of them (40P01, a 500). Now the
+// client is read without a lock (404 when there is none), the people it
+// assigns (its lead and originator, and the new second chair) are read FOR
+// SHARE, and only then is the client locked FOR UPDATE. If its lead or
+// originator changed in between, the people checked are not its people any
+// more: 409 with a message of its own, nothing written.
+const SEAT_CHANGED = "This client's second chair changed since the page loaded. Reload the page and try again.";
+const PEOPLE_CHANGED = "This client's lead or originator changed at the same moment, so nothing was written. Reload the page and try again.";
 router.put('/clients/:id/second-chair', async (req, res) => {
   const body = req.body || {};
   const clientId = String(req.params.id);
@@ -934,17 +1013,15 @@ router.put('/clients/:id/second-chair', async (req, res) => {
   const conn = await db.pool.connect();
   try {
     await conn.query('BEGIN');
-    const current = await lockClient(conn, clientId);
+    // Read, not locked: the people are locked first
+    const current = await readClient(conn, clientId);
     if (!current) {
       await conn.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'Client not found' });
     }
     if ((current.second_chair_id ?? null) !== expected) {
       await conn.query('ROLLBACK');
-      return res.status(409).json({
-        success: false,
-        error: "This client's second chair changed since the page loaded. Reload the page and try again."
-      });
+      return res.status(409).json({ success: false, error: SEAT_CHANGED });
     }
     if (current.lead_id === null) {
       await conn.query('ROLLBACK');
@@ -965,6 +1042,23 @@ router.put('/clients/:id/second-chair', async (req, res) => {
       return res.status(400).json(validationFailed(assignment.errors));
     }
 
+    // Now the client, locked until the write commits, as it is now: another
+    // write may have landed since it was read (a rename's rewrite of its
+    // legacy text, which this write keeps, or a change to its seats)
+    const locked = await lockClient(conn, clientId);
+    if (!locked) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Client not found' });
+    }
+    if ((locked.second_chair_id ?? null) !== expected) {
+      await conn.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: SEAT_CHANGED });
+    }
+    if (locked.lead_id !== current.lead_id || locked.originator_id !== current.originator_id) {
+      await conn.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: PEOPLE_CHANGED });
+    }
+
     const { rows: [updated] } = await conn.query(`
       UPDATE clients
          SET second_chair_id = $1, lobbyist_team = $2, updated_at = CURRENT_TIMESTAMP,
@@ -972,8 +1066,8 @@ router.put('/clients/:id/second-chair', async (req, res) => {
        WHERE id::text = $3
        RETURNING *`,
       [assignment.value.second_chair_id, assignment.legacy.lobbyist_team, clientId, accountId(req.user)]);
-    const names = await peopleNames(conn, peopleIdsOf(current, updated));
-    const changes = clientChanges(clientSnapshot(current, { names }), clientSnapshot(updated, { names }));
+    const names = await peopleNames(conn, peopleIdsOf(locked, updated));
+    const changes = clientChanges(clientSnapshot(locked, { names }), clientSnapshot(updated, { names }));
     if (changes) {
       await logChanges(conn, [{ clientId: updated.id, clientName: updated.name, changes }], req.user, 'second-chair');
       await conn.query('COMMIT');
@@ -985,7 +1079,7 @@ router.put('/clients/:id/second-chair', async (req, res) => {
     res.json({ success: true, client: apiClients(rows)[0] });
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
-    console.error('Error assigning a second chair:', error);
+    logError('Error assigning a second chair', error);
     res.status(500).json({ success: false, error: 'Failed to assign the second chair' });
   } finally {
     conn.release();
@@ -1028,7 +1122,7 @@ router.delete('/clients/:id', async (req, res) => {
     
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
-    console.error('Error deleting client:', error);
+    logError('Error deleting client', error);
     res.status(500).json({ 
       error: 'Failed to delete client',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -1049,7 +1143,7 @@ router.get('/clients/:id/changes', async (req, res) => {
     const { rows } = await db.query(CLIENT_CHANGES_SQL, [String(req.params.id)]);
     res.json({ success: true, changes: rows });
   } catch (error) {
-    console.error('Error fetching client changes:', error);
+    logError('Error fetching client changes', error);
     res.status(500).json({ success: false, error: 'Failed to load the client\'s history' });
   }
 });

@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const db = require('./db.cjs');
 const { isConfigured, AI_MODEL } = require('./services/anthropic.cjs');
+const { logError } = require('./utils/errorLog.cjs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -172,10 +173,11 @@ app.get('/api/health', async (req, res) => {
 
 
 // Error handling middleware. Body-parser errors carry their own 4xx status
-// (400 for malformed JSON, 413 over the 5 MB limit); anything else is a 500.
+// (400 for malformed JSON, 413 over the 5 MB limit); anything else is a 500,
+// logged by its code and message (logError), never the error object.
 app.use((err, req, res, _next) => {
   const status = err.status >= 400 && err.status < 500 ? err.status : 500;
-  if (status === 500) console.error('Error:', err);
+  if (status === 500) logError(`Error on ${req.method} ${req.path}`, err);
   res.status(status).json({ 
     error: status === 413 ? 'Request body too large (5 MB limit)' : status < 500 ? 'Bad request' : 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
@@ -197,9 +199,11 @@ app.use((err, req, res, _next) => {
     await db.query(initScript);
     console.log('✅  Database tables initialized');
   } catch (e) {
-    console.error('❌  Database initialization failed:', e.message);
-    console.error('Full error:', e);
-    
+    // By its code and message (and the constraint, table and column it
+    // names): the error object's `detail` and `where` could print a row or
+    // init-db.sql's statement (logError, Tier 3 WP2)
+    logError('❌  Database initialization failed', e);
+
     if (process.env.NODE_ENV === 'production') {
       console.error('💥 Cannot start server without database in production');
       process.exit(1);

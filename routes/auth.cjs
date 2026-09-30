@@ -7,6 +7,7 @@ const { validatePassword } = require('../utils/passwordPolicy.cjs');
 const { SESSION_TTL_MS } = require('../config/session.cjs');
 const authenticateToken = require('../middleware/auth.cjs');
 const { loginIpLimiter, loginUserLimiter } = require('../middleware/rateLimit.cjs');
+const { logError } = require('../utils/errorLog.cjs');
 
 // The auth cookie. In production the page (gbacpod.com, Netlify) and the API
 // (client-portfolio-backend.onrender.com, Render) are different sites, so a
@@ -52,7 +53,7 @@ router.post('/login', loginIpLimiter, loginUserLimiter, async (req, res) => {
       }
     });
   } catch (e) {
-    console.error(e);
+    logError('Error signing in', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -78,7 +79,7 @@ router.get('/me', authenticateToken, async (req, res) => {
       }
     });
   } catch (e) {
-    console.error(e);
+    logError('Error reading the signed-in account', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -115,7 +116,7 @@ router.post('/change-password', loginIpLimiter, authenticateToken, async (req, r
 
     res.json({ success: true });
   } catch (e) {
-    console.error(e);
+    logError('Error changing a password', e);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });

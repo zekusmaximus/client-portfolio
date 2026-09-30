@@ -28,9 +28,10 @@ import { safePracticeAreaToArray } from './dataUtils.js';
 import { resolveStickinessScore, resolveEffort, MAX_EFFORT } from './clientMetrics.js';
 
 // Held equal to utils/succession.cjs. 'Financial', the form's practice area,
-// does not contain 'financial services' and adds nothing (as it always has;
-// a change is Jeff's to make, on both sides)
-export const COMPLEX_AREAS = ['healthcare', 'energy', 'financial services'];
+// counts from Tier 3 WP2 (U6 (b), Jeff, 2026-09-29): until then the third
+// area was 'financial services', which 'Financial' does not contain, so it
+// added nothing. Change both sides together
+export const COMPLEX_AREAS = ['healthcare', 'energy', 'financial'];
 const TYPE_RISK = { primary: 3, secondary: 2, shared: 1, orphaned: 5 };
 
 // A person's id as text, or null: the nested person's (the API's lead,

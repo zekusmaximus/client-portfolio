@@ -180,17 +180,28 @@ test('complexity: a complex practice area adds 1.5, High conflict risk 1; the la
   assert.equal(complexity({ interaction_frequency: 'Daily', high_maintenance: true, practice_area: ['Energy'], conflict_risk: 'High' }), 6, '3 + 1.5 + 1 = 5.5, the most any client reaches');
 });
 
-test('complexity: Financial, the form\'s practice area, is not a complex area, as it never was (Jeff\'s call; WP7\'s PR)', () => {
-  assert.deepEqual(COMPLEX_AREAS, ['healthcare', 'energy', 'financial services']);
+// Tier 3 WP2 (U6 (b), approved by Jeff on 2026-09-29): until then the third
+// complex area was 'financial services', which the form's 'Financial' does
+// not contain, so a Financial client added nothing, and this test said so
+test('complexity: Financial, the form\'s practice area, is a complex area on both sides (U6 (b))', () => {
+  assert.deepEqual(COMPLEX_AREAS, ['healthcare', 'energy', 'financial']);
   assert.deepEqual(PAGE_COMPLEX_AREAS, COMPLEX_AREAS);
   assert.ok(clientRules.PRACTICE_AREAS.includes('Financial'));
-  assert.ok(!clientRules.PRACTICE_AREAS.some((a) => a.toLowerCase().includes('financial services')), 'no vocabulary value holds it');
   const complexity = (areas) => both({ lead_id: 4, interaction_frequency: 'Monthly', practice_area: areas }).transitionComplexity;
-  assert.equal(complexity(['Financial']), 1, 'no 1.5');
-  assert.equal(complexity(['Financial Services']), 2, 'text holding it still counts (none since WP4\'s vocabulary)');
+  // 0.8 + 1.5 = 2.3 (0.8 alone, 1, until WP2)
+  assert.equal(complexity(['Financial']), 2, 'the 1.5');
+  assert.equal(complexity(['financial']), 2, 'in any case');
+  assert.equal(complexity(['Financial Services']), 2, 'text holding it still counts, as it did (none since WP4\'s vocabulary)');
+  assert.equal(complexity(['Financial', 'Healthcare']), 2, 'once, however many complex areas');
   // Which vocabulary values count at all
   const counted = clientRules.PRACTICE_AREAS.filter((a) => complexity([a]) === 2);
-  assert.deepEqual(counted, ['Healthcare', 'Energy']);
+  assert.deepEqual(counted, ['Healthcare', 'Energy', 'Financial']);
+  // What moves for a Financial client: its complexity gains 1.5 before
+  // rounding, and its succession risk 0.3 of that complexity after it
+  const before = { relationshipType: 'secondary', transitionComplexity: 1, successionRisk: 4 };
+  assert.deepEqual(both({ lead_id: 4, interaction_frequency: 'Monthly', practice_area: [] }), before, 'the same client with no complex area');
+  assert.deepEqual(both({ lead_id: 4, interaction_frequency: 'Monthly', practice_area: ['Financial'] }),
+    { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 }, '2 + 1.556 + 0.6 = 4.156');
 });
 
 test('rule 3: practice areas from practiceArea or practice_area, through one helper on each side', () => {
@@ -367,7 +378,9 @@ test('parity: the fixture book of tests/fixtures/books.mjs, on both sides and fr
     { relationshipType: 'shared', transitionComplexity: 5, successionRisk: 3 },
     { relationshipType: 'shared', transitionComplexity: 1, successionRisk: 1 },
     { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 },
-    { relationshipType: 'primary', transitionComplexity: 1, successionRisk: 7 },
+    // Financial, Quarterly, High: 0.4 + 1.5 + 1 = 2.9 (1.4, so 1, until Tier 3
+    // WP2 counted Financial, U6 (b)); risk 3 + 3.5 + 0.9 = 7.4 (6.8), still 7
+    { relationshipType: 'primary', transitionComplexity: 3, successionRisk: 7 },
     { relationshipType: 'secondary', transitionComplexity: 0, successionRisk: 8 },
     { relationshipType: 'orphaned', transitionComplexity: 2, successionRisk: 7 },
   ]);

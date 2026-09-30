@@ -496,6 +496,30 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
   const todaysBookSha = async () => createHash('sha256').update((await call('GET', '/api/ai/book')).body.text, 'utf8').digest('hex');
   const aiBudgetLeft = (res) => Number(/remaining=(\d+)/.exec(res.headers.get('ratelimit') || '')?.[1]);
   const answerCount = async () => (await db.query('SELECT count(*)::int AS n FROM ai_answers')).rows[0].n;
+  // Tier 3 WP2: a connection of the test's own, standing in for another write
+  // that holds row locks while a route runs. Its deadlock_timeout is long, so
+  // when a deadlock forms the route's backend (the server's default, 1 s) is
+  // the one PostgreSQL aborts, and the route answers for it. lockWaiters
+  // counts the backends in this database waiting for a lock: the route,
+  // blocked by the holder
+  const lockHolder = async () => {
+    const holder = new pg.Client({ connectionString: urlFor(dbName) });
+    await holder.connect();
+    await holder.query("SET deadlock_timeout = '10min'");
+    return holder;
+  };
+  const lockWaiters = async () => (await db.query(
+    "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'")).rows[0].n;
+  // Clients whose name has `name`'s key, regardless of case (the import's rule)
+  const clientsNamed = async (name) => (await db.query('SELECT id, name FROM clients WHERE LOWER(name) = LOWER($1)', [name])).rows;
+  // The 400 detail for a name another client, stored as `stored`, has (Tier 3 WP2, (g))
+  const nameTakenDetail = (stored) => detail('name', `Another client is already named "${stored}" (names are compared regardless of case). Give this client a different name.`);
+  // A server's log line starting with `label`, and holding `marker`, once it
+  // has arrived (the output comes on a pipe and can lag the answer); its JSON
+  const logged = async (server, label, marker) => {
+    const line = await waitFor(() => server.output.split('\n').find((l) => l.startsWith(`${label}: `) && l.includes(marker)), `the "${label}" line`);
+    return JSON.parse(line.slice(label.length + 2));
+  };
 
   // Every contract's block: its 401 without sign-in, then the route's own tests
   const route = (key, tests) => describe(key, () => {
@@ -827,7 +851,9 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
     // lacked `field`: handleCSVValidationErrors read error.param, which
     // express-validator 7 renamed error.path (docs/plans/tier-2.md, section 3
     // item 6). The page shows details[].message (src/DataUploadManager.jsx).
-    test('400 { error, details: [{ field, message, value }] } from the request check: no rows, a row without CLIENT, dryRun not a boolean; nothing written', async () => {
+    // Until Tier 3 WP2 each detail also carried `value`, for csvData the
+    // whole file, notes included
+    test('400 { error, details: [{ field, message }] } from the request check: no rows, a row without CLIENT, dryRun not a boolean; nothing written', async () => {
       const before = await clientCount();
       const refusals = [
         [{ csvData: [] }, 'csvData', 'CSV data must be a non-empty array'],
@@ -844,9 +870,77 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         assert.deepEqual(keysOf(res.body), ['details', 'error']);
         assert.equal(res.body.error, 'CSV validation failed');
         assert.ok(res.body.details.some((d) => d.field === field && d.message === message), `${JSON.stringify(body)}: ${JSON.stringify(res.body.details)}`);
-        for (const detail of res.body.details) assert.deepEqual(keysOf(detail), ['field', 'message', 'value'], JSON.stringify(detail));
+        for (const detail of res.body.details) assert.deepEqual(keysOf(detail), ['field', 'message'], JSON.stringify(detail));
       }
+      // A file the check refuses is not sent back: its notes stay out of the answer
+      const note = `Private note ${letters(12)}`;
+      const res = await call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: 'Acme; Inc', Notes: note }] });
+      assert.equal(res.status, 400, res.text);
+      assert.ok(!res.text.includes(note), 'the file is not echoed');
       assert.equal(await clientCount(), before);
+    });
+
+    // Tier 3 WP2, candidate (w): until then the import stored an amount the
+    // client form refuses, and from 10,000,000,000 up it failed in
+    // client_revenues.revenue_amount, NUMERIC(12, 2): a 500
+    test('400 { success: false, error, errors } for an amount over 1,000,000,000, the client form\'s limit, by row; nothing written, Check file the same; 1,000,000,000 itself imports', async () => {
+      const over = uniqueName('Over Client');
+      const huge = uniqueName('Huge Client');
+      const before = { count: await clientCount(), changes: await changeCount() };
+      const csvData = [
+        { CLIENT: over, '2025 Contracts': '$1,000', '2026 Contracts': '$1,000,000,001' },
+        { CLIENT: huge, '2025 Contracts': '', '2026 Contracts': '$10,000,000,000' },
+      ];
+      const refusal = [400, {
+        success: false,
+        error: 'Nothing was imported: the file has 2 problems. Fix the rows below and upload it again.',
+        errors: [
+          { row: 2, client: over, message: "2026 Contracts is 1,000,000,001: a year's revenue can be at most 1,000,000,000, as on the client form." },
+          { row: 3, client: huge, message: "2026 Contracts is 10,000,000,000: a year's revenue can be at most 1,000,000,000, as on the client form." },
+        ],
+      }];
+      for (const dryRun of [false, true]) {
+        const res = await call('POST', '/api/data/process-csv', { csvData, dryRun });
+        assert.deepEqual([res.status, res.body], refusal, `dryRun ${dryRun}`);
+      }
+      assert.deepEqual([await clientCount(), await changeCount()], [before.count, before.changes]);
+      assert.deepEqual([...await clientsNamed(over), ...await clientsNamed(huge)], []);
+      // The limit itself, as the form allows it
+      const edge = uniqueName('Edge Client');
+      const res = await call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: edge, '2026 Contracts': '$1,000,000,000' }] });
+      assert.equal(res.status, 200, res.text);
+      const [stored] = await clientsNamed(edge);
+      assert.deepEqual(await revenueRows(stored.id), [{ year: 2026, amount: 1e9 }]);
+      // Gone again, so the book's totals are the other tests' own
+      await db.query('DELETE FROM clients WHERE id::text = $1', [String(stored.id)]);
+    });
+
+    // Tier 3 WP2, candidate (g): the import creates a client for a name no
+    // stored client has, and takes the client-name lock before reading the
+    // stored names, as the form's POST does before its check. Until WP2
+    // neither checked, and the two could each create one
+    test('an import and a POST of one new name at once leave one client of that name: whichever runs second finds the first', async () => {
+      const kevin = await seed('Kevin');
+      for (let round = 0; round < 3; round += 1) {
+        const name = uniqueName('Raced Import');
+        const [imported, posted] = await Promise.all([
+          call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: name, '2026 Contracts': '$1,000', Lead: 'Kevin' }] }),
+          call('POST', '/api/data/clients', formBody({ name: name.toUpperCase(), lead_id: kevin.id })),
+        ]);
+        assert.equal(imported.status, 200, imported.text);
+        const stored = await clientsNamed(name);
+        assert.equal(stored.length, 1, `round ${round}: ${stored.map((c) => c.name)}`);
+        const { newClients, updatedClients } = imported.body.summary;
+        if (posted.status === 201) {
+          // The POST first: the import found it and updated it
+          assert.deepEqual([newClients, updatedClients], [0, 1], `round ${round}`);
+          assert.equal(String(stored[0].id), String(posted.body.client.id));
+        } else {
+          // The import first: the POST found its client
+          assert.deepEqual([posted.status, posted.body], [400, failed(nameTakenDetail(name))], `round ${round}`);
+          assert.deepEqual([newClients, updatedClients], [1, 0], `round ${round}`);
+        }
+      }
     });
 
     // Until WP5 every cell arrived escaped by the request sanitizer and was
@@ -1144,20 +1238,64 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(await clientCount(), before);
     });
 
-    // Pinned, found in WP7's end-to-end run (docs/plans/tier-2.md, section 2,
-    // WP7's candidates): the form's POST takes a name another client already
-    // has, in any case, and the import then refuses every sheet row naming it
-    // until one is deleted
-    test('201 for a name another client already has, in any case; the import then refuses a row naming it', async () => {
+    // Tier 3 WP2, candidate (g), found in Tier 2 WP7's end-to-end run: until
+    // then the form's POST took a name another client already had, in any
+    // case (201), and the import then refused every sheet row naming it
+    // until one was deleted. A pair stored before WP2 still refuses its row
+    test('400 "Validation failed" with a detail on `name` for a name another client already has, in any case or as it was stored escaped; nothing written; a pair already stored still refuses the import\'s row', async () => {
       const kevin = await seed('Kevin');
       const existing = await addClient({ lead: kevin });
-      const res = await call('POST', '/api/data/clients', formBody({ name: existing.name.toUpperCase(), lead_id: kevin.id }));
-      assert.equal(res.status, 201, res.text);
+      const before = { count: await clientCount(), changes: await changeCount() };
+      for (const name of [existing.name, existing.name.toUpperCase(), existing.name.toLowerCase(), `  ${existing.name} `]) {
+        const res = await call('POST', '/api/data/clients', formBody({ name, lead_id: kevin.id }));
+        assert.deepEqual([res.status, res.body], [400, failed(nameTakenDetail(existing.name))], name);
+      }
+      // A client stored escaped before Tier 2 WP5 (an old backup) has the name as typed
+      const escaped = await addClient({ lead: kevin, name: `Smith &amp; Sons ${letters(8)}` });
+      const res = await call('POST', '/api/data/clients', formBody({ name: escaped.name.replace('&amp;', '&'), lead_id: kevin.id }));
+      assert.deepEqual([res.status, res.body], [400, failed(nameTakenDetail(escaped.name))]);
+      assert.deepEqual([await clientCount(), await changeCount()], [before.count + 1, before.changes], 'only the fixture');
+      // Two clients already sharing a name, as the old POST left them
+      await addClient({ lead: kevin, name: existing.name.toUpperCase() });
       const check = await call('POST', '/api/data/process-csv', { csvData: [{ CLIENT: existing.name, '2026 Contracts': '$9' }], dryRun: true });
       assert.equal(check.status, 400, check.text);
       assert.deepEqual(check.body.errors.map((e) => e.message), [
         `The book has 2 clients named "${existing.name}", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.`,
       ]);
+    });
+
+    test('the name\'s detail comes first among the fields\', the people\'s after; a name the rules refuse gets only its own detail', async () => {
+      const kevin = await seed('Kevin');
+      const existing = await addClient({ lead: kevin });
+      const before = await clientCount();
+      let res = await call('POST', '/api/data/clients', formBody({ name: existing.name.toLowerCase(), conflict_risk: 'Severe', lead_id: null }));
+      assert.deepEqual([res.status, res.body], [400, failed([
+        ...nameTakenDetail(existing.name),
+        ...detail('conflict_risk', 'Conflict risk "Severe" must be Low, Medium or High.'),
+        ...detail('lead_id', 'Choose a lead partner.'),
+      ])]);
+      res = await call('POST', '/api/data/clients', formBody({ name: `${existing.name};`, lead_id: kevin.id }));
+      assert.deepEqual([res.status, res.body], [400, failed(detail('name', 'Client name contains invalid characters'))]);
+      assert.equal(await clientCount(), before);
+    });
+
+    // Tier 3 WP2, candidate (g): every POST takes the client-name lock before
+    // its check, so the second of two saves at once waits, then finds the
+    // first's name
+    test('two POSTs in flight with one name, in two cases: one 201, one 400 on the name, one client of that name', async () => {
+      const kevin = await seed('Kevin');
+      for (let round = 0; round < 3; round += 1) {
+        const name = uniqueName('Racing Client');
+        const [a, b] = await Promise.all([
+          call('POST', '/api/data/clients', formBody({ name, lead_id: kevin.id })),
+          call('POST', '/api/data/clients', formBody({ name: name.toUpperCase(), lead_id: kevin.id })),
+        ]);
+        assert.deepEqual([a.status, b.status].sort(), [201, 400], `round ${round}: ${a.text} ${b.text}`);
+        const [created, refused] = a.status === 201 ? [a, b] : [b, a];
+        assert.deepEqual(refused.body, failed(nameTakenDetail(created.body.client.name)));
+        assert.deepEqual((await clientsNamed(name)).map((c) => String(c.id)), [String(created.body.client.id)]);
+        assert.equal((await changeRows(created.body.client.id)).length, 1, 'the refused POST logged nothing');
+      }
     });
 
     // Tier 2 WP7 (S11): the client form's live preview (src/utils/successionUtils.js
@@ -1494,8 +1632,9 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 5, expected_updated_at: value }));
         assert.deepEqual([res.status, res.body], [400, failed(token)], JSON.stringify(value));
       }
-      // With a missing id, and after the fields' details
-      let res = await call('PUT', `/api/data/clients/${missingId}`, storedBody(created, kevin, { expected_updated_at: 'garbage' }));
+      // With a missing id (and a name of its own: another client's is a
+      // detail too, Tier 3 WP2), and after the fields' details
+      let res = await call('PUT', `/api/data/clients/${missingId}`, storedBody(created, kevin, { name: uniqueName('Missing Client'), expected_updated_at: 'garbage' }));
       assert.deepEqual([res.status, res.body], [400, failed(token)]);
       res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { conflict_risk: 'Severe', expected_updated_at: 'garbage', lead_id: null }));
       assert.deepEqual([res.status, res.body], [400, failed([
@@ -1509,23 +1648,105 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
 
     // WP4 pinned the fields' 400 before the id is looked up; WP6 pins the rest:
     // everything about the body first (fields, expected_updated_at's form, the
-    // people), then the client (404, then 409)
+    // people), then the client (404, then 409). From Tier 3 WP2 a name another
+    // client has is one of the fields' details, so the missing id's requests
+    // carry a name of their own
     test('the order of refusals: the body\'s 400 (the people\'s included) before the client is looked up, then 404, then 409', async () => {
       const kevin = await seed('Kevin');
       const created = await addClient({ lead: kevin });
       const stale = '2000-01-01T00:00:00.000000';
       const people = [{ field: 'second_chair_id', message: 'The second chair cannot be the lead.' }];
+      const ownName = (id) => (id === missingId ? { name: uniqueName('Missing Client') } : {});
       // The people's 400 before a missing id's 404 and before a stale token's 409
       for (const id of [missingId, created.id]) {
-        const res = await call('PUT', `/api/data/clients/${id}`, storedBody(created, kevin, { second_chair_id: kevin.id, expected_updated_at: stale }));
+        const res = await call('PUT', `/api/data/clients/${id}`, storedBody(created, kevin, { ...ownName(id), second_chair_id: kevin.id, expected_updated_at: stale }));
         assert.deepEqual([res.status, res.body], [400, failed(people)], String(id));
       }
       // A missing id's 404 before any token
-      let res = await call('PUT', `/api/data/clients/${missingId}`, storedBody(created, kevin, { expected_updated_at: stale }));
+      let res = await call('PUT', `/api/data/clients/${missingId}`, storedBody(created, kevin, { ...ownName(missingId), expected_updated_at: stale }));
       assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
       res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { expected_updated_at: stale }));
       assert.deepEqual([res.status, res.body], [409, conflictOf(undefined)], 'no history row yet: nobody named');
       assert.deepEqual(await changeRows(created.id), []);
+    });
+
+    // Tier 3 WP2, candidate (g): a PUT that renames a client to a name another
+    // client has, in any case, answered 200 until then
+    test('400 "Validation failed" with a detail on `name` for a rename to a name another client has, in any case; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const other = await addClient({ lead: kevin });
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const loaded = await listedClient(created.id);
+      for (const name of [other.name, other.name.toUpperCase()]) {
+        const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, {
+          name, stickiness: 5, expected_updated_at: loaded.updated_at_exact,
+        }));
+        assert.deepEqual([res.status, res.body], [400, failed(nameTakenDetail(other.name))], name);
+      }
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await changeRows(created.id), []);
+      // A name of its own is saved
+      const renamed = uniqueName('Renamed Client');
+      const res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { name: renamed, expected_updated_at: loaded.updated_at_exact }));
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual((await changeRows(created.id)).map((r) => r.changes), [{ name: { from: created.name, to: renamed } }]);
+    });
+
+    test('a PUT that keeps its client\'s name is not checked: two clients already sharing a name stay editable, a change of case included, until one is renamed', async () => {
+      const kevin = await seed('Kevin');
+      const first = await addClient({ lead: kevin });
+      // The pair, as the old POST made it
+      const second = await addClient({ lead: kevin, name: first.name.toUpperCase() });
+      const sheet = { csvData: [{ CLIENT: first.name, '2026 Contracts': '$9' }], dryRun: true };
+      let res = await call('PUT', `/api/data/clients/${first.id}`, storedBody(first, kevin, { stickiness: 4 }));
+      assert.equal(res.status, 200, res.text);
+      assert.equal((await storedClient(first.id)).stickiness, 4);
+      res = await call('PUT', `/api/data/clients/${second.id}`, storedBody(second, kevin, { name: first.name.toLowerCase() }));
+      assert.equal(res.status, 200, res.text);
+      assert.equal((await storedClient(second.id)).name, first.name.toLowerCase(), 'a change of case keeps the name');
+      assert.equal((await call('POST', '/api/data/process-csv', sheet)).status, 400, 'still a pair');
+      // Renamed out of the pair: the import names the other one again
+      res = await call('PUT', `/api/data/clients/${second.id}`, storedBody(second, kevin, { name: uniqueName('Resolved Client') }));
+      assert.equal(res.status, 200, res.text);
+      const check = await call('POST', '/api/data/process-csv', sheet);
+      assert.equal(check.status, 200, check.text);
+      assert.deepEqual([check.body.summary.updatedClients, check.body.summary.newClients], [1, 0]);
+
+      // Stored escaped before WP5 (an old backup) and sent as typed: the same name, kept
+      const tail = letters(8);
+      const escaped = await addClient({ lead: kevin, name: `Smith &amp; Co ${tail}` });
+      await addClient({ lead: kevin, name: `Smith & Co ${tail}` });
+      res = await call('PUT', `/api/data/clients/${escaped.id}`, storedBody(escaped, kevin, { name: `Smith & Co ${tail}` }));
+      assert.equal(res.status, 200, res.text);
+      assert.equal((await storedClient(escaped.id)).name, `Smith & Co ${tail}`);
+    });
+
+    test('a name another client has is a body refusal: before the client is looked up, so a missing id with that name answers 400, and with a name of its own 404', async () => {
+      const kevin = await seed('Kevin');
+      const other = await addClient({ lead: kevin });
+      let res = await call('PUT', `/api/data/clients/${missingId}`, formBody({ name: other.name.toLowerCase(), lead_id: kevin.id }));
+      assert.deepEqual([res.status, res.body], [400, failed(nameTakenDetail(other.name))]);
+      res = await call('PUT', `/api/data/clients/${missingId}`, formBody({ lead_id: kevin.id }));
+      assert.deepEqual([res.status, res.body], [404, { error: 'Client not found' }]);
+    });
+
+    // Tier 3 WP2, candidate (g): every PUT takes the client-name lock first,
+    // renaming or not, since only the name it reads under the lock can say
+    test('two PUTs in flight renaming two clients to one name: one 200, one 400 on the name, one client of that name', async () => {
+      const kevin = await seed('Kevin');
+      for (let round = 0; round < 3; round += 1) {
+        const [a, b] = [await addClient({ lead: kevin }), await addClient({ lead: kevin })];
+        const name = uniqueName('Raced Rename');
+        const [ra, rb] = await Promise.all([
+          call('PUT', `/api/data/clients/${a.id}`, storedBody(a, kevin, { name })),
+          call('PUT', `/api/data/clients/${b.id}`, storedBody(b, kevin, { name: name.toLowerCase() })),
+        ]);
+        assert.deepEqual([ra.status, rb.status].sort(), [200, 400], `round ${round}: ${ra.text} ${rb.text}`);
+        const [saved, refused] = ra.status === 200 ? [ra, rb] : [rb, ra];
+        assert.deepEqual(refused.body, failed(nameTakenDetail(saved.body.client.name)));
+        assert.deepEqual((await clientsNamed(name)).map((c) => String(c.id)), [String(saved.body.client.id)]);
+      }
     });
 
     test('a client whose updated_at is NULL saves with expected_updated_at null (IS NOT DISTINCT FROM), and conflicts with any other value', async () => {
@@ -1606,9 +1827,44 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       }
       assert.deepEqual(await storedClient(created.id), before);
       assert.deepEqual(await revenueRows(created.id), [{ year: 2026, amount: 100000 }]);
-      // The failure is logged without the refused row: no note reaches a log line
-      assert.match(api.output, /client_changes insert failed: new row for relation "client_changes" violates check constraint "routes_test_refuse"/);
+      // The failure is logged without the refused row: no note reaches a log
+      // line. From Tier 3 WP2 as logError writes it (the fields as JSON), and
+      // read once it has arrived (waitFor, constraint 8)
+      assert.deepEqual(await logged(api, 'Error updating client', 'routes_test_refuse'), {
+        code: '23514',
+        message: 'client_changes insert failed: new row for relation "client_changes" violates check constraint "routes_test_refuse"',
+        constraint: 'routes_test_refuse',
+        table: 'client_changes',
+      });
       assert.ok(!api.output.includes(note), 'the note is not in the log');
+    });
+
+    // Tier 3 WP2, candidate (c): until then a failed query was logged whole
+    // (console.error with the error object), PostgreSQL's `detail` included,
+    // which for a refused row prints the row: here, the partner's note
+    test('a failed write is logged by its code, message, constraint and table (logError), never the refused row: its note stays out of the log', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      const before = await storedClient(created.id);
+      const note = `Private note ${letters(12)}`;
+      const constraint = `routes_test_clients_${letters(6)}`;
+      await db.query(`ALTER TABLE clients ADD CONSTRAINT ${constraint} CHECK (false) NOT VALID`);
+      let res;
+      try {
+        res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { stickiness: 5, notes: note }));
+      } finally {
+        await db.query(`ALTER TABLE clients DROP CONSTRAINT ${constraint}`);
+      }
+      assert.deepEqual([res.status, res.body.error], [500, 'Failed to update client']);
+      assert.deepEqual(await storedClient(created.id), before);
+      assert.deepEqual(await logged(api, 'Error updating client', constraint), {
+        code: '23514',
+        message: `new row for relation "clients" violates check constraint "${constraint}"`,
+        constraint,
+        table: 'clients',
+      });
+      assert.ok(!api.output.includes(note), 'the note is not in the log');
+      assert.ok(!api.output.includes('Failing row contains'), 'no detail at all');
     });
   });
 
@@ -1777,6 +2033,84 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       const refused = await call('PUT', `/api/data/clients/${body.open.id}/second-chair`, { second_chair_id: ria.id, expected_second_chair_id: null });
       assert.equal(refused.status, 409, refused.text);
       assert.deepEqual(await storedClient(body.open.id), stored);
+    });
+
+    // Tier 3 WP2, candidate (b): until then the route locked the client, then
+    // read its people FOR SHARE, while a rename (PUT /api/people/:id) locks
+    // the person, then the clients that name them. An Accept and a rename of
+    // the client's lead at the same moment each held what the other needed,
+    // and PostgreSQL aborted one (40P01): the route's 500. The holder here is
+    // that rename, statement by statement, as routes/people.cjs runs it
+    test('an Accept while the client\'s lead is being renamed waits for the rename, then writes the seat, the legacy text under the new name: 200, one history row', async () => {
+      const lead = await addPerson('partner', 'Renaming Lead');
+      const associate = await addPerson('associate', 'Waiting Associate');
+      const created = await addClient({ lead });
+      const renamed = uniqueName('Renamed Lead');
+      const holder = await lockHolder();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT id FROM people WHERE id = $1 FOR NO KEY UPDATE', [lead.id]);
+        const accept = call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: associate.id, expected_second_chair_id: null });
+        await waitFor(async () => (await lockWaiters()) > 0, 'the Accept to wait for the lead');
+        // The rename's next statements: the person, then the clients that name them
+        await holder.query('UPDATE people SET name = $1 WHERE id = $2', [renamed, lead.id]);
+        await holder.query('SELECT id FROM clients WHERE lead_id = $1 OR second_chair_id = $1 OR originator_id = $1 ORDER BY id FOR UPDATE', [lead.id]);
+        await holder.query('UPDATE clients SET primary_lobbyist = $1 WHERE lead_id = $2', [renamed, lead.id]);
+        await holder.query('UPDATE clients SET lobbyist_team = array_replace(lobbyist_team, $1, $2) WHERE lead_id = $3 OR second_chair_id = $3',
+          [lead.name, renamed, lead.id]);
+        await holder.query('COMMIT');
+        const res = await accept;
+        assert.equal(res.status, 200, res.text);
+        assert.deepEqual([res.body.client.lead.name, res.body.client.secondChair.id], [renamed, associate.id]);
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+      }
+      const stored = await storedClient(created.id);
+      assert.deepEqual([stored.second_chair_id, stored.primary_lobbyist, stored.lobbyist_team], [associate.id, renamed, [renamed, associate.name]]);
+      assert.deepEqual((await changeRows(created.id)).map((r) => [r.source, r.changes]), [
+        ['second-chair', { second_chair_id: { from: null, to: { id: associate.id, name: associate.name } } }],
+      ]);
+    });
+
+    // Tier 3 WP2, candidate (b): the client is read before the people are
+    // locked and locked after, so a write can land in between. The holder
+    // holds the new second chair, which the Accept waits for, and changes the
+    // client meanwhile
+    test('409 with a message of its own when the client\'s lead or originator changed while the Accept waited for its people, and the seat\'s 409 when its seat did; nothing written', async () => {
+      const kevin = await seed('Kevin');
+      const joe = await seed('Joe');
+      const jay = await seed('Jay');
+      const associate = await addPerson('associate', 'Pausing Associate');
+      const PEOPLE_CHANGED = "This client's lead or originator changed at the same moment, so nothing was written. Reload the page and try again.";
+      const SEAT_CHANGED = "This client's second chair changed since the page loaded. Reload the page and try again.";
+      const rounds = [
+        ['its lead', 'UPDATE clients SET lead_id = $2, primary_lobbyist = $3, lobbyist_team = $4 WHERE id::text = $1', [joe.id, 'Joe', ['Joe']], PEOPLE_CHANGED],
+        ['its originator', 'UPDATE clients SET originator_id = $2 WHERE id::text = $1', [jay.id], PEOPLE_CHANGED],
+        ['its seat', 'UPDATE clients SET second_chair_id = $2, lobbyist_team = $3 WHERE id::text = $1', [jay.id, ['Kevin', 'Jay']], SEAT_CHANGED],
+      ];
+      for (const [what, sql, values, error] of rounds) {
+        const created = await addClient({ lead: kevin });
+        const holder = await lockHolder();
+        let res;
+        let changed;
+        try {
+          await holder.query('BEGIN');
+          await holder.query('SELECT id FROM people WHERE id = $1 FOR NO KEY UPDATE', [associate.id]);
+          const accept = call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: associate.id, expected_second_chair_id: null });
+          await waitFor(async () => (await lockWaiters()) > 0, `the Accept to wait for the associate (${what})`);
+          await holder.query(sql, [String(created.id), ...values]);
+          changed = await holder.query('SELECT * FROM clients WHERE id::text = $1', [String(created.id)]);
+          await holder.query('COMMIT');
+          res = await accept;
+        } finally {
+          await holder.query('ROLLBACK').catch(() => {});
+          await holder.end();
+        }
+        assert.deepEqual([res.status, res.body], [409, { success: false, error }], what);
+        assert.deepEqual(await storedClient(created.id), changed.rows[0], `${what}: as the other write left it`);
+        assert.deepEqual(await changeRows(created.id), [], `${what}: nothing logged`);
+      }
     });
 
     // Tier 2 WP7 (S11)
@@ -2020,6 +2354,47 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(save.status, 200, save.text);
       const [row] = await changeRows(created.id);
       assert.deepEqual(row.changes, { stickiness: { from: 3, to: 4 } }, 'the lead is the same id: not a change');
+    });
+
+    // Tier 3 WP2, candidate (s): until then each of a rename's three updates
+    // locked its own rows as it went. Two renames at once, of two people with
+    // seats on the same two clients, then each locked one client with its
+    // first update and waited for the other's with its second, and
+    // PostgreSQL aborted one (40P01, a 500). The holder here keeps the first
+    // rename waiting on Y until the second has started: on origin/main the
+    // first then locks Y with its first update, the second holds X from its
+    // own, and each waits for the other. Locked in id order first, the
+    // second rename waits for the first instead
+    test('two renames at once, of two people holding seats on the same two clients, wait for each other: both 200, every legacy name rewritten', async () => {
+      const p = await addPerson('partner', 'Renaming First');
+      const q = await addPerson('partner', 'Renaming Second');
+      // X: Q leads, P seconds. Y: P leads, Q seconds
+      const x = await addClient({ lead: q, second: p });
+      const y = await addClient({ lead: p, second: q });
+      const [pName, qName] = [uniqueName('Renamed First'), uniqueName('Renamed Second')];
+      const holder = await lockHolder();
+      let results;
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT id FROM clients WHERE id::text = $1 FOR UPDATE', [String(y.id)]);
+        const first = call('PUT', `/api/people/${p.id}`, { name: pName });
+        await waitFor(async () => (await lockWaiters()) >= 1, 'the first rename to wait for Y');
+        const second = call('PUT', `/api/people/${q.id}`, { name: qName });
+        await waitFor(async () => (await lockWaiters()) >= 2, 'the second rename to wait');
+        await holder.query('COMMIT');
+        results = await Promise.all([first, second]);
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+      }
+      assert.deepEqual(results.map((r) => r.status), [200, 200], results.map((r) => r.text).join(' '));
+      assert.deepEqual(results.map((r) => r.body.person.name), [pName, qName]);
+      const legacy = async (id) => {
+        const row = await storedClient(id);
+        return [row.primary_lobbyist, row.lobbyist_team];
+      };
+      assert.deepEqual(await legacy(x.id), [qName, [qName, pName]]);
+      assert.deepEqual(await legacy(y.id), [pName, [pName, qName]]);
     });
 
     test('a role change and a (de)activation leave the legacy text as it is', async () => {
@@ -2660,6 +3035,25 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         assert.ok(turn.includes(`${line}\n`), line);
       }
       assert.doesNotMatch(turn, /shared|10\/10|9\/10/);
+    });
+
+    // Tier 3 WP2, candidate (v): until then the plan's clientName and the
+    // saved answer's client_name, which every partner's Recent answers shows
+    // as "Transition plan: <client>", echoed the request's name. A partner of
+    // the test's own: the AI limiter counts 30 an hour per partner
+    test('200: the plan\'s clientName and its saved client_name are the client\'s name as the book lists it, whatever name the request carried', async () => {
+      const body = await planBody();
+      const partner = await newPartner('plan-name');
+      const res = await request(api.base, 'POST', '/api/scenarios/transition-plan', {
+        as: partner.cookie, body: { ...body, client: { ...body.client, name: 'Someone Else Entirely' } },
+      });
+      assert.equal(res.status, 200, res.text);
+      assert.equal(res.body.plan.clientName, body.client.name);
+      const saved = (await db.query('SELECT client_id, client_name FROM ai_answers WHERE id = $1', [res.body.answerId])).rows[0];
+      assert.deepEqual(saved, { client_id: String(body.client.id), client_name: body.client.name });
+      const listed = (await call('GET', '/api/ai/answers')).body.answers.find((a) => a.id === res.body.answerId);
+      assert.equal(listed.client_name, body.client.name);
+      assert.ok(!fake.requests.at(-1).body.messages[0].content.includes('Someone Else Entirely'), 'the prompt had the book\'s name already');
     });
 
     test('503 { success: false, error } without a key', async () => {

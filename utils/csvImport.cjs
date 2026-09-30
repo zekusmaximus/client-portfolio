@@ -14,7 +14,7 @@
 
 const { validateAssignment, legacyText } = require('./people.cjs');
 const { unescapeStored } = require('./escaping.cjs');
-const { PRACTICE_AREAS, CADENCES, CONFLICT_RISKS, STICKINESS, REVENUE_YEAR } = require('./clientRules.cjs');
+const { PRACTICE_AREAS, CADENCES, CONFLICT_RISKS, STICKINESS, REVENUE_YEAR, REVENUE_AMOUNT_MAX } = require('./clientRules.cjs');
 
 // `YYYY Contracts`, its year the client form's rule too (utils/clientRules.cjs)
 const REVENUE_HEADER = new RegExp(`^\\s*(${REVENUE_YEAR})\\s+contracts?\\s*$`, 'i');
@@ -376,10 +376,12 @@ function resolveSheetPeople(cells = {}, roster = [], existing = null) {
 }
 
 /**
- * Check a parsed file before anything is written (P8).
+ * Check a parsed file before anything is written (P8): each row's name (once
+ * in the file, not shared by two stored clients), its revenue (no year over
+ * the client form's 1,000,000,000; Tier 3 WP2), its values and its people.
  *
  * @param {Array} clients - processCSVData's output (each has `name`,
- *   `rowNumber` and `sheet`, readSheetRow's result)
+ *   `rowNumber`, `revenue` by year and `sheet`, readSheetRow's result)
  * @param {Object} options
  * @param {string[]} [options.headerErrors] - findSheetColumns' `errors`
  * @param {Array} [options.roster] - the People list
@@ -412,6 +414,18 @@ function checkSheet(clients = [], { headerErrors = [], roster = [], existingByNa
     // cannot tell which, and updating either leaves the other counted twice
     if (sharedNames.has(lowerName)) {
       add(`The book has ${sharedNames.get(lowerName)} clients named "${name}", so the import cannot tell which one to update. On Client Details, delete the one you do not want, then upload the file again.`);
+    }
+
+    // An amount the client form refuses (Tier 3 WP2, candidate (w)): over
+    // REVENUE_AMOUNT_MAX, utils/clientRules.cjs's limit for a year. Until WP2
+    // the import stored it, and from 10,000,000,000 up it failed in
+    // client_revenues.revenue_amount, NUMERIC(12, 2) (a 500). One sentence
+    // for each year over it, in year order
+    for (const year of client.revenueYears || Object.keys(client.revenue || {})) {
+      const amount = client.revenue ? client.revenue[year] : undefined;
+      if (typeof amount === 'number' && amount > REVENUE_AMOUNT_MAX) {
+        add(`${year} Contracts is ${amount.toLocaleString('en-US')}: a year's revenue can be at most ${REVENUE_AMOUNT_MAX.toLocaleString('en-US')}, as on the client form.`);
+      }
     }
 
     const sheet = client.sheet || { people: {}, errors: [] };
