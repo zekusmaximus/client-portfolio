@@ -63,7 +63,7 @@ the next package by one. WP3 (start-up, scripts, dependencies and docs) merged
 as PR #57 (`997571c`) on 2026-09-30 at Jeff's instruction, CI green on its
 head `347ee97` (check, schema and GitGuardian); its after-deploy checks are
 Jeff's too, and may trail the next package by one. WP4 (the client form and
-Stage 2's leftovers, page only) is in its PR, which waits for Jeff's merge.
+Stage 2's leftovers, page only) is in its PR (#58), which waits for Jeff's merge.
 Run the packages in its status table's order, and update that table when you
 finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
