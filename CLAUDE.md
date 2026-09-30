@@ -72,10 +72,12 @@ on its head `fdf30f5` (check, schema and GitGuardian), after Jeff confirmed
 that no partner opens the page in Safari older than 16.4 (U15); its
 after-deploy checks (tier-3.md section 12.10) are Jeff's and may trail WP5 by
 one. Next in the table's order: WP5 (exposure on the Dashboard), whose section
-(tier-3.md section 13) and proposed decisions U17 to U20 are in their PR
-(#61), awaiting Jeff's approval, with no code before it; then WP6, with its section 9
-sketch expanded and approved by Jeff first; WP1 when Jeff's evaluation run and
-choice arrive (about 2026-10-10). Run the packages in
+(tier-3.md section 13) Jeff approved on 2026-09-30 with its decisions U17 to
+U20 (U17 his own option (d), the exposure card in place of "Heaviest lead
+book"; U18 to U20 as recommended), in PR #61; WP5's code branches from `main`
+once that PR has merged. Then WP6, with its section 9 sketch expanded and
+approved by Jeff first; WP1 when Jeff's evaluation run and choice arrive (about
+2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
