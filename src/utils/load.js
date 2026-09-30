@@ -8,8 +8,9 @@
 // (P10 as amended 2026-09-25); client counts and revenue count whole for both.
 //
 // Pure: people, clients and a revenue function in, plain objects out, so the
-// Partnership tab, the Dashboard card and the exports agree, and tests can
-// import it. Phase 6 (the associate split) reuses it.
+// Partnership tab, the lead sheet the Dashboard's Exposure sub-tab opens and
+// the exports agree, and tests can import it. Phase 6 (the associate split)
+// reuses it.
 
 import { resolveEffort } from './clientMetrics.js';
 import { ROLE_ORDER, ROLE_LABELS } from './people.js';
@@ -222,15 +223,4 @@ export function partnershipModel(people = [], clients = [], revenueOf = () => 0)
   })).filter((group) => group.rows.length > 0);
 
   return { rows: all, averages, leadBooks, secondChairs, unled, noSecondChair, totals };
-}
-
-/**
- * The Dashboard's one-line summary: the partner whose lead book carries the
- * most revenue, against the partner average. null when no partner leads
- * anything.
- */
-export function heaviestLeadBook(model) {
-  const top = model.leadBooks.find((r) => r.person.role === 'partner' && r.lead.count > 0);
-  if (!top) return null;
-  return { person: top.person, revenue: top.lead.revenue, count: top.lead.count, ratio: top.leadRatio.revenue };
 }

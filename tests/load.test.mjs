@@ -1,11 +1,10 @@
 // Who's carrying what (docs/plans/people-and-second-chair.md, Phase 4, P10):
 // src/utils/load.js, the lead books and second-chair loads the Partnership tab,
-// the Dashboard card and the exports read.
+// the lead sheet the Dashboard's Exposure sub-tab opens and the exports read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   partnershipModel,
-  heaviestLeadBook,
   ratio,
   formatRatio,
   bookYears,
@@ -128,18 +127,8 @@ test('a client whose lead is missing from the People list still counts, under th
 test('an empty book and an empty People list', () => {
   const empty = partnershipModel([], [], revenueOf);
   assert.deepEqual([empty.rows, empty.leadBooks, empty.secondChairs, empty.unled], [[], [], [], []]);
-  assert.equal(heaviestLeadBook(empty), null);
   const noClients = partnershipModel(PEOPLE, [], revenueOf);
   assert.equal(noClients.leadBooks.length, 6);
-  assert.equal(heaviestLeadBook(noClients), null);
-});
-
-test('heaviestLeadBook: the partner leading the most revenue, against the partner average', () => {
-  const top = heaviestLeadBook(partnershipModel(PEOPLE, CLIENTS, revenueOf));
-  assert.equal(top.person.name, 'Kevin');
-  assert.equal(top.count, 2);
-  assert.equal(top.revenue, 100000);
-  assert.equal(formatRatio(top.ratio), '3.8×');
 });
 
 test('bookYears and revenueByYear: the history of the clients someone leads now', () => {

@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   BarChart3,
   PieChart,
@@ -29,8 +30,71 @@ import usePortfolioStore from './portfolioStore';
 import { formatClientName } from './utils/textUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 import DataUploadManager from './DataUploadManager';
-import { partnershipModel, heaviestLeadBook, formatRatio, formatMoney } from './utils/load';
+import PersonLoadSheet from './components/PersonLoadSheet';
+import { partnershipModel, bookYears, formatMoney } from './utils/load';
 import { revenueForYear } from './utils/revenue';
+import { exposureModel } from './utils/exposure';
+import { ratedForStickiness } from './utils/askTheBook';
+
+// Exposure in the book's words (utils/book.cjs, exposureSection): "1 client",
+// and the share only while the book has revenue in the year
+const clientCount = (n) => `${n} ${n === 1 ? 'client' : 'clients'}`;
+const bookShare = (band) => (band.share === null ? '' : ` (${band.share}% of the book's revenue)`);
+
+// One band of the Exposure sub-tab: its count, revenue and share, then one row
+// per lead in the book's order. A lead's name opens their sheet; the clients
+// without a lead have no one to open, and get a lead on Client Details.
+const ExposureBand = ({ testId, label, band, year, onSelect, onClientDetails }) => (
+  <div data-testid={testId} className="space-y-2">
+    <h3 className="text-sm font-semibold" data-testid="exposure-band-head">
+      {label}: {clientCount(band.count)}, {formatMoney(band.revenue)}{bookShare(band)}
+    </h3>
+    {band.count > 0 ? (
+      <Table className="table-fixed">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Lead</TableHead>
+            <TableHead className="w-24 text-right">Clients</TableHead>
+            <TableHead className="w-40 text-right">Revenue {year}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {band.byLead.map((entry) => (
+            <TableRow key={entry.person ? String(entry.person.id) : 'no-lead'} data-testid="exposure-lead-row">
+              <TableCell>
+                {entry.person ? (
+                  <button
+                    type="button"
+                    data-testid="exposure-lead"
+                    className="font-medium text-left underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                    onClick={() => onSelect(entry.person.id)}
+                  >
+                    {entry.name}
+                  </button>
+                ) : (
+                  <>
+                    <span data-testid="exposure-lead">{entry.name}</span>
+                    <span className="text-muted-foreground">
+                      {' '}(set one in{' '}
+                      <button type="button" className="underline" onClick={onClientDetails}>
+                        Client Details
+                      </button>
+                      )
+                    </span>
+                  </>
+                )}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">{entry.count}</TableCell>
+              <TableCell className="text-right tabular-nums">{formatMoney(entry.revenue)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    ) : (
+      <p className="text-sm text-muted-foreground">No clients.</p>
+    )}
+  </div>
+);
 
 const DashboardView = () => {
   const {
@@ -43,11 +107,17 @@ const DashboardView = () => {
   } = usePortfolioStore();
   const people = usePortfolioStore((s) => s.people);
   const reportingYear = usePortfolioStore((s) => s.getReportingYear());
-  // The partner leading the most revenue, against the partners' average (P10)
-  const heaviest = useMemo(
-    () => heaviestLeadBook(partnershipModel(people, clients, (c) => revenueForYear(c, reportingYear))),
-    [people, clients, reportingYear]
-  );
+  const revenueOf = useMemo(() => (client) => revenueForYear(client, reportingYear), [reportingYear]);
+  // Exposure (T5): the book's figures, from the page's port of them
+  const exposure = useMemo(() => exposureModel(clients, revenueOf), [clients, revenueOf]);
+  // Who's carrying what (P10), for the sheet a lead's name opens
+  const loadModel = useMemo(() => partnershipModel(people, clients, revenueOf), [people, clients, revenueOf]);
+  const years = useMemo(() => bookYears(clients), [clients]);
+  const [selectedLeadId, setSelectedLeadId] = useState(null);
+  const isSelected = (person) => person !== null && selectedLeadId !== null && String(person.id) === String(selectedLeadId);
+  const selectedLeadRow = loadModel.rows.find((r) => isSelected(r.person)) || null;
+  // The selected lead's entry in a band, or null when they have no client there
+  const leadEntry = (band) => band.byLead.find((e) => isSelected(e.person)) || null;
   const [selectedTab, setSelectedTab] = useState('overview');
   const [showUpload, setShowUpload] = useState(false);
 
@@ -258,23 +328,38 @@ const DashboardView = () => {
           </CardContent>
         </Card>
 
-        <Card 
+        {/* Exposure (T5): the book's thin-relationship revenue, with the
+            clients nobody has rated beside it, never counted as safe */}
+        <Card
+          data-testid="exposure-card"
           className="cursor-pointer hover:shadow-lg transition-shadow"
-          onClick={() => setCurrentView('partnership')}
+          onClick={() => setSelectedTab('exposure')}
         >
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Heaviest lead book</p>
-                <p className="text-2xl font-bold">{heaviest ? heaviest.person.name : '—'}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {heaviest
-                    ? `${formatMoney(heaviest.revenue)} in ${reportingYear}, ${formatRatio(heaviest.ratio)} the partners' average`
-                    : 'No partner leads a client yet'}
-                </p>
-                <p className="text-xs text-muted-foreground">Click for who&apos;s carrying what</p>
+                <p className="text-sm font-medium text-muted-foreground">Exposure: thin relationships</p>
+                {exposure.rated > 0 ? (
+                  <>
+                    <p className="text-2xl font-bold">{formatMoney(exposure.thin.revenue)}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {`${exposure.thin.share === null ? `In ${reportingYear}` : `${exposure.thin.share}% of ${reportingYear} revenue`}, ${clientCount(exposure.thin.count)} rated 1 or 2`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {`Not rated: ${formatMoney(exposure.unrated.revenue)}${exposure.unrated.share === null ? '' : ` (${exposure.unrated.share}%)`}, unknown`}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold">Not rated yet</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      No client is rated for Stickiness: {formatMoney(exposure.unrated.revenue)} in {reportingYear}, unknown
+                    </p>
+                  </>
+                )}
+                <p className="text-xs text-muted-foreground">Click for each lead</p>
               </div>
-              <Users className="h-8 w-8 text-green-500" />
+              <AlertTriangle className="h-8 w-8 text-orange-500" />
             </div>
           </CardContent>
         </Card>
@@ -282,8 +367,9 @@ const DashboardView = () => {
 
       {/* Main Dashboard */}
       <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="exposure">Exposure</TabsTrigger>
           <TabsTrigger value="analysis">Strategic Analysis</TabsTrigger>
           <TabsTrigger value="succession">Succession Planning</TabsTrigger>
           <TabsTrigger value="clients">Client Rankings</TabsTrigger>
@@ -317,6 +403,46 @@ const DashboardView = () => {
                   <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, 'Revenue']} />
                 </RechartsPieChart>
               </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="exposure" className="space-y-6">
+          {/* The book's `## Exposure` figures by lead (T5); no share per lead
+              and no second-chair figure, as the book has neither */}
+          <Card data-testid="exposure-breakdown">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2" data-testid="exposure-heading">
+                <AlertTriangle className="h-5 w-5" />
+                Exposure: {reportingYear} revenue on thin relationships
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                The {reportingYear} revenue of the clients rated Stickiness 1 or 2, by lead. Clients not rated are
+                counted apart, as unknown, never as safe. These are the figures the AI is given. Rated for
+                Stickiness: <span data-testid="exposure-rated">{ratedForStickiness(clients)} of {clients.length}</span>.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <ExposureBand
+                testId="exposure-thin"
+                label="Rated 1 or 2 (thin)"
+                band={exposure.thin}
+                year={reportingYear}
+                onSelect={setSelectedLeadId}
+                onClientDetails={() => setCurrentView('client-details')}
+              />
+              <ExposureBand
+                testId="exposure-unrated"
+                label="Not rated (unknown, not safe)"
+                band={exposure.unrated}
+                year={reportingYear}
+                onSelect={setSelectedLeadId}
+                onClientDetails={() => setCurrentView('client-details')}
+              />
+              <p className="text-sm" data-testid="exposure-solid">
+                Rated 3 to 5: {clientCount(exposure.solid.count)}, {formatMoney(exposure.solid.revenue)}
+                {bookShare(exposure.solid)}.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -553,6 +679,19 @@ const DashboardView = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* A lead's sheet, opened from the Exposure sub-tab: their thin and
+          not-rated clients first, then the lead book as the Partnership tab
+          shows it */}
+      <PersonLoadSheet
+        row={selectedLeadRow}
+        year={reportingYear}
+        years={years}
+        revenueOf={revenueOf}
+        revenueOfYear={revenueForYear}
+        exposure={selectedLeadRow ? { thin: leadEntry(exposure.thin), unrated: leadEntry(exposure.unrated) } : null}
+        onClose={() => setSelectedLeadId(null)}
+      />
     </div>
   );
 };
