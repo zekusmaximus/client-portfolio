@@ -12,8 +12,10 @@ update its status table when you finish a phase. `docs/plans/tier-0.md`
 (stabilisation) is done in code; its remaining items are Jeff's checks on the
 live site. `docs/plans/tier-1.md` (the AI rebuild), approved by Jeff on
 2026-09-26: complete, its six work packages verified on gbacpod.com by Jeff on
-2026-09-27. Read it before any AI change. Active: `docs/plans/tier-2.md` (a
-shared six-partner tool), approved by Jeff on 2026-09-27. Its gate (S1) is met:
+2026-09-27. Read it before any AI change. `docs/plans/tier-2.md` (a
+shared six-partner tool), approved by Jeff on 2026-09-27: every work package
+has merged; its remaining items are Jeff's after-deploy checks (WP6, WP8, WP9,
+WP10) and WP11's run. Its gate (S1) was met:
 WP0's docs part merged as PR #39. WP1 (contract tests per route,
 `tests/routes.test.mjs`) merged as PR #40 and WP2 (dead code and small
 defects) as PR #41; WP3 (bcrypt 6) merged as PR #42 and was verified on
@@ -44,12 +46,16 @@ earlier-book mark and hiding answers, S14 and S15: five nullable columns on
 `ai_answers`, two routes, `ai-threads`) merged as PR #52 (`993af86`) on
 2026-09-29 at Jeff's instruction, the nightly backup green before the
 merge; his after-deploy checks are open. WP11 (model and effort from real
-answers, S16: the evaluation tool, `scripts/eval-ai.cjs`) is open as PR #53
-from `claude/gifted-ride-7t64o0`; Jeff runs the tool once there are two
-weeks of saved answers (about 2026-10-10), and his choice's change is a
-later PR. Run the rest in
-order, and
-update its status table when you finish one. A package that changes a
+answers, S16: the evaluation tool, `scripts/eval-ai.cjs`) merged as PR #53
+(`fc2f671`) on 2026-09-29 at Jeff's instruction; no schema change, so no
+backup gate (its section 17). Jeff runs the tool once there are two weeks of
+saved answers (about 2026-10-10), and his choice's change is Tier 3's WP1.
+Next: `docs/plans/tier-3.md` (Tier 2's close-out, its open candidates and
+decisions, and what comes after), written 2026-09-29 against `fc2f671`,
+**proposed: not approved**. Read it before any change, and build nothing from
+it until Jeff has approved it, decision by decision (U1 onward), and its gate
+(U1) is met; then run its packages in its status table's order, and update
+that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
 `PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
