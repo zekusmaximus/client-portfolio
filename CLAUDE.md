@@ -58,21 +58,20 @@ checks for WP6, WP8, WP9 and WP10 done, and the nightly backup green). WP2
 (write-path defects) merged as PR #56 (`4be7299`) on 2026-09-30 at Jeff's
 instruction, CI green on its head `c158da6`, after his count for U6
 (2026-09-30: 2 Financial clients, neither's figures moving, and no client name
-shared regardless of case); its after-deploy checks are Jeff's and may trail
-the next package by one. WP3 (start-up, scripts, dependencies and docs) merged
-as PR #57 (`997571c`) on 2026-09-30 at Jeff's instruction, CI green on its
-head `347ee97` (check, schema and GitGuardian); its after-deploy checks are
-Jeff's too, and may trail the next package by one. WP4 (the client form and
+shared regardless of case). WP3 (start-up, scripts, dependencies and docs)
+merged as PR #57 (`997571c`) on 2026-09-30 at Jeff's instruction, CI green on
+its head `347ee97` (check, schema and GitGuardian). WP4 (the client form and
 Stage 2's leftovers, page only) merged as PR #58 (`2b383f6`) on 2026-09-30 at
 Jeff's instruction, CI green on its head `1d350b3` (check, schema and
-GitGuardian); its after-deploy checks are Jeff's, and may trail the next package
-by one. Next in the table's order: WP9 (Vite 8), then WP5 and WP6; WP1 when
-Jeff's evaluation run and choice arrive (about 2026-10-10). WP9's section
-(tier-3.md section 12, with its decisions U14 to U16) was written on 2026-09-30
-and waits in its PR (#59) for Jeff's approval; no WP9 code, dependency or lockfile
-change before it, and WP9's code also waits for WP2's and WP3's after-deploy
-checks. Run the packages in its status table's order, and update that table when
-you finish one. A package that changes a
+GitGuardian). WP2, WP3 and WP4 were verified on gbacpod.com by Jeff on
+2026-09-30 (their after-deploy checks all as expected). WP9's section
+(tier-3.md section 12, Vite 8) merged as PR #59 (`c919c59`) on 2026-09-30, and
+Jeff approved it that day with its decisions U14 to U16 as recommended; WP9's
+code is in its PR (#60), which waits for Jeff's merge, and its after-deploy checks
+may trail the next package by one. Next in the table's order: WP5, then WP6,
+each with its section 9 sketch expanded and approved by Jeff first; WP1 when
+Jeff's evaluation run and choice arrive (about 2026-10-10). Run the packages in
+its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
 `PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
@@ -84,9 +83,9 @@ second chairs but do not sign in).
 ### Frontend Development
 - `VITE_API_BASE_URL=http://localhost:5000 npm run dev` - Vite dev server on http://localhost:5173 (PowerShell: `$env:VITE_API_BASE_URL = 'http://localhost:5000'; npm run dev`). Without the variable the page calls relative `/api`, which Vite does not proxy
 - `VITE_API_BASE_URL=https://gbacpod.com npm run build:prod` - the production build CI and Netlify run (`NODE_ENV=production vite build`, POSIX syntax; on Windows use `npx vite build`, production is Vite's default mode). A production build refuses a missing or non-`https://` `VITE_API_BASE_URL`
-- `npm run build` - `vite build` without the `NODE_ENV` prefix; `npm run preview` serves `dist/`
+- `npm run build` - `vite build` without the `NODE_ENV` prefix; `npm run preview` serves `dist/`, and needs `VITE_API_BASE_URL` set as a production build does, since it loads `vite.config.js` in production mode (on Vite 4 as on 8)
 - `npm run lint` - Run ESLint on JS/JSX/CJS files (errors fail the gate, warnings are informational; 3 `exhaustive-deps` warnings are expected, in `App.jsx` and `DashboardView.jsx`, D3; the other four went with the components Phase 4 deleted)
-- `npm run security:audit` / `npm run security:audit-fix` - `npm audit` / non-breaking `npm audit fix`; never `--force` (the two remaining advisories, Vite and esbuild, are dev-only and need Vite 8; `npm audit --omit=dev` reports none; `deploy/README.md` section 12)
+- `npm run security:audit` / `npm run security:audit-fix` - `npm audit` / non-breaking `npm audit fix`; never `--force`, which moves `vite` alone and leaves `@vitejs/plugin-react` behind. Since Tier 3 WP9 (Vite 8) both `npm audit` and `npm audit --omit=dev` report none; until then Vite 4.5.14 and esbuild 0.18.20 carried two dev-only advisories (`deploy/README.md` section 12)
 
 ### Backend Development
 - `npm start` or `node server.cjs` - Start Express.js backend server on port 5000
@@ -112,7 +111,7 @@ second chairs but do not sign in).
 This is a **Client Portfolio Optimization Dashboard** for government relations attorneys, consisting of:
 
 ### Frontend (React + Vite)
-- **Framework**: React 18 with Vite bundler
+- **Framework**: React 18 with Vite 8 (`vite` 8.3.1 and `@vitejs/plugin-react` 6.1.1 since Tier 3 WP9; Vite 4.5.14 until then)
 - **State Management**: Zustand (`src/portfolioStore.js`); clients come from the API, and only UI state is persisted to localStorage
 - **UI Library**: Shadcn/UI components with Tailwind CSS
 - **Charts**: Recharts for data visualizations
@@ -487,7 +486,8 @@ so the page shows the same figures on either API.
 
 ### Vite Configuration
 - `src/api.js` prefixes every call with `import.meta.env.VITE_API_BASE_URL`. Production builds require an `https://` value (`vite.config.js` enforces it). For `npm run dev`, start Vite with `VITE_API_BASE_URL=http://localhost:5000`: without it the frontend calls relative `/api`, which Vite does not proxy (the `http://localhost:5000` fallback in `vite.config.js` only defines `process.env.VITE_API_BASE_URL`, which `api.js` does not read)
-- Path alias `@` points to `./src`
+- Path alias `@` points to `./src`, resolved from `import.meta.dirname` (Tier 3 WP9; `__dirname` drew Vite 8's warning that its planned native config loader will not supply it)
+- **Vite 8** (Tier 3 WP9, `docs/plans/tier-3.md` section 12): Rolldown bundles, Oxc transforms and minifies the JavaScript, and Lightning CSS minifies the CSS. Lightning CSS refuses invalid CSS that esbuild only warned about, so a stray declaration outside a rule in `src/App.css` fails the build (`[lightningcss minify] Invalid qualified rule`) rather than printing a `css-syntax-error` warning; WP9 deleted the 35 declarations and the `oklch` `:root` rule after them that caused the two warnings Vite 4 printed (U14 (a)), which browsers had always dropped. The browser floor is Vite 8's default, `'baseline-widely-available'`: Chrome and Edge 111, Firefox 114, Safari 16.4 (U15 (a)); Lightning CSS writes Tailwind's breakpoints in range syntax (`@media (width>=640px)`), which an older Safari ignores. Vite 4's floor was Chrome 87, Edge 88, Firefox 78 and Safari 14. Vite 8, the plugin and Rolldown need Node 20.19 or 22.12 and later (Netlify's `NODE_VERSION` 22 and CI's 22 take the latest 22). The page passes `react()` no options, so plugin-react 6's removal of Babel changed nothing it used. Do not add `engines` to `package.json`: Render reads it to choose the API's Node
 
 ### Auth, sessions and rate limits (WP3)
 - **Cookie:** `authToken`, `HttpOnly`, `Path=/`, `Max-Age` = `SESSION_TTL` (604800 s for `7d`), the same span as the JWT's `exp`. In production `SameSite=None; Secure`, because the API (onrender.com) and the page (gbacpod.com) are different sites and a `Lax` cookie would never reach the API; in development `SameSite=Lax` (page and API are both on localhost, one site). This deviates from D10, which assumed a same-origin API. `res.clearCookie` gets the same attributes.

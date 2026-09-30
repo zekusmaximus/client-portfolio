@@ -27,11 +27,11 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     resolve: {
       alias: {
-        "@": path.resolve(__dirname, "./src"),
-        "@/components": path.resolve(__dirname, "./src/components"),
-        "@/lib": path.resolve(__dirname, "./src/lib"),
-        "@/types": path.resolve(__dirname, "./src/types"),
-        "@/utils": path.resolve(__dirname, "./src/utils")
+        "@": path.resolve(import.meta.dirname,"./src"),
+        "@/components": path.resolve(import.meta.dirname,"./src/components"),
+        "@/lib": path.resolve(import.meta.dirname,"./src/lib"),
+        "@/types": path.resolve(import.meta.dirname,"./src/types"),
+        "@/utils": path.resolve(import.meta.dirname,"./src/utils")
       },
     },
     define: {
