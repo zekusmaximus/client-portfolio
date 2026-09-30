@@ -60,7 +60,7 @@ instruction, CI green on its head `c158da6`, after his count for U6
 (2026-09-30: 2 Financial clients, neither's figures moving, and no client name
 shared regardless of case); its after-deploy checks are Jeff's and may trail
 the next package by one. WP3 (start-up, scripts, dependencies and docs) is in
-its PR, which waits for Jeff's merge. Run the packages in its status table's
+its PR (#57), which waits for Jeff's merge. Run the packages in its status table's
 order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
