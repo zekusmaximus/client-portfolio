@@ -55,8 +55,9 @@ decisions, and what comes after), written 2026-09-29 against `fc2f671`,
 approved by Jeff on 2026-09-29 (U1 to U13 as recommended). Read it before any
 change. U1's gate was met on 2026-09-30 (Jeff: Tier 2's open after-deploy
 checks for WP6, WP8, WP9 and WP10 done, and the nightly backup green), and
-WP2 (write-path defects) is in its PR, which waits for Jeff's read-only
-count of Financial clients (U6) before it merges; run the packages in its
+WP2 (write-path defects) is in its PR (#56), which waits for Jeff's merge;
+his count for U6 is in (2026-09-30: 2 Financial clients, neither's figures
+moving, and no client name shared regardless of case); run the packages in its
 status table's order, and update that table when you finish one. A package
 that changes a route changes its contract in `tests/routes.test.mjs` in the
 same PR.
