@@ -63,9 +63,16 @@ the next package by one. WP3 (start-up, scripts, dependencies and docs) merged
 as PR #57 (`997571c`) on 2026-09-30 at Jeff's instruction, CI green on its
 head `347ee97` (check, schema and GitGuardian); its after-deploy checks are
 Jeff's too, and may trail the next package by one. WP4 (the client form and
-Stage 2's leftovers, page only) is in its PR (#58), which waits for Jeff's merge.
-Run the packages in its status table's order, and update that table when you
-finish one. A package that changes a
+Stage 2's leftovers, page only) merged as PR #58 (`2b383f6`) on 2026-09-30 at
+Jeff's instruction, CI green on its head `1d350b3` (check, schema and
+GitGuardian); its after-deploy checks are Jeff's, and may trail the next package
+by one. Next in the table's order: WP9 (Vite 8), then WP5 and WP6; WP1 when
+Jeff's evaluation run and choice arrive (about 2026-10-10). WP9's section
+(tier-3.md section 12, with its decisions U14 to U16) was written on 2026-09-30
+and waits in its PR (#59) for Jeff's approval; no WP9 code, dependency or lockfile
+change before it, and WP9's code also waits for WP2's and WP3's after-deploy
+checks. Run the packages in its status table's order, and update that table when
+you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
 `PRODUCT_BRIEF.md` (one shared book for six equal partners; no per-user
