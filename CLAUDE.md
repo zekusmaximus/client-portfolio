@@ -90,8 +90,18 @@ approved by Jeff on 2026-10-01 with U21 to U26 as recommended (U21 (a), U22
 (a), U23 (a), U24 (a), U25 (a), U26 (b)). WP6's code, branched from `08024f6`
 as `claude/sweet-volta-52w4nc` (page only: the sandbox as Scenarios' third
 kind, the scorer's page mirror, the client form's draft; no route, schema,
-feature name or write), is in PR #64. WP1 when Jeff's evaluation run and
-choice arrive (about 2026-10-10). Run the packages in
+feature name or write), merged as PR #64 (`4041df1`) on 2026-10-01 at Jeff's
+instruction, CI green on its head `89856df` (check, schema, GitGuardian and
+the Deploy Preview); its after-deploy checks (tier-3.md section 14.10) and
+WP5's (13.10) are Jeff's. Then WP10 (the open candidates (aa) to (ae): the
+import's lock order against a rename's, PostgreSQL's own log printing a
+refused row, three dead `.dark` rules in `src/App.css`, revenue shown with
+`toLocaleString()` where the book shows whole dollars, and the Dashboard's
+scatter caption): its section, tier-3.md section 15 with decisions U27 to
+U31, written 2026-10-01 against `4041df1` on `claude/adoring-hamilton-wsqazj`,
+is proposed in a docs-only PR and waits for Jeff's approval; nothing of it is
+built until then, and its code is a later PR on a branch of its own. WP1 when
+Jeff's evaluation run and choice arrive (about 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
