@@ -77,10 +77,16 @@ U20 (U17 his own option (d), the exposure card in place of "Heaviest lead
 book"; U18 to U20 as recommended) and which merged as PR #61 (`859aa8b`) on
 2026-09-30 at Jeff's instruction, CI green on its head `83faa98` (check,
 schema, GitGuardian and the Deploy Preview). WP5's code, branched from
-`859aa8b` as `claude/tier-3-wp5-exposure-f6e28u`, is in PR #62, open for Jeff
-to merge or tell the session to (page only: no route, schema, feature name or
-write). Then WP6, with its section 9 sketch expanded and
-approved by Jeff first; WP1 when Jeff's evaluation run and choice arrive (about
+`859aa8b` as `claude/tier-3-wp5-exposure-f6e28u`, merged as PR #62 (`2989622`)
+on 2026-09-30 at Jeff's instruction, CI green on its head `d823c16` (check,
+schema, GitGuardian and the Deploy Preview); page only (no route, schema,
+feature name or write), so no backup gate; its after-deploy checks (tier-3.md
+section 13.10) are Jeff's and may trail WP6 by one. Then WP6 (where a new
+client fits): its section, tier-3.md section 14 with decisions U21 to U26,
+written 2026-09-30 against `2989622` on `claude/serene-clarke-ab14oy`, is in
+PR #63 (docs only), approved by Jeff on 2026-10-01 with U21 to U26 as
+recommended (U21 (a), U22 (a), U23 (a), U24 (a), U25 (a), U26 (b)); WP6's code
+branches from its merge. WP1 when Jeff's evaluation run and choice arrive (about
 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
