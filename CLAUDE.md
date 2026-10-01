@@ -127,7 +127,7 @@ chose `claude-sonnet-5-5` on 2026-10-01, before the evaluation run (recorded
 in tier-2.md section 16; tier-3.md section 5's outcome D, written for it);
 its code (`FALLBACK_MODELS` and `PRICES` gain the model, U3 (b)'s `effort` in
 the `ai_call` line and `/api/health`, U4 (b)'s docs; no route, schema, page
-or feature name) is on `claude/tier-3-wp1-sonnet-n4q7xk`, PR open. After it
+or feature name) is on `claude/tier-3-wp1-sonnet-n4q7xk`, PR #70, open. After it
 deploys, Jeff sets `AI_MODEL` and `AI_EFFORT` on Render in one save (runbook
 7.6); the effort is his to name. Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
