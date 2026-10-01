@@ -304,7 +304,7 @@ const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
         <div className="bg-white border rounded-lg p-3 shadow-lg">
           <p className="font-semibold">{data.name}</p>
           <p className="text-sm">Succession Risk: {data.risk}/10</p>
-          <p className="text-sm">Revenue: ${data.revenue.toLocaleString()}</p>
+          <p className="text-sm">Revenue: {formatMoney(data.revenue)}</p>
           <p className="text-sm">Practice Area: {data.practiceArea}</p>
           <p className="text-xs text-gray-500 mt-1">Click for details</p>
         </div>
@@ -440,7 +440,7 @@ const RiskSummary = ({ affectedClients }) => {
                     <Cell key={`cell-${index}`} fill={PRACTICE_AREA_COLORS[entry.name] || PRACTICE_AREA_COLORS.Other} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, 'Revenue at Risk']} />
+                <Tooltip formatter={(value) => [formatMoney(value), 'Revenue at Risk']} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -453,7 +453,7 @@ const RiskSummary = ({ affectedClients }) => {
                   <div>
                     <div className="font-medium">{area}</div>
                     <div className="text-sm text-gray-600">
-                      {data.count} clients • ${data.revenue.toLocaleString()}
+                      {data.count} clients • {formatMoney(data.revenue)}
                     </div>
                   </div>
                   <Badge variant={data.highRisk > data.count / 2 ? 'destructive' : 'secondary'}>
@@ -537,7 +537,7 @@ const ClientCategorization = ({ affectedClients, onClientSelect }) => {
                       <div>
                         <div className="font-medium">{formatClientName(client.name)}</div>
                         <div className="text-sm text-gray-600">
-                          ${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()} • 
+                          {formatMoney(usePortfolioStore.getState().getClientRevenue(client))} • 
                           {client.practiceArea?.[0] || 'Other'}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
@@ -746,7 +746,7 @@ const ImpactAnalysisWorkbench = ({
                 <div>
                   <label className="text-sm font-medium text-gray-600">Annual Revenue</label>
                   <div className="text-2xl font-bold">
-                    ${usePortfolioStore.getState().getClientRevenue(selectedClient).toLocaleString()}
+                    {formatMoney(usePortfolioStore.getState().getClientRevenue(selectedClient))}
                   </div>
                 </div>
                 <div>
