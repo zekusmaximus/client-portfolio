@@ -593,7 +593,7 @@ function estimateLines({ book, prefix, answers, configs, estimate, target, keySe
   lines.push('Configurations, in the order they run (one call at a time, every question under one before the next):');
   estimate.configs.forEach((row, i) => {
     const config = configs[i];
-    const note = config.model === OPUS_5_5 ? ' Runs without the server-side refusal fallback, which only FALLBACK_MODELS\' claude-opus-5 gets until Jeff chooses: a decline shows as one.' : '';
+    const note = config.model === OPUS_5_5 ? ' Runs without the server-side refusal fallback, which only the models in FALLBACK_MODELS get (claude-opus-5 and claude-sonnet-5-5): a decline shows as one.' : '';
     lines.push(`  ${i + 1}. ${row.title}: ${row.calls} call${row.calls === 1 ? '' : 's'}, ${row.low === null ? 'no price' : `${formatUsd(row.low)} to ${formatUsd(row.high)}`}.${note}`);
   });
   if (estimate.unpriced.length) {

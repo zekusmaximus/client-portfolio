@@ -43,13 +43,20 @@ const TIMEOUT_MS = 180_000;
 const ANTHROPIC_API_URL = 'https://api.anthropic.com';
 
 // The effort levels output_config.effort accepts; unset means the API's
-// default (high on claude-opus-5).
+// default (high on claude-opus-5 and claude-sonnet-5-5, whose levels are
+// recalibrated, so Render sets it explicitly).
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// Models that get the server-side refusal fallback (T10). The claude-api
-// skill documents "default" routing for claude-opus-5, not for
-// claude-sonnet-5, so other models run without it and a refusal shows as one.
-const FALLBACK_MODELS = ['claude-opus-5'];
+// Models that get the server-side refusal fallback (T10): DEFAULT_MODEL, which
+// the app runs until AI_MODEL is switched on Render and again after a switch
+// back, and claude-sonnet-5-5, the model Jeff chose (Tier 3 WP1, 2026-10-01).
+// The claude-api skill documents "default" routing for both, and none for
+// claude-sonnet-5. On claude-sonnet-5-5 it retries a cyber or frontier_llm
+// decline on claude-sonnet-5 and leaves a bio, reasoning_extraction or
+// general_harms decline standing. Every target is priced (utils/aiCost.cjs).
+// Any other model, claude-opus-5-5 in scripts/eval-ai.cjs included, runs
+// without it until chosen, and a refusal shows as one.
+const FALLBACK_MODELS = ['claude-opus-5', 'claude-sonnet-5-5'];
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 // AI_EFFORT, read once. Unset or blank means none; anything else must be one
@@ -249,11 +256,13 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
         console.warn(JSON.stringify({ event: 'ai_cost_unknown_model', label, models: cost.unknownModels, pricesReadOn: PRICES_READ_ON }));
       }
 
+      // effort is null for the API's default (Tier 3 WP1, U3 (b))
       console.log(JSON.stringify({
         event: 'ai_call',
         label,
         userId,
         model,
+        effort,
         servedBy: out.servedBy,
         fellBack: out.fellBack,
         stop: out.stopReason,
@@ -281,7 +290,7 @@ function createService({ apiKey, model = DEFAULT_MODEL, effort: effortSetting, f
     }
   }
 
-  return { AI_MODEL: model, isConfigured, complete };
+  return { AI_MODEL: model, AI_EFFORT: effort, isConfigured, complete };
 }
 
 const service = createService({
@@ -292,6 +301,7 @@ const service = createService({
 
 module.exports = {
   AI_MODEL: service.AI_MODEL,
+  AI_EFFORT: service.AI_EFFORT,
   isConfigured: service.isConfigured,
   complete: service.complete,
   createService,

@@ -3,7 +3,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 require('dotenv').config({ quiet: true });
 const db = require('./db.cjs');
-const { isConfigured, AI_MODEL } = require('./services/anthropic.cjs');
+const { isConfigured, AI_MODEL, AI_EFFORT } = require('./services/anthropic.cjs');
 const { logError } = require('./utils/errorLog.cjs');
 
 const app = express();
@@ -163,9 +163,12 @@ app.get('/api/health', async (req, res) => {
     health.status = 'DEGRADED';
   }
 
-  // AI: one client and one model constant, both owned by services/anthropic.cjs
+  // AI: one client and one model constant, both owned by services/anthropic.cjs;
+  // effort is AI_EFFORT as the service read it, null for the API's default
+  // (Tier 3 WP1, U3 (b))
   health.services.anthropic = isConfigured() ? 'configured' : 'not configured';
   health.services.model = AI_MODEL;
+  health.services.effort = AI_EFFORT;
   if (!isConfigured() && health.status === 'OK') health.status = 'DEGRADED';
 
   res.json(health);

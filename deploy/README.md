@@ -121,7 +121,8 @@ the dashboards and, for the secrets, in the password manager.
 | `FRONTEND_URL` | `https://gbacpod.com` |
 | `TRUST_PROXY_HOPS` | `1` (Render's proxy) |
 | `ANTHROPIC_API_KEY` | secret (section 8.2) |
-| `AI_MODEL` | optional; unset means `claude-opus-5` |
+| `AI_MODEL` | optional; unset means `claude-opus-5`. `claude-sonnet-5-5` once Tier 3 WP1 has deployed (Jeff's choice, 2026-10-01; 7.6), set with `AI_EFFORT` in one save |
+| `AI_EFFORT` | optional; unset means the API's default (`high`). Set it with `AI_MODEL=claude-sonnet-5-5`, explicitly, since that model's levels are recalibrated (7.6). `/api/health` shows it as `services.effort` (section 10) |
 | `BCRYPT_SALT_ROUNDS` | optional; unset means 12 |
 
 Changing a variable offers three saves: **Save, rebuild, and deploy**, **Save
@@ -850,8 +851,14 @@ The configurations, in the order they run:
    `--opus-5-5 medium,high`): `claude-opus-5-5` at that effort. Its default
    effort is `medium`, one level below `claude-opus-5`'s, so it always runs
    with its effort set. In this comparison it runs without the server-side
-   refusal fallback (`FALLBACK_MODELS` lists only `claude-opus-5` until you
-   choose), so a question it declines shows as declined.
+   refusal fallback (`FALLBACK_MODELS` lists `claude-opus-5` and, from
+   Tier 3 WP1, `claude-sonnet-5-5`, not `claude-opus-5-5`), so a question it
+   declines shows as declined.
+
+The tool runs no Sonnet configuration (Tier 3's U4 (b): none unless you ask
+for one), so it cannot compare `claude-sonnet-5-5`, the model you chose, with
+these; a `--sonnet-5-5 <efforts>` option is a small pull request if you want
+it.
 
 What it does not do. It writes nothing to the database: every read is in one
 read-only transaction, closed before the first call, and no answer is saved,
@@ -938,8 +945,39 @@ which prints its own lines on standard output.
    it.
 7. **Tell the next session your choice**: the model and the effort. The
    change is then `PRICES` and `FALLBACK_MODELS` in code (a pull request) and
-   `AI_EFFORT` on Render (section 2); a switch to `claude-opus-5-5` sets
-   `AI_EFFORT` explicitly.
+   `AI_EFFORT` on Render (section 2); a switch to `claude-opus-5-5` or
+   `claude-sonnet-5-5` sets `AI_EFFORT` explicitly.
+
+**What was chosen** (Tier 3 WP1, `docs/plans/tier-3.md` section 5, outcome
+D; `docs/plans/tier-2.md` section 16): `claude-sonnet-5-5`, by you on
+2026-10-01, before a run of this tool. The code it needs (`FALLBACK_MODELS`,
+`PRICES`, and `effort` in the `ai_call` line and `/api/health`) is WP1's pull
+request. Then, on Render, in this order:
+
+1. Wait until WP1 has deployed: `/api/health`'s `services` has an `effort`
+   field (`null`). Setting the model on an older deploy runs it without the
+   refusal fallback and without a price.
+2. In the Anthropic Console, check your tier's rate limits for
+   `claude-sonnet-5-5` and for `claude-sonnet-5`, where its fallback sends
+   `cyber` and `frontier_llm` declines; each model has its own pool.
+3. On the web service's Environment page, set `AI_MODEL` to
+   `claude-sonnet-5-5` and `AI_EFFORT` to the effort you chose, in one
+   **Save and deploy** (section 2).
+4. `/api/health` shows both under `services`. Ask one question: its
+   `ai_call` line (9.3) shows `model` and `servedBy` `claude-sonnet-5-5`,
+   the effort, a `costUsd` and `cacheWriteTokens` above 0; a second
+   question within five minutes shows `cacheReadTokens` above 0. Follow up
+   a thread begun before the switch: it answers, without the earlier
+   answers' reasoning, which `claude-sonnet-5-5` cannot read (their text
+   still goes). Write one transition plan in Stage 2. The AI tab's month
+   line prices them.
+5. Tell the next session the date of the change and the effort.
+
+To undo it, delete `AI_MODEL` and `AI_EFFORT` in one save:
+`claude-opus-5` at its default again, threads carrying on without
+`claude-sonnet-5-5`'s reasoning, the book written to the cache again. After
+the switch this tool still compares `claude-opus-5` (and `claude-opus-5-5`
+when asked), not the model production runs.
 
 **The transition-plan check** (`--plans`, read-only, free). S16 asks whether
 the saved transition plans recommend people the parser cannot resolve. A
@@ -1057,7 +1095,7 @@ example `"event":"ai_error"`.
 
 | Event | Level | Fields | Meaning and what to do |
 |---|---|---|---|
-| `ai_call` | info | `label`, `userId`, `model`, `servedBy`, `fellBack`, `stop`, `refusalCategory`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `costUsd`, `ms` | One Anthropic call. `label` is `ask`, `brief`, `follow-up` (Tier 2 WP10: a question asked under an earlier answer, which sends the thread's earlier questions and answers with it) or `transition-plan`; `eval` is `scripts/eval-ai.cjs` (7.6), whose lines appear in the terminal that runs it, not in the web service's logs. `model` is the model requested and `servedBy` the one that answered. `fellBack` true: Anthropic's server-side fallback served it (the requested model declined, or Anthropic sent the turn straight to the fallback), and `servedBy` names the fallback model. `stop` of `max_tokens`: the answer was cut off (the page says so). `stop` of `refusal`: the AI declined, and `refusalCategory` says why. `cacheWriteTokens` above 0: this call wrote the book to Anthropic's prompt cache (the first AI call on this book in five minutes). `cacheReadTokens` above 0: it read the book from the cache, which is cheaper. A `follow-up` within five minutes of the answer before it also reads that thread's earlier turns from the cache, so its `cacheReadTokens` exceed the book's alone, and it writes only what the last turn added. `costUsd` is an estimate from list prices in `utils/aiCost.cjs`, `null` for a model without a price (`ai_cost_unknown_model`); the Anthropic Console is the bill. `ms` is how long the call took |
+| `ai_call` | info | `label`, `userId`, `model`, `effort`, `servedBy`, `fellBack`, `stop`, `refusalCategory`, `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `costUsd`, `ms` | One Anthropic call. `label` is `ask`, `brief`, `follow-up` (Tier 2 WP10: a question asked under an earlier answer, which sends the thread's earlier questions and answers with it) or `transition-plan`; `eval` is `scripts/eval-ai.cjs` (7.6), whose lines appear in the terminal that runs it, not in the web service's logs. `model` is the model requested and `servedBy` the one that answered. `effort` (Tier 3 WP1) is the effort the call was sent at, `AI_EFFORT`, or `null` for the API's default; lines from before WP1 have none. `fellBack` true: Anthropic's server-side fallback served it (the requested model declined, or Anthropic sent the turn straight to the fallback), and `servedBy` names the fallback model. `stop` of `max_tokens`: the answer was cut off (the page says so). `stop` of `refusal`: the AI declined, and `refusalCategory` says why. `cacheWriteTokens` above 0: this call wrote the book to Anthropic's prompt cache (the first AI call on this book in five minutes). `cacheReadTokens` above 0: it read the book from the cache, which is cheaper. A `follow-up` within five minutes of the answer before it also reads that thread's earlier turns from the cache, so its `cacheReadTokens` exceed the book's alone, and it writes only what the last turn added. `costUsd` is an estimate from list prices in `utils/aiCost.cjs`, `null` for a model without a price (`ai_cost_unknown_model`); the Anthropic Console is the bill. `ms` is how long the call took |
 | `ai_error` | error | `label`, `userId`, `model`, `status`, `type`, `message`, `ms` | A failed Anthropic call; the partner saw an error and nothing was saved. `status` 401 or 403: the key is wrong or revoked (8.2). 429: Anthropic's rate limit. 5xx, or `type` `overloaded_error`: Anthropic's side, retry later. 400: Anthropic refused the request as we built it; report it with the line. `status` `null` with a `type`: Anthropic's stream failed in the middle of an answer, and `type` says how. Both `null`: network or timeout. A missing key writes no line: `/api/health` shows `anthropic` `not configured` |
 | `ai_stream_closed` | warn | `label`, `userId`, `opened` | `label` as in `ai_call`. The page's connection closed before a streamed answer was done (the tab was closed, the network dropped, or the partner signed out). The call carries on and the answer is saved (its `ai_call` line follows). `opened` false: it closed before the stream had started. Many of them for answers partners were watching: something between Render and the browser is cutting long connections (4.6) |
 | `ai_answer_save_failed` | error | `label`, `userId`, `kind`, `code`, `message` | An answer could not be saved. The partner still got it, marked `saved: false`, but it is not under Recent answers and not in the month's cost. `code` is PostgreSQL's error code. Check the database with `/api/health` (section 10). Many in a row: the database or the `ai_answers` table has a problem; send the `code` and `message` |
@@ -1080,7 +1118,7 @@ example `"event":"ai_error"`.
 ```json
 { "status": "OK", "timestamp": "<ISO time>", "uptimeSeconds": 8509, "environment": "production",
   "features": ["check-file", "transition-plan-roster", "second-chair-assign", "ai-book", "ask-the-book", "ai-answers", "ai-stream", "plain-text", "client-edit-conflict", "saved-scenarios", "hire-scenarios", "ai-threads"],
-  "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5" } }
+  "services": { "database": "connected", "anthropic": "configured", "model": "claude-opus-5", "effort": null } }
 ```
 
 | Field | Meaning |
@@ -1092,7 +1130,8 @@ example `"event":"ai_error"`.
 | `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). `plain-text` (Tier 2 WP5), which the page does not read, says this API stores text as typed, and 7.5's repair runs only on an API that lists it. `client-edit-conflict` (Tier 2 WP6): the client form shows "Last changed by" and History only with it, and without it saves as before. `saved-scenarios` (Tier 2 WP8): Scenarios shows its list of saved scenarios (New, Open, Save, Save as, Delete) only with it, and without it works in the browser only, as before. `hire-scenarios` (Tier 2 WP9): Scenarios saves an "Add an associate" scenario only with it; without it (an API from before WP9, which refuses the kind) that kind works in the browser only, with Save and Save as off, and departure scenarios save as before. The last one added is `ai-threads` (Tier 2 WP10): the AI tab offers "Ask a follow-up", Hide and "Show hidden" only with it; without it (an API from before WP10, which would answer a follow-up as a new question) the tab is as before. A name missing after a merge means Render has not deployed that merge yet |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
-| `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`) |
+| `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`; `claude-sonnet-5-5` once Jeff sets it, 7.6) |
+| `services.effort` | the effort every AI call is sent at (`AI_EFFORT`), or `null` for the API's default (`high`). From Tier 3 WP1: an API without the field is a deploy from before WP1, so set `AI_MODEL` and `AI_EFFORT` only once it shows (7.6) |
 
 Because the answer is 200 even when `DEGRADED`, a check that looks only at the
 status code proves only that the process is up. Render's own health check
