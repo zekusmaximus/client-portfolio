@@ -100,11 +100,20 @@ refused row, three dead `.dark` rules in `src/App.css`, revenue shown with
 `toLocaleString()` where the book shows whole dollars, and the Dashboard's
 scatter caption): its section, tier-3.md section 15 with decisions U27 to
 U31, written 2026-10-01 against `4041df1` on `claude/adoring-hamilton-wsqazj`,
-approved by Jeff the same day with U27 to U31 as recommended, is in PR #65
-with the package's code: the import's `FOR UPDATE` read of the clients its
+approved by Jeff the same day with U27 to U31 as recommended, merged with the
+package's code as PR #65 (`431fb29`) on 2026-10-01 at Jeff's instruction, CI
+green on its head `f827f88` (check, schema, GitGuardian and the Deploy
+Preview): the import's `FOR UPDATE` read of the clients its
 file names in id order, the three `.dark` rules deleted, the twelve revenue
 figures through `formatMoney` and Data Upload's totals to the cent, the
-chart's caption and ticks, and runbook 9.1's paragraph on the database's log. WP1 when
+chart's caption and ticks, and runbook 9.1's paragraph on the database's log.
+Its after-deploy checks (tier-3.md section 15.10, with (ab)'s two read-only
+answers for runbook 9.1) are Jeff's, as are WP6's (14.10), which are due
+before the next package merges. Candidate (af), found by WP10 (Stage 1's
+"1 clients" and a bullet run into the practice area, and the same "1
+clients" at five more lines), is put to Jeff as U32 (tier-3.md section 1),
+proposed on 2026-10-01 against `431fb29`: nothing is built from it until he
+approves it. WP1 when
 Jeff's evaluation run and choice arrive (about 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
