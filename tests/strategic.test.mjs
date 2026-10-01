@@ -4,7 +4,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import strategic from '../utils/strategic.cjs';
-import { UNRATED_STICKINESS as PAGE_UNRATED_STICKINESS, resolveStickinessScore } from '../src/utils/clientMetrics.js';
+import {
+  UNRATED_STICKINESS as PAGE_UNRATED_STICKINESS,
+  CONFLICT_PENALTY as PAGE_CONFLICT_PENALTY,
+  REVENUE_WEIGHT as PAGE_REVENUE_WEIGHT,
+  STICKINESS_WEIGHT as PAGE_STICKINESS_WEIGHT,
+  mostRecentRevenue,
+  resolveStickinessScore,
+  resolveStrategicValue,
+  strategicValueParts,
+} from '../src/utils/clientMetrics.js';
 import { CLIENTS as BOOK_CLIENTS } from './fixtures/books.mjs';
 
 // The WP0 fixture, plus a client whose rows span 2025 and 2026.
@@ -177,4 +186,96 @@ test('the page\'s stickiness is the server\'s: the same stand-in, and the same s
   // Raw form state (the client form's live preview), rated and not
   assert.equal(resolveStickinessScore({ stickiness: null, interaction_frequency: 'Weekly' }), 40 / 9);
   assert.equal(resolveStickinessScore({ stickiness: 5 }), 10);
+});
+
+/* ------------------------------------------------------------------------ */
+/*         The page's mirror of the score (Tier 3 WP6, U21 (a))              */
+/* ------------------------------------------------------------------------ */
+
+// docs/plans/tier-3.md, section 14: resolveStrategicValue (src/utils/
+// clientMetrics.js) scores Scenarios' hypothetical client, which never
+// reaches the API, so the weights live in two places, bound here: the mirror
+// equal to calculateStrategicValue on every fixture client in three revenue
+// shapes and on 3,000 random clients, the API's rounded figure preferred when
+// a client carries one, and the mirror rounded as the API rounds.
+
+// A client in the three revenue shapes the scorer reads: the API's rows, the
+// page's `revenue` object, and empty rows beside an object (the rows are then
+// nothing to read)
+function revenueShapes(client) {
+  const { revenues, ...rest } = client;
+  const object = strategic.revenueObjectFromRows(revenues);
+  return [
+    { ...rest, revenues },
+    { ...rest, revenue: object },
+    { ...rest, revenues: [], revenue: object },
+  ];
+}
+
+function assertMirror(client, where) {
+  assert.equal(mostRecentRevenue(client), strategic.getMostRecentRevenue(client), `${where}: latest year's revenue`);
+  assert.equal(mostRecentRevenue(client, client.revenues), strategic.getMostRecentRevenue(client, client.revenues), `${where}: latest year's revenue, rows given`);
+  assert.equal(resolveStrategicValue(client), strategic.calculateStrategicValue(client), `${where}: strategic value`);
+  assert.equal(resolveStrategicValue(client, client.revenues), strategic.calculateStrategicValue(client, client.revenues), `${where}: strategic value, rows given`);
+  // The parts: the exact stickiness, the server's, and the formula from them
+  const parts = strategicValueParts(client);
+  assert.equal(parts.stickiness, strategic.getStickiness(client), `${where}: stickiness`);
+  assert.equal(parts.revenue, strategic.getMostRecentRevenue(client), `${where}: revenue`);
+  assert.equal(parts.value, resolveStrategicValue(client), `${where}: the parts' value`);
+  // The API's client carries the rounded score, which the page prefers; the
+  // mirror rounds to the same figure
+  const [api] = strategic.calculateStrategicScores([client]);
+  assert.equal(resolveStrategicValue(api), api.strategicValue, `${where}: the API's figure preferred`);
+  assert.equal(Math.round(resolveStrategicValue(client) * 100) / 100, api.strategicValue, `${where}: rounded as the API rounds`);
+}
+
+test('the page\'s strategic value is the server\'s: the mirror equals calculateStrategicValue on the fixture clients in three revenue shapes, the API\'s rounded figure preferred', () => {
+  assert.deepEqual(PAGE_CONFLICT_PENALTY, { High: 3, Medium: 1, Low: 0 });
+  assert.equal(PAGE_REVENUE_WEIGHT + PAGE_STICKINESS_WEIGHT, 1);
+  let count = 0;
+  for (const client of fixtureClients()) {
+    for (const shaped of revenueShapes(client)) {
+      assertMirror(shaped, JSON.stringify(shaped));
+      count += 1;
+    }
+  }
+  assert.ok(count >= 3 * 150, `${count} clients checked`);
+  // No revenue at all, the null row jsonb_agg yields, and no object
+  for (const bare of [
+    { stickiness: 4, conflict_risk: 'Low' },
+    { stickiness: null, conflict_risk: 'High', revenues: [{ id: null, year: null, revenue_amount: null }] },
+    { stickiness: 2, revenue: {} },
+    { stickiness: 2, revenues: null, revenue: null },
+  ]) assertMirror(bare, JSON.stringify(bare));
+  // Raw form state and the sandbox's client: the raw pick, never a rounded score
+  assert.equal(resolveStrategicValue({ stickiness: null, conflict_risk: 'Medium', revenues: [{ year: 2026, revenue_amount: 300000 }] }), 6 * 0.5 + (40 / 9) * 0.5 - 1);
+  assert.equal(resolveStrategicValue({ stickiness: 4, conflict_risk: 'Low' }), 7.5 * 0.5);
+  assert.equal(resolveStrategicValue({ stickiness: 2, conflict_risk: 'High', revenues: [{ year: 2026, revenue_amount: 30000 }] }), 0, 'kept at 0');
+  assert.equal(resolveStrategicValue({ stickiness: 5, conflict_risk: 'Low', revenues: [{ year: 2026, revenue_amount: 900000 }] }), 10, 'kept at 10');
+  assert.equal(resolveStrategicValue(null), 0);
+});
+
+test('the mirror on 3,000 seeded random clients: text amounts, out-of-range years, ties on year, the camelCase conflict risk and an unknown one', () => {
+  let seed = 20261001;
+  const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  const amount = () => pick([0, 1, 30000, 49999.99, 50000, 250000, 500000, 1000000000, 123.456]);
+  for (let run = 0; run < 3000; run += 1) {
+    const rows = Array.from({ length: Math.floor(random() * 5) }, () => ({
+      year: pick([1800, 2024, 2025, 2026, '2026', 2200, '2025', 'abc', null]),
+      revenue_amount: pick([amount(), String(amount()), `${amount()}.00`, 'x', null, '']),
+    }));
+    const client = {
+      name: `R${run}`,
+      stickiness: pick([null, undefined, 1, 2, 3, 4, 5, '3', '5', 0, 6, 2.5, 'x', '']),
+      interaction_frequency: pick(['Daily', 'Weekly', '', null, 'Hourly']),
+      high_maintenance: random() > 0.5,
+      ...(random() > 0.5
+        ? { conflict_risk: pick(['Low', 'Medium', 'High', null, 'Unknown', '']) }
+        : { conflictRisk: pick(['Low', 'Medium', 'High', 'low', undefined]) }),
+      ...(random() > 0.2 ? { revenues: rows } : {}),
+      ...(random() > 0.6 ? { revenue: Object.fromEntries(rows.filter((r) => Number.isInteger(Number(r.year))).map((r) => [r.year, r.revenue_amount])) } : {}),
+    };
+    assertMirror(client, `run ${run}: ${JSON.stringify(client)}`);
+  }
 });

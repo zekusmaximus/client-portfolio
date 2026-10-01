@@ -17,6 +17,7 @@ import {
   stateJson,
 } from './utils/scenarioState';
 import { newAssociate, withoutAssociatePicks, withPick } from './utils/hireScenario';
+import { emptySandbox } from './utils/clientFit';
 
 // The AI tab's answers (docs/plans/tier-1.md, WP3): the last Ask and the last
 // brief. They start empty and go back to empty on logout. From Tier 2 WP10
@@ -85,12 +86,20 @@ const emptyExecution = () => ({ activeTransitions: [], heldTransitions: [], tran
 // Scenarios tab reads it: a hypothetical person never reaches the People
 // list, the book or another tab.
 const emptyHireScenario = () => ({ associates: [], picks: {}, relief: false });
+// Where a new client fits (docs/plans/tier-3.md, section 14, WP6, U22 (a)):
+// the sandbox's picks (the client form's fields, as typed) and the partner's
+// choice of seats ({ leadId?, secondChairId? }), which src/utils/clientFit.js
+// turns into the client, its seats and everyone's load. Kept across tabs
+// (P11), cleared on logout and when a saved scenario opens, never persisted
+// and never saved: it is not a saved kind (KINDS, stateFromStore and the
+// checks are untouched), and the hypothetical client never reaches the API.
+const emptyClientSandbox = () => emptySandbox();
 // Saved Scenarios (docs/plans/tier-2.md, S12, WP8): the saved scenario open
 // in Scenarios (null for one not saved yet), its state as last opened or
 // saved (as text, for "Unsaved changes"), and the notices opening it gave.
 // The scenario itself is the store's successionWorkflow, transitionPlans and
 // Stage 3 state, as before, or, when scenarioKind is 'hire' (WP9),
-// hireScenario.
+// hireScenario; when it is 'client' (Tier 3 WP6) nothing is saved.
 const closedScenario = (kind = 'departure') => ({
   savedScenario: null,
   savedStateJson: stateJson(emptyStateOf(kind)),
@@ -156,9 +165,16 @@ const usePortfolioStore = create(
       ...emptyExecution(),
 
       // Which kind of scenario is open (WP9): 'departure' (someone leaves,
-      // the three stages above) or 'hire' (an associate is added, below)
+      // the three stages above), 'hire' (an associate is added, below) or
+      // 'client' (where a new client fits, Tier 3 WP6; never saved)
       scenarioKind: 'departure',
       hireScenario: emptyHireScenario(),
+      clientSandbox: emptyClientSandbox(),
+      // The client form's fields for a client the sandbox hands to Client
+      // Details ("Add on Client Details", U26 (b)): read once by the form's
+      // init effect when it opens on a new client, then cleared. The save is
+      // the form's own POST; nothing else writes.
+      clientDraft: null,
 
       // Saved Scenarios (WP8): whether the API has them (null until asked,
       // then /api/health's saved-scenarios), whether it saves a hire scenario
@@ -587,6 +603,8 @@ const usePortfolioStore = create(
             ...emptyExecution(),
             scenarioKind: 'departure',
             hireScenario: emptyHireScenario(),
+            clientSandbox: emptyClientSandbox(),
+            clientDraft: null,
             scenarioFeature: null,
             hireFeature: null,
             scenarioList: emptyScenarioList(),
@@ -837,6 +855,51 @@ const usePortfolioStore = create(
         set((state) => ({ hireScenario: { ...state.hireScenario, relief: on === true } }));
       },
 
+      // Where a new client fits (Tier 3 WP6). Nothing here is written
+      // anywhere: the sandbox re-derives everything from the picks and the
+      // choice (src/utils/clientFit.js) at every render.
+      // The picks: { name?, revenue?, practiceArea?, interaction_frequency?,
+      // high_maintenance?, stickiness?, conflict_risk? }, each as typed
+      setSandboxPicks: (changes) => {
+        set((state) => ({
+          clientSandbox: { ...state.clientSandbox, picks: { ...state.clientSandbox.picks, ...changes } }
+        }));
+      },
+
+      // The partner's choice of seats: { leadId?, secondChairId? }, each key
+      // replacing the one before; a key set to undefined forgets that pick
+      // (the proposal decides again), a secondChairId of null is "None"
+      setSandboxChoice: (changes) => {
+        set((state) => {
+          const choice = { ...state.clientSandbox.choice };
+          for (const [seat, value] of Object.entries(changes || {})) {
+            if (value === undefined) delete choice[seat];
+            else choice[seat] = value;
+          }
+          return { clientSandbox: { ...state.clientSandbox, choice } };
+        });
+      },
+
+      // "Start over": the picks and the choice cleared
+      resetSandbox: () => set({ clientSandbox: emptyClientSandbox() }),
+
+      // "Add on Client Details" (U26 (b)): the client form's fields for the
+      // sandbox's client, opened on Client Details as a new client; the form's
+      // init effect reads the draft once (takeClientDraft) in place of its
+      // defaults. Nothing is written until the partner presses Save there.
+      draftClient: (draft) => {
+        set({ clientDraft: draft, currentView: 'client-details', selectedClient: null, isModalOpen: true });
+      },
+
+      // The draft, once: the form reads it when it opens on a new client and
+      // the store forgets it, so a second Add never refills a form the
+      // partner has since edited
+      takeClientDraft: () => {
+        const draft = get().clientDraft;
+        if (draft) set({ clientDraft: null });
+        return draft;
+      },
+
       // Saved Scenarios (docs/plans/tier-2.md, S12, WP8). Whether the API
       // saves scenarios: without saved-scenarios in /api/health (an API older
       // than WP8), Scenarios works in the browser only, as before
@@ -882,7 +945,8 @@ const usePortfolioStore = create(
           reportingYear: get().getReportingYear(),
           today: new Date().toISOString().split('T')[0]
         });
-        // The other kind's state is cleared: one scenario is open at a time
+        // The other kinds' state is cleared: one scenario is open at a time
+        // (the sandbox, which is never saved, with them)
         const pieces = opened.scenarioKind === 'hire'
           ? {
             successionWorkflow: emptySuccessionWorkflow(),
@@ -901,6 +965,7 @@ const usePortfolioStore = create(
           };
         set({
           ...pieces,
+          clientSandbox: emptyClientSandbox(),
           scenarioKind: opened.scenarioKind,
           savedScenario: scenarioMeta(scenario),
           savedStateJson: stateJson(scenario.state),
@@ -936,16 +1001,18 @@ const usePortfolioStore = create(
         await get().fetchScenarios();
       },
 
-      // A new scenario of either kind ('departure' or 'hire', WP9): nothing
-      // leaving, no picks, plans or associates, nothing saved yet
+      // A new scenario of any kind ('departure' or 'hire', WP9; 'client',
+      // the sandbox, Tier 3 WP6): nothing leaving, no picks, plans or
+      // associates, nothing typed, nothing saved yet
       newScenario: (kind = 'departure') => {
-        const scenarioKind = kind === 'hire' ? 'hire' : 'departure';
+        const scenarioKind = kind === 'hire' ? 'hire' : kind === 'client' ? 'client' : 'departure';
         set({
           successionWorkflow: emptySuccessionWorkflow(),
           transitionPlans: {},
           ...emptyExecution(),
           scenarioKind,
           hireScenario: emptyHireScenario(),
+          clientSandbox: emptyClientSandbox(),
           ...closedScenario(scenarioKind)
         });
       },

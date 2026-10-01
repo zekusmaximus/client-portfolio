@@ -11,6 +11,7 @@ import usePortfolioStore from '../../portfolioStore';
 import { apiErrorBody, apiErrorMessage, apiErrorStatus } from '../../api';
 import { firmTime } from '../../utils/clientHistory';
 import { LIMITS, scenarioDirty, scenarioSavable } from '../../utils/scenarioState';
+import { sandboxEntered } from '../../utils/clientFit';
 
 // Saved Scenarios (docs/plans/tier-2.md, S12, WP8): the open scenario's name
 // and whether it has unsaved changes, New, Open (the saved list, with
@@ -26,6 +27,12 @@ import { LIMITS, scenarioDirty, scenarioSavable } from '../../utils/scenarioStat
 // hire-scenarios refuses a hire scenario's state, so then Save and Save as
 // are off for one, it works in the browser only, and nothing asks about its
 // unsaved changes, as WP8 does without saved-scenarios.
+//
+// Tier 3 WP6 (docs/plans/tier-3.md, section 14, U22 (a)): "A new client",
+// the sandbox, is not a saved kind: the bar names it, Save and Save as are
+// off, and one line says so in place of the saved-by line; New and Open work
+// as they do, asking first when the sandbox holds anything (it is cleared),
+// as the kind chooser asks; logout and leaving the page ask nothing about it.
 
 const STAGE_LABELS = {
   impact: 'Stage 1: Impact Analysis',
@@ -34,6 +41,7 @@ const STAGE_LABELS = {
 };
 
 const UNSAVED_PROMPT = 'The open scenario has unsaved changes, which will be lost. Continue?';
+const SANDBOX_PROMPT = 'The new client on screen is cleared; it is not saved as a scenario. Continue?';
 
 const leavingText = (leaving = []) =>
   leaving.map((p) => p.name ?? 'someone no longer on the People list').join(', ') || 'nobody yet';
@@ -42,8 +50,9 @@ const leavingText = (leaving = []) =>
 const associatesText = (associates = []) =>
   associates.map((a) => (a.person ? `${a.label} (${a.person})` : a.label)).join(', ') || 'no associate yet';
 
-const KIND_LABELS = { departure: 'Someone leaves', hire: 'Add an associate' };
+const KIND_LABELS = { departure: 'Someone leaves', hire: 'Add an associate', client: 'A new client' };
 const NO_HIRE_SAVE = 'This API cannot save a hire scenario yet, so this one works in this browser only. It can be saved once the API is updated.';
+const NO_CLIENT_SAVE = 'A new client is not saved as a scenario. When you want the client, add it on Client Details.';
 
 // A refused save's message: the details a 400 lists, or the server's error
 const saveErrorText = (err) => {
@@ -61,6 +70,7 @@ const ScenarioBar = () => {
   const dirty = usePortfolioStore(scenarioDirty);
   const savable = usePortfolioStore(scenarioSavable);
   const scenarioKind = usePortfolioStore((s) => s.scenarioKind);
+  const sandbox = usePortfolioStore((s) => s.clientSandbox);
   const fetchScenarios = usePortfolioStore((s) => s.fetchScenarios);
   const openScenario = usePortfolioStore((s) => s.openScenario);
   const saveScenario = usePortfolioStore((s) => s.saveScenario);
@@ -77,7 +87,11 @@ const ScenarioBar = () => {
   // { tone: 'error' | 'info', text, conflict, missing } after an action
   const [message, setMessage] = useState(null);
 
-  const confirmLeaving = () => !(savable && dirty) || window.confirm(UNSAVED_PROMPT);
+  const confirmLeaving = () => {
+    if (savable && dirty) return window.confirm(UNSAVED_PROMPT);
+    if (scenarioKind === 'client' && sandboxEntered(sandbox)) return window.confirm(SANDBOX_PROMPT);
+    return true;
+  };
 
   const handleNew = (kind) => {
     if (!confirmLeaving()) return;
@@ -177,8 +191,10 @@ const ScenarioBar = () => {
                 <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Unsaved changes</Badge>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {savable ? `${savedLine} Saved scenarios are shared: every partner can open, save and delete them.` : NO_HIRE_SAVE}
+            <p className="text-xs text-muted-foreground" data-testid="scenario-bar-line">
+              {savable
+                ? `${savedLine} Saved scenarios are shared: every partner can open, save and delete them.`
+                : scenarioKind === 'client' ? NO_CLIENT_SAVE : NO_HIRE_SAVE}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
