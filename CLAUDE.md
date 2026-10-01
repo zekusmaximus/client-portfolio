@@ -127,9 +127,12 @@ chose `claude-sonnet-5-5` on 2026-10-01, before the evaluation run (recorded
 in tier-2.md section 16; tier-3.md section 5's outcome D, written for it);
 its code (`FALLBACK_MODELS` and `PRICES` gain the model, U3 (b)'s `effort` in
 the `ai_call` line and `/api/health`, U4 (b)'s docs; no route, schema, page
-or feature name) is on `claude/tier-3-wp1-sonnet-n4q7xk`, PR #70, open. After it
-deploys, Jeff sets `AI_MODEL` and `AI_EFFORT` on Render in one save (runbook
-7.6); the effort is his to name. Run the packages in
+or feature name) merged as PR #70 (`b65057d`) on 2026-10-01 at Jeff's
+instruction, CI green on its head `d189666` (check, schema, GitGuardian and
+the Deploy Preview), right after PR #69 (`d70b430`). The effort: `high`
+(Jeff, 2026-10-01). After it deploys, Jeff sets `AI_MODEL=claude-sonnet-5-5`
+and `AI_EFFORT=high` on Render in one save (runbook 7.6) and runs its
+after-deploy checks (tier-3.md section 5, (D)). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
