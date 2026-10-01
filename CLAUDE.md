@@ -92,8 +92,9 @@ as `claude/sweet-volta-52w4nc` (page only: the sandbox as Scenarios' third
 kind, the scorer's page mirror, the client form's draft; no route, schema,
 feature name or write), merged as PR #64 (`4041df1`) on 2026-10-01 at Jeff's
 instruction, CI green on its head `89856df` (check, schema, GitGuardian and
-the Deploy Preview); its after-deploy checks (tier-3.md section 14.10) and
-WP5's (13.10) are Jeff's. Then WP10 (the open candidates (aa) to (ae): the
+the Deploy Preview); its after-deploy checks (tier-3.md section 14.10) are
+Jeff's, and WP5's (13.10) were verified on gbacpod.com by Jeff on 2026-10-01,
+all as expected. Then WP10 (the open candidates (aa) to (ae): the
 import's lock order against a rename's, PostgreSQL's own log printing a
 refused row, three dead `.dark` rules in `src/App.css`, revenue shown with
 `toLocaleString()` where the book shows whole dollars, and the Dashboard's
