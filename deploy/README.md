@@ -122,7 +122,7 @@ the dashboards and, for the secrets, in the password manager.
 | `TRUST_PROXY_HOPS` | `1` (Render's proxy) |
 | `ANTHROPIC_API_KEY` | secret (section 8.2) |
 | `AI_MODEL` | optional; unset means `claude-opus-5`. `claude-sonnet-5-5` once Tier 3 WP1 has deployed (Jeff's choice, 2026-10-01; 7.6), set with `AI_EFFORT` in one save |
-| `AI_EFFORT` | optional; unset means the API's default (`high`). Set it with `AI_MODEL=claude-sonnet-5-5`, explicitly, since that model's levels are recalibrated (7.6). `/api/health` shows it as `services.effort` (section 10) |
+| `AI_EFFORT` | optional; unset means the API's default (`high`). `high` with `AI_MODEL=claude-sonnet-5-5` (your choice, 2026-10-01), set explicitly, since that model's levels are recalibrated (7.6). `/api/health` shows it as `services.effort` (section 10) |
 | `BCRYPT_SALT_ROUNDS` | optional; unset means 12 |
 
 Changing a variable offers three saves: **Save, rebuild, and deploy**, **Save
@@ -949,10 +949,11 @@ which prints its own lines on standard output.
    `claude-sonnet-5-5` sets `AI_EFFORT` explicitly.
 
 **What was chosen** (Tier 3 WP1, `docs/plans/tier-3.md` section 5, outcome
-D; `docs/plans/tier-2.md` section 16): `claude-sonnet-5-5`, by you on
-2026-10-01, before a run of this tool. The code it needs (`FALLBACK_MODELS`,
-`PRICES`, and `effort` in the `ai_call` line and `/api/health`) is WP1's pull
-request. Then, on Render, in this order:
+D; `docs/plans/tier-2.md` section 16): `claude-sonnet-5-5` at effort
+`high`, by you on 2026-10-01, before a run of this tool. The code it needs
+(`FALLBACK_MODELS`, `PRICES`, and `effort` in the `ai_call` line and
+`/api/health`) is WP1's, merged as PR #70 (`b65057d`). Then, on Render, in
+this order:
 
 1. Wait until WP1 has deployed: `/api/health`'s `services` has an `effort`
    field (`null`). Setting the model on an older deploy runs it without the
@@ -961,8 +962,8 @@ request. Then, on Render, in this order:
    `claude-sonnet-5-5` and for `claude-sonnet-5`, where its fallback sends
    `cyber` and `frontier_llm` declines; each model has its own pool.
 3. On the web service's Environment page, set `AI_MODEL` to
-   `claude-sonnet-5-5` and `AI_EFFORT` to the effort you chose, in one
-   **Save and deploy** (section 2).
+   `claude-sonnet-5-5` and `AI_EFFORT` to `high`, in one **Save and
+   deploy** (section 2).
 4. `/api/health` shows both under `services`. Ask one question: its
    `ai_call` line (9.3) shows `model` and `servedBy` `claude-sonnet-5-5`,
    the effort, a `costUsd` and `cacheWriteTokens` above 0; a second
