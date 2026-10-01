@@ -278,7 +278,7 @@ const DashboardView = () => {
         <div className="bg-background border rounded-lg p-3 shadow-lg">
           <p className="font-semibold">{data.name || 'Unnamed Client'}</p>
           <p className="text-sm">Strategic Value: {(data.y || 0).toFixed(2)}</p>
-          <p className="text-sm">Revenue: ${(data.revenue || 0).toLocaleString()}</p>
+          <p className="text-sm">Revenue: {formatMoney(data.revenue)}</p>
           <p className="text-sm">Practice Area: {data.practiceArea || 'Not Specified'}</p>
         </div>
       );
@@ -297,7 +297,7 @@ const DashboardView = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
-                <p className="text-2xl font-bold">${analytics.totalRevenue.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{formatMoney(analytics.totalRevenue)}</p>
               </div>
               <DollarSign className="h-8 w-8 text-green-500" />
             </div>
@@ -400,7 +400,7 @@ const DashboardView = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[entry.name] || COLORS.Other} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => [`$${value.toLocaleString()}`, 'Revenue']} />
+                  <Tooltip formatter={(value) => [formatMoney(value), 'Revenue']} />
                 </RechartsPieChart>
               </ResponsiveContainer>
             </CardContent>
@@ -464,7 +464,7 @@ const DashboardView = () => {
                     type="number"
                     dataKey="x"
                     name="Revenue"
-                    unit="$"
+                    tickFormatter={formatMoney}
                     domain={[0, 'dataMax + 10000']}
                   />
                   <YAxis
@@ -490,7 +490,7 @@ const DashboardView = () => {
               </ResponsiveContainer>
               <div className="mt-4">
                 <p className="text-sm text-muted-foreground">
-                  Bubble size represents revenue. Top-right quadrant shows high-value, efficient clients.
+                  Each point is a client: its {reportingYear} revenue against its strategic value, colored by its first practice area.
                 </p>
               </div>
             </CardContent>
@@ -653,7 +653,7 @@ const DashboardView = () => {
                               {strategicValue.toFixed(1)}
                             </Badge>
                           </td>
-                          <td className="p-2">${revenue.toLocaleString()}</td>
+                          <td className="p-2">{formatMoney(revenue)}</td>
                           <td className="p-2">
                             <Badge 
                               variant={

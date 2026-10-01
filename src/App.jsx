@@ -14,6 +14,7 @@ import LoginPage from './LoginPage';
 import ChangePasswordDialog from './ChangePasswordDialog';
 import PeopleDialog from './PeopleDialog';
 import { unsavedChanges } from './utils/scenarioState';
+import { formatMoney } from './utils/load';
 import './App.css';
 
 // Whether the open scenario has unsaved changes, with an API that can save
@@ -102,7 +103,7 @@ function App() {
                     {clients.length} clients loaded
                   </p>
                   <p className="text-lg font-semibold">
-                    ${usePortfolioStore.getState().getTotalRevenue().toLocaleString()}
+                    {formatMoney(usePortfolioStore.getState().getTotalRevenue())}
                   </p>
                 </div>
               )}

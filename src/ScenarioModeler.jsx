@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Target } from 'lucide-react';
 import usePortfolioStore from './portfolioStore';
 import SuccessionScenario from './components/succession/SuccessionScenario';
+import { formatMoney } from './utils/load';
 
 // The Scenarios tab is the succession workflow. The Growth tab, the capacity
 // scenario and their endpoints were removed in WP2 (docs/plans/tier-0.md, D8).
@@ -27,8 +28,6 @@ const ScenarioModeler = () => {
       clientCount: clients.length
     };
   }, [clients, hasData]);
-
-  const formatCurrency = (amount) => `$${amount.toLocaleString()}`;
 
   if (!hasData) {
     return (
@@ -82,7 +81,7 @@ const ScenarioModeler = () => {
                 <p className="text-xs text-muted-foreground">Clients</p>
               </div>
               <div className="text-center">
-                <p className="text-lg font-bold">{formatCurrency(currentMetrics.totalRevenue)}</p>
+                <p className="text-lg font-bold">{formatMoney(currentMetrics.totalRevenue)}</p>
                 <p className="text-xs text-muted-foreground">Revenue</p>
               </div>
               <div className="text-center">

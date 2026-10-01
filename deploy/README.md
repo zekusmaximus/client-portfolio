@@ -997,6 +997,25 @@ to 6,000 application log lines per minute per instance
 (<https://render.com/docs/logging>). How far back logs go depends on the
 workspace plan: confirm in the dashboard.
 
+The API's lines never print a row: a failed query logs its code, message,
+constraint, table and column, never PostgreSQL's `detail` (section 9.3; Tier
+3 WP2). The database has a log of its own, PostgreSQL's, whether or not the
+Render dashboard shows it for the PostgreSQL instance (check there). Under
+PostgreSQL's default `log_error_verbosity` that log prints the refused row on
+a `CHECK` or `NOT NULL` violation (`DETAIL: Failing row contains (...)`, every
+column, a note or an answer included) under the statement, which for the
+API's parameterized writes shows `$1` and no value. The API refuses each such
+field before it writes, so that line follows a defect or a direct SQL. The
+setting is a superuser's: a role that is not one gets `permission denied to
+set parameter` from `SET`, `ALTER DATABASE ... SET` and `ALTER ROLE ... SET`
+alike, unless a superuser has run `GRANT SET ON PARAMETER log_error_verbosity
+TO <role>`; and `terse` would also drop the `DETAIL` of every other error (a
+duplicate key's value, a foreign key's id), the line that explains a failed
+write. Recorded and left (Tier 3 WP10, candidate (ab), U28). To see where
+the database stands, connected as 7.1 or 7.2 connects:
+`SELECT rolsuper FROM pg_roles WHERE rolname = current_user;` and
+`SHOW log_error_verbosity;`.
+
 ### 9.2 Start-up
 
 A healthy start prints, in order: `Testing database connection...`,

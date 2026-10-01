@@ -954,6 +954,70 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       }
     });
 
+    // Tier 3 WP10, candidate (aa): until then the import locked the stored
+    // clients its file names in the table's scan order (no ORDER BY), while a
+    // rename (PUT /api/people/:id) locks the clients it rewrites in id order,
+    // so an import without a Lead column (which reads no person) and a rename
+    // of a person seated on two of the file's clients, at the same moment,
+    // deadlocked whenever the scan met the higher id first: PostgreSQL
+    // aborted the import (40P01), a 500 with nothing written. The scan's order
+    // is the heap's, and an update of a row moves it behind every row inserted
+    // since: the test sets that trap, the lower id updated after the higher
+    // was inserted, and checks it before the round, or it would prove nothing.
+    // The holder is the rename, statement by statement (routes/people.cjs);
+    // what the import holds while it waits is read with FOR UPDATE NOWAIT
+    // (55P03 until WP10: the second client), then the rename's next lock,
+    // which deadlocked. With a Lead column the import reads the People list
+    // FOR SHARE first and waits there, as it always did: kept as the contract
+    for (const lead of [false, true]) {
+      test(`an import ${lead ? 'with' : 'without'} a Lead column while a person seated on two of its clients is being renamed waits for the rename, then writes both: 200, one \`import\` row each, nothing held while it waits`, async () => {
+        const person = await addPerson('partner', 'Renamed Lead');
+        const a = await addClient({ lead: person, revenues: { 2026: 100000 } });
+        const b = await addClient({ lead: person, revenues: { 2026: 100000 } });
+        const ids = [String(a.id), String(b.id)];
+        // The rename's order is the id's; the trap is the first by id updated
+        // after the second was inserted, so a read without ORDER BY meets the
+        // second first (checked; a second update is tried if a page was full)
+        const { rows: byId } = await db.query('SELECT id FROM clients WHERE id::text = ANY($1) ORDER BY id', [ids]);
+        const [first, second] = byId.map((r) => String(r.id));
+        const scanOrder = async () => (await db.query('SELECT id FROM clients WHERE LOWER(name) = ANY($1)', [[a.name, b.name].map((n) => n.toLowerCase())])).rows.map((r) => String(r.id));
+        for (let attempt = 0; attempt < 3 && (await scanOrder())[0] !== second; attempt += 1) {
+          await db.query("UPDATE clients SET notes = $2 WHERE id::text = $1", [first, `moved to the end of the heap ${attempt}`]);
+        }
+        assert.deepEqual(await scanOrder(), [second, first], 'the trap: a scan without ORDER BY meets the second id first');
+        const outputBefore = api.output.length;
+        const holder = await lockHolder();
+        let held;
+        try {
+          await holder.query('BEGIN');
+          await holder.query('SELECT id FROM people WHERE id = $1 FOR NO KEY UPDATE', [person.id]);
+          await holder.query('SELECT id FROM clients WHERE id::text = $1 FOR UPDATE', [first]);
+          const importing = call('POST', '/api/data/process-csv', {
+            csvData: [a, b].map((c) => ({ CLIENT: c.name, '2026 Contracts': '$1,000', ...(lead ? { Lead: person.name } : {}) })),
+          });
+          await waitFor(async () => (await lockWaiters()) > 0, 'the import to wait');
+          await holder.query('SAVEPOINT held');
+          held = await holder.query('SELECT id FROM clients WHERE id::text = $1 FOR UPDATE NOWAIT', [second]).then(() => null, (e) => e.code);
+          await holder.query('ROLLBACK TO SAVEPOINT held');
+          // The rename's next lock, in id order: immediate now; the deadlock until WP10
+          await holder.query('SELECT id FROM clients WHERE id::text = $1 FOR UPDATE', [second]);
+          await holder.query('ROLLBACK');
+          const res = await importing;
+          assert.equal(res.status, 200, res.text);
+          assert.deepEqual([res.body.summary.updatedClients, res.body.summary.changedClients, res.body.summary.newClients], [2, 2, 0]);
+        } finally {
+          await holder.query('ROLLBACK').catch(() => {});
+          await holder.end();
+        }
+        assert.equal(held, null, 'the import holds no client while it waits (55P03 until WP10)');
+        assert.ok(!api.output.slice(outputBefore).includes('40P01'), 'no deadlock logged');
+        for (const c of [a, b]) {
+          assert.deepEqual(await revenueRows(c.id), [{ year: 2026, amount: 1000 }]);
+          assert.deepEqual((await changeRows(c.id)).map((r) => [r.source, r.changes.revenue]), [['import', { 2026: { from: 100000, to: 1000 } }]]);
+        }
+      });
+    }
+
     // Until WP5 every cell arrived escaped by the request sanitizer and was
     // decoded again (decodeHTMLEntities), which also decoded an entity typed
     // in a cell (`&#169;` became ©), and CLIENT's length was checked escaped

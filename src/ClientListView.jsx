@@ -25,6 +25,7 @@ import { practiceAreaMatchesSearch } from './utils/dataUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 import { NativeSelect } from './components/ui/native-select';
 import { personFilterOptions, matchesPersonFilter } from './utils/people';
+import { formatMoney } from './utils/load';
 
 const ClientListView = () => {
   const reportingYear = usePortfolioStore((s) => s.getReportingYear());
@@ -341,7 +342,7 @@ const ClientListView = () => {
                   <DollarSign className="h-4 w-4 text-green-500" />
                   <div>
                     <p className="text-xs text-muted-foreground">{reportingYear} Revenue</p>
-                    <p className="font-semibold text-sm">${usePortfolioStore.getState().getClientRevenue(client).toLocaleString()}</p>
+                    <p className="font-semibold text-sm">{formatMoney(usePortfolioStore.getState().getClientRevenue(client))}</p>
                   </div>
                 </div>
 

@@ -50,13 +50,19 @@ const isCsvFile = (file) => Boolean(file) && (file.type === 'text/csv' || /\.csv
 
 const count = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
-// "2025 ($235,000), 2026 ($290,000)": each year with the total the file writes
-// for it (summary.revenueTotals), to compare with the sheet's column sums
+// A total to the cent in en-US, as a spreadsheet's column sum reads it: the
+// file's year totals are compared with the sheet's =SUM under each year
+// (runbook 7.4), so they keep their cents, unlike the book's figures, which
+// every view writes in whole dollars (formatMoney; Tier 3 WP10, (ad))
+const cents = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// "2025 ($235,000.00), 2026 ($290,000.50)": each year with the total the file
+// writes for it (summary.revenueTotals), to compare with the sheet's column sums
 const yearsWithTotals = ({ revenueYears = [], revenueTotals = {} }) =>
   revenueYears.length === 0
     ? 'none'
     : revenueYears
-      .map((year) => (year in revenueTotals ? `${year} ($${Number(revenueTotals[year]).toLocaleString()})` : `${year}`))
+      .map((year) => (year in revenueTotals ? `${year} ($${cents(revenueTotals[year])})` : `${year}`))
       .join(', ');
 
 // Check file's answer. No updated/new split: before the book is reset it is
@@ -315,7 +321,7 @@ const handleUpload = async (dryRun = false) => {
                       <strong>{uploadResult.message}</strong>
                     ) : (
                       <>
-                        <strong>Success!</strong> Processed {uploadResult.clientCount} clients with total revenue of ${uploadResult.totalRevenue.toLocaleString()}
+                        <strong>Success!</strong> Processed {uploadResult.clientCount} clients with total revenue of ${cents(uploadResult.totalRevenue)}
                         <div className="text-sm mt-1">
                           Imported years: {uploadResult.years}
                         </div>

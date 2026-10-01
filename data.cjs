@@ -220,10 +220,20 @@ router.post('/process-csv', csvValidationRules, handleCSVValidationErrors, async
       // FOR UPDATE: the values kept for columns the file lacks are written back
       // below, so a form save cannot land in between and be overwritten. Every
       // column, since each is compared with what the file would write (WP6).
+      // In id order (Tier 3 WP10, candidate (aa)): a rename locks the clients
+      // it rewrites in id order (routes/people.cjs), and until WP10 this read
+      // locked them in the table's scan order, so an import without a Lead
+      // column (which reads no person) and a rename of a person seated on
+      // two of the file's clients, at the same moment, deadlocked whenever
+      // the scan met the higher id first (40P01: the import's 500). With a
+      // Lead column the FOR SHARE read above already waits for the rename.
+      // PostgreSQL locks the rows above the sort (LockRows over Sort), and
+      // the id is not cast: integer on production, uuid on init-db.sql's.
       const { rows: allExistingClients } = await conn.query(`
         SELECT *
         FROM clients 
         WHERE LOWER(${unescapeStoredSql('name')}) = ANY($1)
+        ORDER BY id
         FOR UPDATE
       `, [clientNames.map(n => n.toLowerCase())]);
 
