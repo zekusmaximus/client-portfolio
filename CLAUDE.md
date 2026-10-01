@@ -111,9 +111,13 @@ Its after-deploy checks (tier-3.md section 15.10, with (ab)'s two read-only
 answers for runbook 9.1) are Jeff's, as are WP6's (14.10), which are due
 before the next package merges. Candidate (af), found by WP10 (Stage 1's
 "1 clients" and a bullet run into the practice area, and the same "1
-clients" at five more lines), is put to Jeff as U32 (tier-3.md section 1),
-proposed on 2026-10-01 against `431fb29`: nothing is built from it until he
-approves it. WP1 when
+clients" at five more lines), was put to Jeff as U32 (tier-3.md section 1)
+in PR #66, which merged as `1ac045e` on 2026-10-01 at his instruction, and
+he approved it the same day as (b): WP11, page only (no route, schema,
+feature name, write or test), on `claude/tier-3-wp11-plurals-r4n8tz`, writes
+each of the six counts with the page's `n === 1 ? 'client' : 'clients'` and
+puts a space after Stage 1's bullet, seven lines over four files, in PR #67.
+WP1 when
 Jeff's evaluation run and choice arrive (about 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.

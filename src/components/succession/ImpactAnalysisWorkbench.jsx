@@ -453,7 +453,7 @@ const RiskSummary = ({ affectedClients }) => {
                   <div>
                     <div className="font-medium">{area}</div>
                     <div className="text-sm text-gray-600">
-                      {data.count} clients • {formatMoney(data.revenue)}
+                      {data.count} {data.count === 1 ? 'client' : 'clients'} • {formatMoney(data.revenue)}
                     </div>
                   </div>
                   <Badge variant={data.highRisk > data.count / 2 ? 'destructive' : 'secondary'}>
@@ -537,7 +537,7 @@ const ClientCategorization = ({ affectedClients, onClientSelect }) => {
                       <div>
                         <div className="font-medium">{formatClientName(client.name)}</div>
                         <div className="text-sm text-gray-600">
-                          {formatMoney(usePortfolioStore.getState().getClientRevenue(client))} • 
+                          {formatMoney(usePortfolioStore.getState().getClientRevenue(client))} •{' '}
                           {client.practiceArea?.[0] || 'Other'}
                         </div>
                         <div className="flex items-center gap-2 mt-1">

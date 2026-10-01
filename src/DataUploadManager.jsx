@@ -321,7 +321,7 @@ const handleUpload = async (dryRun = false) => {
                       <strong>{uploadResult.message}</strong>
                     ) : (
                       <>
-                        <strong>Success!</strong> Processed {uploadResult.clientCount} clients with total revenue of ${cents(uploadResult.totalRevenue)}
+                        <strong>Success!</strong> Processed {uploadResult.clientCount} {uploadResult.clientCount === 1 ? 'client' : 'clients'} with total revenue of ${cents(uploadResult.totalRevenue)}
                         <div className="text-sm mt-1">
                           Imported years: {uploadResult.years}
                         </div>
