@@ -162,7 +162,7 @@ const BulkActionBar = ({ selected, leadOptions, onGeneratePlans, onAssignLead, o
       <CardContent className="py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-4">
-            <div className="font-medium text-blue-900">{selected.length} clients selected</div>
+            <div className="font-medium text-blue-900">{selected.length} {selected.length === 1 ? 'client' : 'clients'} selected</div>
             <Button variant="ghost" size="sm" onClick={onClearSelection}>Clear Selection</Button>
           </div>
 
@@ -520,7 +520,7 @@ const ClientTriageGrid = ({ decisions, selected, onSelect, onSelectAll, renderCa
                 onCheckedChange={(checked) => onSelectAll(checked ? filtered.map((d) => String(d.client.id)) : [])}
               />
               <span className="font-medium">
-                {filtered.length} clients{selected.length > 0 && ` (${selected.length} selected)`}
+                {filtered.length} {filtered.length === 1 ? 'client' : 'clients'}{selected.length > 0 && ` (${selected.length} selected)`}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -812,7 +812,7 @@ const ClientReviewInterface = ({ departure, reportingYear, onProceedToStage3, on
                   return (
                     <div key={status} className="flex items-center justify-between p-3 border rounded-lg">
                       <Badge className={`${config.color} text-white`}>{config.label}</Badge>
-                      <div className="font-semibold">{count} clients</div>
+                      <div className="font-semibold">{count} {count === 1 ? 'client' : 'clients'}</div>
                     </div>
                   );
                 })}

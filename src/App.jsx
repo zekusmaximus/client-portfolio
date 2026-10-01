@@ -100,7 +100,7 @@ function App() {
               {hasData && (
                 <div className="text-right">
                   <p className="text-sm text-muted-foreground">
-                    {clients.length} clients loaded
+                    {clients.length} {clients.length === 1 ? 'client' : 'clients'} loaded
                   </p>
                   <p className="text-lg font-semibold">
                     {formatMoney(usePortfolioStore.getState().getTotalRevenue())}
