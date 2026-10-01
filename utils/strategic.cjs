@@ -51,6 +51,13 @@ const HANDFUL_MULTIPLIER = 1.5;   // "this one's a handful" flag
 // src/utils/clientMetrics.js; tests/strategic.test.mjs holds them equal.
 const UNRATED_STICKINESS = 40 / 9;
 
+// The page mirrors these three, the $50,000 a point and the formula below in
+// src/utils/clientMetrics.js (resolveStrategicValue, strategicValueParts;
+// Tier 3 WP6, U21 (a)), for Scenarios' "A new client" sandbox, whose
+// hypothetical client never reaches the API. tests/strategic.test.mjs holds
+// the mirror equal to calculateStrategicValue on the fixture books and 3,000
+// random clients, so change a weight here and there together, or `npm test`
+// fails (docs/plans/tier-3.md, constraint 9).
 const REVENUE_WEIGHT = 0.5;
 const STICKINESS_WEIGHT = 0.5;
 const CONFLICT_PENALTY = { High: 3, Medium: 1, Low: 0 };

@@ -118,17 +118,25 @@ const ClientEnhancementForm = ({ onClose }) => {
     'Other'
   ];
 
-  // Initialize form data when client changes
+  // Initialize form data when the client changes, and when the form opens:
+  // a new client's form opening again after a Cancel has no client change
+  // to run on (the draft below needs the run; until Tier 3 WP6 the form then
+  // kept what was typed before the Cancel)
   useEffect(() => {
     setLoaded(client);
     setConflict(null);
     setHistoryOpen(false);
     setHistory(NO_HISTORY);
     if (client) {
+      // An open stored client wins over any draft
       setFormData(clientFormData(client));
     } else {
-      // Reset form for new client with an empty revenue row for current year
-      setFormData({
+      // A draft from Scenarios' "A new client" (docs/plans/tier-3.md, section
+      // 14, U26 (b)), read once in place of the defaults and then forgotten
+      // by the store; else reset the form for a new client with an empty
+      // revenue row for the current year
+      const draft = isModalOpen ? usePortfolioStore.getState().takeClientDraft() : null;
+      setFormData(draft || {
         name: '',
         practiceArea: [],
         conflict_risk: 'Medium',
@@ -142,6 +150,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         notes: '',
         revenues: [{ year: new Date().getFullYear(), revenue_amount: '' }]
       });
+      if (draft) setErrors({});
     }
     if (!client) return undefined;
     let live = true;
@@ -153,7 +162,7 @@ const ClientEnhancementForm = ({ onClose }) => {
         if (live) setHistory({ ...NO_HISTORY, error: 'Could not load this client\'s history.' });
       });
     return () => { live = false; };
-  }, [client]);
+  }, [client, isModalOpen]);
 
   const handlePracticeAreaChange = (area, checked) => {
     const newPracticeArea = checked 

@@ -411,8 +411,13 @@ export const scenarioDirty = (store) => stateJson(stateFromStore(store)) !== sto
  * (WP8), and for a hire scenario hire-scenarios too (WP9): an API with only
  * the first refuses kind 'hire'. Without it the scenario works in the browser
  * only, and nothing asks about unsaved changes, as without saved-scenarios.
+ * Never for "A new client" (Tier 3 WP6, U22 (a)): the sandbox is not a saved
+ * kind (KINDS and the checks on both sides are untouched), so Save and Save
+ * as are off for it and nothing asks about it on logout or leaving.
  */
-export const scenarioSavable = (store) => store.scenarioFeature === true && (store.scenarioKind !== 'hire' || store.hireFeature === true);
+export const scenarioSavable = (store) => store.scenarioFeature === true
+  && store.scenarioKind !== 'client'
+  && (store.scenarioKind !== 'hire' || store.hireFeature === true);
 
 /** Unsaved changes that could be saved: what New, Open, logout and leaving the page ask about. */
 export const unsavedChanges = (store) => scenarioSavable(store) && scenarioDirty(store);

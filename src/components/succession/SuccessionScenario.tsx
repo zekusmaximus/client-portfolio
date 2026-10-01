@@ -8,10 +8,12 @@ import ClientReviewInterface from './ClientReviewInterface';
 import TransitionPlanManager from './TransitionPlanManager';
 import ScenarioBar from './ScenarioBar';
 import HireScenario from './HireScenario';
+import ClientSandbox from './ClientSandbox';
 import usePortfolioStore from '../../portfolioStore';
 import { departureModel } from '../../utils/departure';
 import { revenueForYear } from '../../utils/revenue';
 import { emptyStateOf, stateFromStore, stateJson, unsavedChanges } from '../../utils/scenarioState';
+import { sandboxEntered } from '../../utils/clientFit';
 
 type Stage = 'impact' | 'mitigation' | 'implementation';
 
@@ -37,11 +39,16 @@ interface SuccessionScenarioProps {
 // An associate in Scenarios (docs/plans/tier-2.md, section 14, WP9): the tab
 // starts with a choice of kind, "Someone leaves" (the three stages, as
 // before) or "Add an associate" (HireScenario). One scenario is open at a
-// time; choosing the other kind starts a new one, asking first when the open
+// time; choosing another kind starts a new one, asking first when the open
 // one holds anything.
+//
+// Where a new client fits (docs/plans/tier-3.md, section 14, WP6): the third
+// kind, "A new client" (ClientSandbox), page only and never saved; the store
+// keeps its picks across tabs (clientSandbox) and clears them on logout.
 const KINDS = [
   { key: 'departure', label: 'Someone leaves' },
   { key: 'hire', label: 'Add an associate' },
+  { key: 'client', label: 'A new client' },
 ];
 
 const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
@@ -78,17 +85,22 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
     [people, clients, workflow.departingIds, workflow.choices, revenueOf]
   );
 
-  // The other kind: a new scenario, after asking when the open one holds
-  // anything (a saved one, or anything entered)
+  // Another kind: a new scenario, after asking when the open one holds
+  // anything (a saved one, or anything entered). The sandbox is not a saved
+  // kind, so its "entered" is read from its own slice (WP6)
   const chooseKind = (kind: string) => {
     if (kind === scenarioKind) return;
     const state = usePortfolioStore.getState();
-    const entered = stateJson(stateFromStore(state)) !== stateJson(emptyStateOf(scenarioKind));
+    const entered = scenarioKind === 'client'
+      ? sandboxEntered(state.clientSandbox)
+      : stateJson(stateFromStore(state)) !== stateJson(emptyStateOf(scenarioKind));
     if (entered || state.savedScenario) {
       const lost = unsavedChanges(state)
         ? 'Its unsaved changes will be lost.'
         : entered ? 'What is on screen is cleared.' : 'It stays saved.';
-      if (!window.confirm(`Start a new "${KINDS.find((k) => k.key === kind)?.label}" scenario? The open one is closed. ${lost} The book is not changed.`)) return;
+      const label = KINDS.find((k) => k.key === kind)?.label;
+      const question = kind === 'client' ? `Open "${label}"? The open scenario is closed.` : `Start a new "${label}" scenario? The open one is closed.`;
+      if (!window.confirm(`${question} ${lost} The book is not changed.`)) return;
     }
     newScenario(kind);
   };
@@ -187,12 +199,14 @@ const SuccessionScenario: React.FC<SuccessionScenarioProps> = () => {
       {/* Saved Scenarios (WP8) */}
       {scenarioFeature === true && <ScenarioBar />}
 
-      {/* Someone leaves, or an associate is added (WP9) */}
+      {/* Someone leaves, an associate is added (WP9), or a new client (Tier 3 WP6) */}
       {renderKindChoice()}
 
       {scenarioKind === 'hire' && <HireScenario />}
 
-      {scenarioKind !== 'hire' && (
+      {scenarioKind === 'client' && <ClientSandbox />}
+
+      {scenarioKind !== 'hire' && scenarioKind !== 'client' && (
       <>
       {/* Progress Stepper */}
       {renderProgressStepper()}
