@@ -84,8 +84,9 @@ feature name or write), so no backup gate; its after-deploy checks (tier-3.md
 section 13.10) are Jeff's and may trail WP6 by one. Then WP6 (where a new
 client fits): its section, tier-3.md section 14 with decisions U21 to U26,
 written 2026-09-30 against `2989622` on `claude/serene-clarke-ab14oy`, is in
-PR #63 (docs only), proposed for Jeff's approval; no WP6 code before he
-approves it (its 0.2 item 1). WP1 when Jeff's evaluation run and choice arrive (about
+PR #63 (docs only), approved by Jeff on 2026-10-01 with U21 to U26 as
+recommended (U21 (a), U22 (a), U23 (a), U24 (a), U25 (a), U26 (b)); WP6's code
+branches from its merge. WP1 when Jeff's evaluation run and choice arrive (about
 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
