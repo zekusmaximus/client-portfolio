@@ -138,7 +138,15 @@ the Deploy Preview), right after PR #69 (`d70b430`). The effort: `high`
 it on gbacpod.com the same day: its after-deploy checks (tier-3.md section
 5, (D); runbook 7.6) all as expected. Production now answers on
 `claude-sonnet-5-5` at `high`. Every package in tier-3.md's status table is
-done but WP7 and WP8, not planned. Run the packages in
+done but WP7 and WP8, not planned. Sections 16 (WP7, second-chair relief
+for the firm) and 17 (WP8, AI plans that see the scenario's seats), written
+2026-10-01 against `88a6e7b`, plan both with decisions U33 to U39, proposed:
+each waits for its trigger (WP7: a hire modelled with "Associate relief" on,
+then the partners asking for relief firm-wide, U33; WP8: a real departure
+becoming known, U35), and Stage 2's note is proposed now as WP12 (U36,
+section 17.12). Section 16.5 gives Jeff a read-only check of the saved
+scenarios and plans. Build nothing from either section until Jeff approves
+its decisions. Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
