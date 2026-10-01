@@ -33,8 +33,24 @@ test('claude-opus-5-5: $4 / $20, writes at 1.25x and 2x, and reads at 0.05x of i
   assert.equal(callCost(usage, 'claude-opus-5').usd, 0.0175);
 });
 
+// Tier 3 WP1 (U4 (b)): claude-sonnet-5-5, the model Jeff chose on
+// 2026-10-01, at the prices the pricing page gave that day: $2 / $10, cache
+// writes $2.50 and $4, reads $0.20 (0.1x), as claude-sonnet-5, its fallback
+test('claude-sonnet-5-5: $2 / $10, writes at 1.25x and 2x, and reads at 0.1x of input', () => {
+  assert.deepEqual({ ...PRICES['claude-sonnet-5-5'] }, { input: 2, output: 10, cacheWrite5m: 2.5, cacheWrite1h: 4, cacheRead: 0.2 });
+  const usage = { input_tokens: 50, output_tokens: 200, cache_read_input_tokens: 12000, cache_creation_input_tokens: 1000 };
+  // 50 x 2 + 200 x 10 + 12,000 x 0.2 + 1,000 x 2.5
+  assert.equal(callCost(usage, 'claude-sonnet-5-5').usd, 0.007);
+  assert.deepEqual(callCost(usage, 'claude-sonnet-5-5').unknownModels, []);
+  // A refusal before any output: billed for bio, not for general_harms,
+  // which claude-sonnet-5-5's classifiers add and its fallback never retries
+  const declined = { input_tokens: 1000, output_tokens: 0 };
+  assert.equal(callCost(declined, 'claude-sonnet-5-5', { declined: ['bio'] }).usd, 0.002);
+  assert.equal(callCost(declined, 'claude-sonnet-5-5', { declined: ['general_harms'] }).usd, 0);
+});
+
 test('every model the service can send, and the fallback target, has a price', () => {
-  const models = new Set(['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', 'claude-opus-5-5', ...ai.FALLBACK_MODELS]);
+  const models = new Set(['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-5-5', 'claude-opus-4-8', 'claude-opus-5-5', ...ai.FALLBACK_MODELS]);
   for (const model of models) assert.ok(PRICES[model], `${model} has a price`);
 });
 

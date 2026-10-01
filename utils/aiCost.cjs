@@ -8,7 +8,10 @@
 // Prices are dollars per million tokens, read on PRICES_READ_ON from
 // https://platform.claude.com/docs/en/about-claude/pricing (re-read on
 // 2026-09-29 for Tier 2 WP11: the three earlier prices unchanged, and
-// claude-opus-5-5 added). On every model listed, a cache write costs 1.25x the
+// claude-opus-5-5 added; re-read on 2026-10-01 for Tier 3 WP1: every price
+// unchanged, so PRICES_READ_ON stays, and claude-sonnet-5-5 added at the
+// claude-api skill's figures, which the page gave too; the refusal billing
+// rule below unchanged). On every model listed, a cache write costs 1.25x the
 // input price (5-minute lifetime) or 2x (1-hour); a cache read costs 0.1x,
 // except on claude-opus-5-5, where the page prices it at 0.05x ($0.20). A
 // model missing here gets no cost (null), never a guess: add it when AI_MODEL
@@ -50,7 +53,11 @@ const modelPrices = (input, output, { cacheRead = CACHE_READ } = {}) => Object.f
 const PRICES = Object.freeze({
   'claude-opus-5': modelPrices(5, 25), // AI_MODEL's default (D7)
   'claude-opus-4-8': modelPrices(5, 25), // where the default fallback sends cyber-category declines
-  'claude-sonnet-5': modelPrices(2, 10), // D7's cheaper alternative
+  'claude-sonnet-5': modelPrices(2, 10), // where claude-sonnet-5-5's default fallback sends cyber and frontier_llm declines
+  // Tier 3 WP1: the model Jeff chose on 2026-10-01 (D7), in FALLBACK_MODELS;
+  // AI_MODEL on Render once he sets it. The pricing page, re-read that day,
+  // gave every price above as read on PRICES_READ_ON, and this one
+  'claude-sonnet-5-5': modelPrices(2, 10),
   // Tier 2 WP11 (S16): compared by scripts/eval-ai.cjs when Jeff asks for it;
   // not AI_MODEL, and not in FALLBACK_MODELS, unless Jeff chooses it
   'claude-opus-5-5': modelPrices(4, 20, { cacheRead: 0.05 }),

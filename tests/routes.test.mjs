@@ -3608,7 +3608,8 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal(res.status, 200, res.text);
       assert.deepEqual(keysOf(res.body), HEALTH_KEYS);
       assert.equal(res.body.status, 'OK');
-      assert.deepEqual(res.body.services, { database: 'connected', anthropic: 'configured', model: 'claude-opus-5' });
+      // effort: null while AI_EFFORT is unset, the API's default (Tier 3 WP1, U3 (b))
+      assert.deepEqual(res.body.services, { database: 'connected', anthropic: 'configured', model: 'claude-opus-5', effort: null });
       assert.deepEqual(res.body.features, FEATURES);
       assert.equal(res.body.environment, 'development');
       assert.ok(Number.isInteger(res.body.uptimeSeconds) && !Number.isNaN(Date.parse(res.body.timestamp)));
@@ -3617,7 +3618,37 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
     test('200 with status DEGRADED and anthropic "not configured" without a key', async () => {
       const res = await request(keyless.base, 'GET', '/api/health', { as: '' });
       assert.equal(res.status, 200);
-      assert.deepEqual([res.body.status, res.body.services], ['DEGRADED', { database: 'connected', anthropic: 'not configured', model: 'claude-opus-5' }]);
+      assert.deepEqual([res.body.status, res.body.services], ['DEGRADED', { database: 'connected', anthropic: 'not configured', model: 'claude-opus-5', effort: null }]);
+    });
+
+    // Tier 3 WP1: Render's two settings for the model Jeff chose. The health
+    // check names both (U3 (b)); an Ask sends the model with the fallback and
+    // the effort, logs both in its ai_call line, and is priced and saved
+    test('with AI_MODEL claude-sonnet-5-5 and AI_EFFORT medium: both in services, and an Ask sends them with the fallback, priced', async () => {
+      const server = await launch({ ANTHROPIC_API_KEY: 'test', ANTHROPIC_BASE_URL: fake.url, AI_MODEL: 'claude-sonnet-5-5', AI_EFFORT: 'medium' });
+      try {
+        const health = await request(server.base, 'GET', '/api/health', { as: '' });
+        assert.equal(health.status, 200);
+        assert.deepEqual([health.body.status, health.body.services], ['OK', { database: 'connected', anthropic: 'configured', model: 'claude-sonnet-5-5', effort: 'medium' }]);
+
+        await addClient({ lead: await seed('Kevin') });
+        const from = fake.requests.length;
+        const res = await request(server.base, 'POST', '/api/ai/ask', { body: { question: 'Who carries the most?' } });
+        assert.equal(res.status, 200, res.text);
+        assert.deepEqual([res.body.saved, res.body.model, res.body.servedBy], [true, 'claude-sonnet-5-5', 'claude-sonnet-5-5']);
+        assert.ok(res.body.costUsd > 0, 'priced');
+        const [sent] = fake.requests.slice(from);
+        assert.deepEqual(
+          [sent.body.model, sent.body.fallbacks, sent.body.output_config, sent.headers['anthropic-beta'], 'thinking' in sent.body],
+          ['claude-sonnet-5-5', 'default', { effort: 'medium' }, 'server-side-fallback-2026-07-01', false],
+        );
+        const call = await waitFor(() => logLines(server, 'ai_call').at(-1), 'the ai_call line');
+        assert.deepEqual([call.model, call.effort, call.servedBy, call.costUsd > 0], ['claude-sonnet-5-5', 'medium', 'claude-sonnet-5-5', true]);
+        const saved = (await db.query('SELECT model, served_by, cost_usd FROM ai_answers WHERE id = $1', [res.body.id])).rows[0];
+        assert.deepEqual([saved.model, saved.served_by, Number(saved.cost_usd) > 0], ['claude-sonnet-5-5', 'claude-sonnet-5-5', true]);
+      } finally {
+        stop(server);
+      }
     });
 
     test('200 with status DEGRADED and database "disconnected" when the database cannot be reached', async () => {

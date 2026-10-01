@@ -81,6 +81,15 @@ test('AI_MODEL defaults to claude-opus-5 unless AI_MODEL is set in the environme
   assert.equal(AI_MODEL, process.env.AI_MODEL || 'claude-opus-5');
 });
 
+// Tier 3 WP1 (U3 (b)): the effort the default instance sends, for
+// /api/health; null while AI_EFFORT is unset (the API's default)
+test('AI_EFFORT is the effort AI_EFFORT sets, or null for the API\'s default', () => {
+  assert.equal(ai.AI_EFFORT, readEffort(process.env.AI_EFFORT));
+  assert.equal(createService({ effort: ' Medium ' }).AI_EFFORT, 'medium');
+  assert.equal(createService({ effort: '' }).AI_EFFORT, null);
+  assert.equal(createService({}).AI_EFFORT, null);
+});
+
 test('the module exports the default instance and the factory', () => {
   assert.equal(typeof isConfigured, 'function');
   assert.equal(typeof complete, 'function');
@@ -115,7 +124,8 @@ test('a thinking block then text: the text only, with tokens, cost and the ai_ca
   assert.deepEqual(
     { ...call, ms: undefined },
     {
-      event: 'ai_call', label: 'test', userId: 7, model: 'claude-opus-5', servedBy: 'claude-opus-5', fellBack: false,
+      // effort: null, the API's default, while none is set (Tier 3 WP1, U3 (b))
+      event: 'ai_call', label: 'test', userId: 7, model: 'claude-opus-5', effort: null, servedBy: 'claude-opus-5', fellBack: false,
       stop: 'end_turn', refusalCategory: null, inputTokens: 1850, outputTokens: 420, cacheReadTokens: 0,
       cacheWriteTokens: 0, costUsd: 0.01975, ms: undefined,
     },
@@ -191,6 +201,35 @@ test('a fallback before any output: the fallback answer, and the declined attemp
   assert.equal(result.servedBy, 'claude-opus-4-8');
   assert.equal(result.fellBack, true);
   assert.equal(result.costUsd, 0.00866); // 412 x $5 + 264 x $25 on claude-opus-4-8 only
+});
+
+// Tier 3 WP1: claude-sonnet-5-5's default routing retries a cyber or
+// frontier_llm decline on claude-sonnet-5 (the claude-api skill); both priced
+test('claude-sonnet-5-5: a cyber decline before any output served by claude-sonnet-5, priced at its rates only', async () => {
+  const { service } = serviceWith(['fallback-before-output-sonnet-5-5.sse'], { model: 'claude-sonnet-5-5', effort: 'medium' });
+  const { result, lines } = await captureLogs(() => service.complete({ prompt: 'x', label: 'test' }));
+  assert.equal(result.text, 'Paula is the natural home for a healthcare client.');
+  assert.equal(result.refused, false);
+  assert.equal(result.servedBy, 'claude-sonnet-5');
+  assert.equal(result.fellBack, true);
+  assert.deepEqual(result.tokens.iterations.map((a) => a.model), ['claude-sonnet-5-5', 'claude-sonnet-5']);
+  assert.equal(result.costUsd, 0.003464); // 412 x $2 + 264 x $10 on claude-sonnet-5 only
+  assert.equal(lines.some((line) => line.event === 'ai_cost_unknown_model'), false);
+  const call = lines.find((line) => line.event === 'ai_call');
+  assert.deepEqual(
+    [call.model, call.effort, call.servedBy, call.fellBack, call.costUsd],
+    ['claude-sonnet-5-5', 'medium', 'claude-sonnet-5', true, 0.003464],
+  );
+});
+
+test('claude-sonnet-5-5 answering itself: priced at $2 / $10', async () => {
+  const sse = streamedText('An answer.', { model: 'claude-sonnet-5-5', inputTokens: 1000 }).join('');
+  const { service } = serviceWith([{ sse }], { model: 'claude-sonnet-5-5' });
+  const { result, lines } = await captureLogs(() => service.complete({ prompt: 'x' }));
+  assert.equal(result.servedBy, 'claude-sonnet-5-5');
+  assert.equal(result.tokens.outputTokens, 3);
+  assert.equal(result.costUsd, 0.00203); // 1,000 x $2 + 3 x $10, per million
+  assert.equal(lines.some((line) => line.event === 'ai_cost_unknown_model'), false);
 });
 
 test('every model in the fallback chain declined: refused, empty text, the category, fellBack', async () => {
@@ -324,6 +363,28 @@ test('the request on claude-opus-5: streamed, system blocks unchanged, the fallb
   }
 });
 
+// Tier 3 WP1: the model Jeff chose. The same request as claude-opus-5's, with
+// the effort he sets on Render; no thinking field (on claude-sonnet-5-5
+// omitting it runs adaptive thinking, and { type: 'disabled' } is a 400)
+test('the request on claude-sonnet-5-5: streamed, system blocks unchanged, the fallback beta and "default", the effort, nothing else', async () => {
+  const { service, requests } = serviceWith(['text-with-thinking.sse'], { model: 'claude-sonnet-5-5', effort: 'medium' });
+  await captureLogs(() => service.complete({ system: SYSTEM_BLOCKS, prompt: 'Is Mike overloaded?', maxTokens: 32000 }));
+  const [{ body, headers: sent }] = requests;
+  assert.deepEqual(body, {
+    model: 'claude-sonnet-5-5',
+    max_tokens: 32000,
+    system: SYSTEM_BLOCKS,
+    messages: [{ role: 'user', content: 'Is Mike overloaded?' }],
+    fallbacks: 'default',
+    output_config: { effort: 'medium' },
+    stream: true,
+  });
+  assert.equal(sent['anthropic-beta'], 'server-side-fallback-2026-07-01');
+  for (const key of ['temperature', 'top_p', 'top_k', 'thinking', 'tools', 'tool_choice', 'betas']) {
+    assert.equal(key in body, false, `${key} is not sent`);
+  }
+});
+
 test('the request on claude-sonnet-5: no fallback and no beta header', async () => {
   const { service, requests } = serviceWith(['text-with-thinking.sse'], { model: 'claude-sonnet-5' });
   await captureLogs(() => service.complete({ prompt: 'x' }));
@@ -334,12 +395,15 @@ test('the request on claude-sonnet-5: no fallback and no beta header', async () 
 
 test('output_config.effort is sent only when an effort is set', async () => {
   const withEffort = serviceWith(['text-with-thinking.sse'], { effort: 'medium' });
-  await captureLogs(() => withEffort.service.complete({ prompt: 'x' }));
+  const sent = await captureLogs(() => withEffort.service.complete({ prompt: 'x' }));
   assert.deepEqual(withEffort.requests[0].body.output_config, { effort: 'medium' });
+  // and the ai_call line names it (Tier 3 WP1, U3 (b)), null without one
+  assert.equal(sent.lines.find((line) => line.event === 'ai_call').effort, 'medium');
 
   const without = serviceWith(['text-with-thinking.sse'], { effort: '' });
-  await captureLogs(() => without.service.complete({ prompt: 'x' }));
+  const unsent = await captureLogs(() => without.service.complete({ prompt: 'x' }));
   assert.equal('output_config' in without.requests[0].body, false);
+  assert.equal(unsent.lines.find((line) => line.event === 'ai_call').effort, null);
 });
 
 test('AI_EFFORT: blank is none, case and spaces are forgiven, anything else is refused naming the five values', () => {

@@ -96,7 +96,8 @@ test('the one request: model, max_tokens, system, the user turn after a follow-u
   assert.deepEqual(service.match(/cache_control: \{[^}]*\}/g), ["cache_control: { type: 'ephemeral' }"], 'the thread\'s marker, and no other');
   assert.match(fields, /betas: \[FALLBACK_BETA\], fallbacks: 'default'/);
   assert.match(service, /const FALLBACK_BETA = 'server-side-fallback-2026-07-01';/);
-  assert.match(service, /const FALLBACK_MODELS = \['claude-opus-5'\];/);
+  // Tier 3 WP1: claude-sonnet-5-5, the model Jeff chose on 2026-10-01
+  assert.match(service, /const FALLBACK_MODELS = \['claude-opus-5', 'claude-sonnet-5-5'\];/);
 });
 
 // Tier 2 WP10 (S14): the earlier turns a follow-up sends come from the saved
