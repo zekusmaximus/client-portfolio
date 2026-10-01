@@ -14,8 +14,11 @@ live site. `docs/plans/tier-1.md` (the AI rebuild), approved by Jeff on
 2026-09-26: complete, its six work packages verified on gbacpod.com by Jeff on
 2026-09-27. Read it before any AI change. `docs/plans/tier-2.md` (a
 shared six-partner tool), approved by Jeff on 2026-09-27: every work package
-has merged; its remaining items are Jeff's after-deploy checks (WP6, WP8, WP9,
-WP10) and WP11's run. Its gate (S1) was met:
+has merged; its after-deploy checks (WP6, WP8, WP9, WP10) were done by
+2026-09-30 (Tier 3's U1), and WP11's follow-through closed on 2026-10-01: the
+model chosen (Tier 3 WP1, below) and the transition-plan check (`--plans`)
+run, every saved plan's recommendations resolved (tier-2.md section 16). Its
+gate (S1) was met:
 WP0's docs part merged as PR #39. WP1 (contract tests per route,
 `tests/routes.test.mjs`) merged as PR #40 and WP2 (dead code and small
 defects) as PR #41; WP3 (bcrypt 6) merged as PR #42 and was verified on
