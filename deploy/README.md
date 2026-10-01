@@ -1014,7 +1014,20 @@ duplicate key's value, a foreign key's id), the line that explains a failed
 write. Recorded and left (Tier 3 WP10, candidate (ab), U28). To see where
 the database stands, connected as 7.1 or 7.2 connects:
 `SELECT rolsuper FROM pg_roles WHERE rolname = current_user;` and
-`SHOW log_error_verbosity;`.
+`SHOW log_error_verbosity;`. From your machine, after 7.2's two `$env:` lines,
+one read-only command runs both:
+
+```powershell
+node -e "const db=require('./db.cjs');(async()=>{for(const q of ['SELECT rolsuper FROM pg_roles WHERE rolname = current_user','SHOW log_error_verbosity']){console.log(q,'->',JSON.stringify((await db.query(q)).rows))}await db.pool.end()})()"
+```
+
+As checked on 2026-10-01: the role is not a superuser (`rolsuper` false),
+`log_error_verbosity` is `default`, and the dashboard shows the PostgreSQL
+instance's own log (the database's page, not the web service's: connection,
+checkpoint and WAL-archive lines). So a refused row would print there, and
+the role cannot change the setting; Render would have to grant `SET` on it.
+Nothing was changed. If a `DETAIL: Failing row contains` line ever appears
+there, it marks a defect or a direct SQL write worth finding.
 
 ### 9.2 Start-up
 

@@ -107,9 +107,11 @@ Preview): the import's `FOR UPDATE` read of the clients its
 file names in id order, the three `.dark` rules deleted, the twelve revenue
 figures through `formatMoney` and Data Upload's totals to the cent, the
 chart's caption and ticks, and runbook 9.1's paragraph on the database's log.
-Its after-deploy checks (tier-3.md section 15.10, with (ab)'s two read-only
-answers for runbook 9.1) are Jeff's, and are due before the next package
-merges. Candidate (af), found by WP10 (Stage 1's
+Its after-deploy checks (tier-3.md section 15.10) were verified on
+gbacpod.com by Jeff on 2026-10-01, all as expected, with (ab)'s answers in
+runbook 9.1: the API's database role is not a superuser,
+`log_error_verbosity` is `default`, and Render shows the database's own log.
+Candidate (af), found by WP10 (Stage 1's
 "1 clients" and a bullet run into the practice area, and the same "1
 clients" at five more lines), was put to Jeff as U32 (tier-3.md section 1)
 in PR #66, which merged as `1ac045e` on 2026-10-01 at his instruction, and
@@ -119,7 +121,8 @@ each of the six counts with the page's `n === 1 ? 'client' : 'clients'` and
 puts a space after Stage 1's bullet, seven lines over four files; it merged
 as PR #67 (`3f0e1a7`) on 2026-10-01 at Jeff's instruction, CI green on its
 head `f1fd234` (check, schema, GitGuardian and the Deploy Preview), and its
-after-deploy checks (tier-3.md section 2's WP11 row) are Jeff's. WP1 when
+after-deploy checks (tier-3.md section 2's WP11 row) were verified on
+gbacpod.com by Jeff on 2026-10-01, all as expected. WP1 when
 Jeff's evaluation run and choice arrive (about 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
