@@ -130,9 +130,12 @@ the `ai_call` line and `/api/health`, U4 (b)'s docs; no route, schema, page
 or feature name) merged as PR #70 (`b65057d`) on 2026-10-01 at Jeff's
 instruction, CI green on its head `d189666` (check, schema, GitGuardian and
 the Deploy Preview), right after PR #69 (`d70b430`). The effort: `high`
-(Jeff, 2026-10-01). After it deploys, Jeff sets `AI_MODEL=claude-sonnet-5-5`
-and `AI_EFFORT=high` on Render in one save (runbook 7.6) and runs its
-after-deploy checks (tier-3.md section 5, (D)). Run the packages in
+(Jeff, 2026-10-01). Jeff set `AI_MODEL=claude-sonnet-5-5` and
+`AI_EFFORT=high` on Render on 2026-10-01, after WP1 deployed, and verified
+it on gbacpod.com the same day: its after-deploy checks (tier-3.md section
+5, (D); runbook 7.6) all as expected. Production now answers on
+`claude-sonnet-5-5` at `high`. Every package in tier-3.md's status table is
+done but WP7 and WP8, not planned. Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
@@ -567,7 +570,7 @@ so the page shows the same figures on either API.
 - `TRUST_PROXY_HOPS` - proxies in front of the app (Render: `1`; default `0`). `req.ip`, and so every IP-keyed rate limit, depends on it: too low and all partners share the proxy's address, too high and a client can choose its own IP with `X-Forwarded-For`
 - `BCRYPT_SALT_ROUNDS` - default 12
 - `ANTHROPIC_API_KEY` - For AI functionality (Claude API); unset means every AI button reports "not configured"
-- `AI_MODEL` - model id for every AI call (default `claude-opus-5`, D7). Jeff chose `claude-sonnet-5-5` on 2026-10-01 (Tier 3 WP1, outcome D): set on Render with `AI_EFFORT` in one save once WP1 has deployed (runbook 7.6); `DEFAULT_MODEL` stays (U2 (a)). A model not in `utils/aiCost.cjs`'s `PRICES` logs `costUsd: null`
+- `AI_MODEL` - model id for every AI call (default `claude-opus-5`, D7). Jeff chose `claude-sonnet-5-5` on 2026-10-01 (Tier 3 WP1, outcome D) and set it on Render that day with `AI_EFFORT=high`, in one save after WP1 deployed (runbook 7.6); `DEFAULT_MODEL` stays (U2 (a)). A model not in `utils/aiCost.cjs`'s `PRICES` logs `costUsd: null`
 - `AI_EFFORT` - optional: `low`, `medium`, `high`, `xhigh` or `max`, sent as `output_config.effort` on every AI call (T11); unset means the API's default (`high` on `claude-opus-5` and `claude-sonnet-5-5`, whose levels are recalibrated, so it is set explicitly with that model); any other value stops the server at start. From Tier 3 WP1 (U3 (b)) the `ai_call` line carries it as `effort` and `/api/health` as `services.effort` (`null` while unset); the service exports it as `AI_EFFORT`
 - `AI_STREAM_PING_MS` - tests only: the milliseconds between the `: ping` comments on a streamed answer (Tier 1 WP5); unset, blank or anything but a whole number of at least 1 means 15 seconds (`pingInterval`, `utils/sse.cjs`). Do not set it on Render
 - `ANTHROPIC_BASE_URL` - local tests only: points the SDK at `tests/helpers/fakeAnthropic.mjs`. Ignored in production, where AI calls always go to `https://api.anthropic.com`; never set it on Render

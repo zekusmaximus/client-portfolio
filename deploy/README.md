@@ -121,8 +121,8 @@ the dashboards and, for the secrets, in the password manager.
 | `FRONTEND_URL` | `https://gbacpod.com` |
 | `TRUST_PROXY_HOPS` | `1` (Render's proxy) |
 | `ANTHROPIC_API_KEY` | secret (section 8.2) |
-| `AI_MODEL` | optional; unset means `claude-opus-5`. `claude-sonnet-5-5` once Tier 3 WP1 has deployed (Jeff's choice, 2026-10-01; 7.6), set with `AI_EFFORT` in one save |
-| `AI_EFFORT` | optional; unset means the API's default (`high`). `high` with `AI_MODEL=claude-sonnet-5-5` (your choice, 2026-10-01), set explicitly, since that model's levels are recalibrated (7.6). `/api/health` shows it as `services.effort` (section 10) |
+| `AI_MODEL` | `claude-sonnet-5-5` since 2026-10-01 (your choice, Tier 3 WP1; 7.6), set with `AI_EFFORT` in one save; unset means `claude-opus-5` |
+| `AI_EFFORT` | `high` since 2026-10-01, with `AI_MODEL=claude-sonnet-5-5`, set explicitly, since that model's levels are recalibrated (7.6); unset means the API's default (`high`). `/api/health` shows it as `services.effort` (section 10) |
 | `BCRYPT_SALT_ROUNDS` | optional; unset means 12 |
 
 Changing a variable offers three saves: **Save, rebuild, and deploy**, **Save
@@ -952,8 +952,10 @@ which prints its own lines on standard output.
 D; `docs/plans/tier-2.md` section 16): `claude-sonnet-5-5` at effort
 `high`, by you on 2026-10-01, before a run of this tool. The code it needs
 (`FALLBACK_MODELS`, `PRICES`, and `effort` in the `ai_call` line and
-`/api/health`) is WP1's, merged as PR #70 (`b65057d`). Then, on Render, in
-this order:
+`/api/health`) is WP1's, merged as PR #70 (`b65057d`). You set it on Render
+on 2026-10-01 and step 4's checks below were all as expected that day, so
+production answers on `claude-sonnet-5-5` at `high`. The steps, kept for a
+later switch, in this order:
 
 1. Wait until WP1 has deployed: `/api/health`'s `services` has an `effort`
    field (`null`). Setting the model on an older deploy runs it without the
@@ -1131,7 +1133,7 @@ example `"event":"ai_error"`.
 | `features` | what this API can do that older deploys cannot, one name per change the page depends on (`CLAUDE.md`, "Health"). `check-file` (the upload page's Check file): the page sends nothing to an API without it, which would import the file instead; missing means Render is still running a deploy from before 2026-09-25's Phase 3. `ai-stream` (Tier 1 WP5): without it the AI tab asks for its answers as JSON, all at once, as before (4.6). `plain-text` (Tier 2 WP5), which the page does not read, says this API stores text as typed, and 7.5's repair runs only on an API that lists it. `client-edit-conflict` (Tier 2 WP6): the client form shows "Last changed by" and History only with it, and without it saves as before. `saved-scenarios` (Tier 2 WP8): Scenarios shows its list of saved scenarios (New, Open, Save, Save as, Delete) only with it, and without it works in the browser only, as before. `hire-scenarios` (Tier 2 WP9): Scenarios saves an "Add an associate" scenario only with it; without it (an API from before WP9, which refuses the kind) that kind works in the browser only, with Save and Save as off, and departure scenarios save as before. The last one added is `ai-threads` (Tier 2 WP10): the AI tab offers "Ask a follow-up", Hide and "Show hidden" only with it; without it (an API from before WP10, which would answer a follow-up as a new question) the tab is as before. A name missing after a merge means Render has not deployed that merge yet |
 | `services.database` | `connected` if `SELECT 1` succeeded just now, else `disconnected` |
 | `services.anthropic` | `configured` if a key is set. It does not prove the key works (8.2) |
-| `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`; `claude-sonnet-5-5` once Jeff sets it, 7.6) |
+| `services.model` | the model every AI call uses (`AI_MODEL`, default `claude-opus-5`; `claude-sonnet-5-5` on production since 2026-10-01, 7.6) |
 | `services.effort` | the effort every AI call is sent at (`AI_EFFORT`), or `null` for the API's default (`high`). From Tier 3 WP1: an API without the field is a deploy from before WP1, so set `AI_MODEL` and `AI_EFFORT` only once it shows (7.6) |
 
 Because the answer is 200 even when `DEGRADED`, a check that looks only at the

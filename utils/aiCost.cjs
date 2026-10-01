@@ -55,7 +55,7 @@ const PRICES = Object.freeze({
   'claude-opus-4-8': modelPrices(5, 25), // where the default fallback sends cyber-category declines
   'claude-sonnet-5': modelPrices(2, 10), // where claude-sonnet-5-5's default fallback sends cyber and frontier_llm declines
   // Tier 3 WP1: the model Jeff chose on 2026-10-01 (D7), in FALLBACK_MODELS;
-  // AI_MODEL on Render once he sets it. The pricing page, re-read that day,
+  // AI_MODEL on Render since that day. The pricing page, re-read that day,
   // gave every price above as read on PRICES_READ_ON, and this one
   'claude-sonnet-5-5': modelPrices(2, 10),
   // Tier 2 WP11 (S16): compared by scripts/eval-ai.cjs when Jeff asks for it;
