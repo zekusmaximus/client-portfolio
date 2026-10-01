@@ -99,7 +99,7 @@ refused row, three dead `.dark` rules in `src/App.css`, revenue shown with
 `toLocaleString()` where the book shows whole dollars, and the Dashboard's
 scatter caption): its section, tier-3.md section 15 with decisions U27 to
 U31, written 2026-10-01 against `4041df1` on `claude/adoring-hamilton-wsqazj`,
-is proposed in a docs-only PR and waits for Jeff's approval; nothing of it is
+is in PR #65 (docs only) and waits for Jeff's approval; nothing of it is
 built until then, and its code is a later PR on a branch of its own. WP1 when
 Jeff's evaluation run and choice arrive (about 2026-10-10). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
