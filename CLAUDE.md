@@ -138,15 +138,26 @@ the Deploy Preview), right after PR #69 (`d70b430`). The effort: `high`
 it on gbacpod.com the same day: its after-deploy checks (tier-3.md section
 5, (D); runbook 7.6) all as expected. Production now answers on
 `claude-sonnet-5-5` at `high`. Every package in tier-3.md's status table is
-done but WP7 and WP8, not planned. Sections 16 (WP7, second-chair relief
-for the firm) and 17 (WP8, AI plans that see the scenario's seats), written
-2026-10-01 against `88a6e7b`, plan both with decisions U33 to U39, proposed:
-each waits for its trigger (WP7: a hire modelled with "Associate relief" on,
-then the partners asking for relief firm-wide, U33; WP8: a real departure
-becoming known, U35), and Stage 2's note is proposed now as WP12 (U36,
-section 17.12). Section 16.5 gives Jeff a read-only check of the saved
-scenarios and plans. Build nothing from either section until Jeff approves
-its decisions. Section 18 (WP13, practice areas: 21 areas in seven groups in
+done but WP7 and WP8, not planned, and WP12, not started. Sections 16 (WP7,
+second-chair relief for the firm) and 17 (WP8, AI plans that see the
+scenario's seats), written 2026-10-01 against `88a6e7b`, hold decisions U33
+to U39, which Jeff decided on 2026-10-02 in a decision session (no code
+changed): WP7 deferred (U33, U34) until the partners have given more input
+on which second chairs relieve a lead and by how much (U10's "(c) over (b)"
+reopened; P10 as amended stands, and S19's toggle stays); WP8 built when a
+real departure becomes known and deployed before Stage 2's AI plans are
+generated for it (U35 (a)), its design approved now and effective then
+(U37 (a) with (b) pre-authorized, U38 (a), U39 (a) with the run before the
+deploy optional), so the session that builds it needs nothing more from
+Jeff; and WP12, Stage 2's note (U36 (a), section 17.12), approved and next,
+page only, to ship before Jeff's rollout walkthrough with the partners, with
+candidate (ai), the Dashboard scatter's top tick, in the same PR (Jeff,
+2026-10-02).
+Section 16.5 gives Jeff a read-only check of the saved scenarios and plans,
+WP8's measurement after its deploy. **Before any change, read tier-3.md
+section 11.1**: every open item, the event that starts each, and the
+recommendations not yet approved (Jeff's operations; the items recommended
+for retiring); a PR whose change touches one says so. Section 18 (WP13, practice areas: 21 areas in seven groups in
 place of the twelve, a dropdown picker with chips, the other clients in the
 same areas, a Practice Area sort and filter on Client Details, no practice
 area in transition complexity, and charts coloured by group), written
