@@ -14,12 +14,15 @@ import csvImport from '../utils/csvImport.cjs';
 import strategic from '../utils/strategic.cjs';
 import middleware from '../middleware/validation.cjs';
 import escaping from '../utils/escaping.cjs';
-import { VALIDATION_RULES, validateClientForm, validateField, validateRevenueEntry, sanitizeFormData } from '../src/utils/validation.js';
+import {
+  VALIDATION_RULES, PRACTICE_AREA_GROUPS, PRACTICE_AREAS as PAGE_PRACTICE_AREAS, RETIRED_PRACTICE_AREAS as PAGE_RETIRED,
+  validateClientForm, validateField, validateRevenueEntry, sanitizeFormData,
+} from '../src/utils/validation.js';
 import { clientFormData, clientRequestBody, revenuesToSend, formErrors, SEE_ABOVE } from '../src/utils/clientForm.js';
 import { toPersonId } from '../src/utils/people.js';
 
 const {
-  PRACTICE_AREAS, CADENCES, CONFLICT_RISKS, STICKINESS, NAME_MAX, NAME_PATTERN, NAME_MESSAGES,
+  PRACTICE_AREAS, RETIRED_PRACTICE_AREAS, ACCEPTED_PRACTICE_AREAS, CADENCES, CONFLICT_RISKS, STICKINESS, NAME_MAX, NAME_PATTERN, NAME_MESSAGES,
   REVENUE_AMOUNT_MAX, isObjectBody, isRevenueYear, checkClient,
 } = rules;
 
@@ -74,11 +77,29 @@ function random(seed) {
 }
 
 describe('the vocabularies', () => {
-  test('the twelve practice areas, the scorer\'s cadences, three conflict risks and stickiness 1 to 5', () => {
+  // docs/plans/tier-3.md, section 18 (WP13, U40 (a)): 21 areas in 18.2's
+  // order, eight of the twelve kept, four retired and still accepted (U43 (b))
+  test('the 21 practice areas, the four retired, the scorer\'s cadences, three conflict risks and stickiness 1 to 5', () => {
     assert.deepEqual(PRACTICE_AREAS, [
-      'Healthcare', 'Municipal', 'Corporate', 'Energy', 'Financial', 'Education',
-      'Transportation', 'Environmental', 'Technology', 'Real Estate', 'Non-Profit', 'Other',
+      'Healthcare', 'Human Services', 'Senior Care',
+      'Banking and Finance', 'Insurance and Benefits',
+      'Energy', 'Water and Waste',
+      'Construction', 'Real Estate', 'Transportation',
+      'Municipal', 'Education', 'Justice and Legal',
+      'Retail and Restaurants', 'Manufacturing and Consumer Products', 'Cannabis and Tobacco', 'Technology', 'Professional Services',
+      'Arts and Culture', 'Media and Entertainment',
+      'Other',
     ]);
+    assert.deepEqual(RETIRED_PRACTICE_AREAS, ['Corporate', 'Financial', 'Environmental', 'Non-Profit']);
+    assert.deepEqual(ACCEPTED_PRACTICE_AREAS, [...PRACTICE_AREAS, ...RETIRED_PRACTICE_AREAS]);
+    assert.equal(new Set(ACCEPTED_PRACTICE_AREAS).size, 25, 'no name both offered and retired, none twice');
+    const twelve = ['Healthcare', 'Municipal', 'Corporate', 'Energy', 'Financial', 'Education',
+      'Transportation', 'Environmental', 'Technology', 'Real Estate', 'Non-Profit', 'Other'];
+    assert.deepEqual(twelve.filter((a) => PRACTICE_AREAS.includes(a)),
+      ['Healthcare', 'Municipal', 'Energy', 'Education', 'Transportation', 'Technology', 'Real Estate', 'Other'], 'the eight kept');
+    assert.ok(twelve.every((a) => ACCEPTED_PRACTICE_AREAS.includes(a)), 'every name a client could hold before is still accepted');
+    // Letters and spaces only (18.2): no &, ;, comma, / or |
+    for (const area of ACCEPTED_PRACTICE_AREAS.filter((a) => a !== 'Non-Profit')) assert.match(area, /^[A-Za-z]+( [A-Za-z]+)*$/, area);
     assert.deepEqual(CADENCES, Object.keys(strategic.EFFORT_BY_CADENCE));
     assert.deepEqual(CADENCES, ['Daily', 'Weekly', 'Monthly', 'Quarterly', 'As-Needed']);
     assert.deepEqual(CONFLICT_RISKS, ['Low', 'Medium', 'High']);
@@ -87,6 +108,8 @@ describe('the vocabularies', () => {
 
   test('the import reads the same lists: one copy on the server', () => {
     assert.equal(csvImport.PRACTICE_AREAS, PRACTICE_AREAS);
+    assert.deepEqual(csvImport.readSheetRow({ Area: 'corporate;Water and Waste' }, { practiceArea: 'Area' }),
+      { values: { practice_area: ['Corporate', 'Water and Waste'] }, people: {}, errors: [] }, 'a retired name read as the server spells it');
     assert.equal(csvImport.CADENCES, CADENCES);
     assert.equal(csvImport.CONFLICT_RISKS, CONFLICT_RISKS);
   });
@@ -104,7 +127,11 @@ describe('the vocabularies', () => {
 
 describe('the page\'s copy (src/utils/validation.js) equals the server\'s', () => {
   test('the practice areas, conflict risks and cadences the form allows', () => {
-    assert.deepEqual(VALIDATION_RULES.practiceArea.allowedValues, PRACTICE_AREAS);
+    // Offered: the 21, which the groups hold in order; accepted: the 25
+    assert.deepEqual(PAGE_PRACTICE_AREAS, PRACTICE_AREAS);
+    assert.deepEqual(PRACTICE_AREA_GROUPS.flatMap((g) => g.areas), PRACTICE_AREAS, 'the groups, flattened, are the server\'s list');
+    assert.deepEqual(PAGE_RETIRED, RETIRED_PRACTICE_AREAS);
+    assert.deepEqual(VALIDATION_RULES.practiceArea.allowedValues, ACCEPTED_PRACTICE_AREAS);
     assert.deepEqual(VALIDATION_RULES.conflict_risk.allowedValues, CONFLICT_RISKS);
     assert.deepEqual(VALIDATION_RULES.interaction_frequency.allowedValues, CADENCES);
   });
@@ -251,9 +278,16 @@ describe('checkClient', () => {
     assert.deepEqual(routeSees({ ...VALID, name: '&'.repeat(256) }), [{ field: 'name', message: 'Client name must not exceed 255 characters' }]);
   });
 
-  test('practice areas: a list from the twelve; blank is no practice areas', () => {
+  // A retired name passes (U43 (b)); the message lists only the 21
+  test('practice areas: a list from the 21 or the four retired; blank is no practice areas; the message lists the 21', () => {
     for (const blank of [undefined, null, []]) assert.deepEqual(routeSees({ ...VALID, practice_area: blank }), [], JSON.stringify(blank));
+    for (const retired of RETIRED_PRACTICE_AREAS) {
+      assert.deepEqual(routeSees({ ...VALID, practice_area: [retired] }), [], retired);
+      assert.deepEqual(routeSees({ ...VALID, practice_area: ['Healthcare', retired, 'Water and Waste'] }), [], `${retired} beside two of the 21`);
+    }
+    assert.deepEqual(routeSees({ ...VALID, practice_area: ACCEPTED_PRACTICE_AREAS }), []);
     const list = PRACTICE_AREAS.join(', ');
+    assert.ok(!RETIRED_PRACTICE_AREAS.some((r) => list.includes(r)), 'no retired name in the message');
     assert.deepEqual(routeSees({ ...VALID, practice_area: ['Tax'] }), [{ field: 'practice_area', message: `Practice area "Tax" is not on the list: ${list}.` }]);
     assert.deepEqual(routeSees({ ...VALID, practice_area: ['healthcare', 'Energy', 'Tax & Estate', 7] }), [{
       field: 'practice_area', message: `Practice areas "healthcare", "Tax & Estate", 7 are not on the list: ${list}.`,

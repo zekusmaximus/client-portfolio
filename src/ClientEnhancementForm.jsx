@@ -7,6 +7,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import PracticeAreaPicker from './components/PracticeAreaPicker';
+import SameAreaClients from './components/SameAreaClients';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { NativeSelect } from '@/components/ui/native-select';
 import {
@@ -64,7 +66,8 @@ const ClientEnhancementForm = ({ onClose }) => {
     updateClient,
     closeClientModal,
     people,
-    peopleError
+    peopleError,
+    clients
   } = usePortfolioStore();
 
   // Determine if this is create or edit mode
@@ -101,22 +104,6 @@ const ClientEnhancementForm = ({ onClose }) => {
   // The form as the partner has it now, for the merge after a 409
   const formRef = useRef(formData);
   formRef.current = formData;
-
-  // Practice area options
-  const practiceAreaOptions = [
-    'Healthcare',
-    'Municipal',
-    'Corporate',
-    'Energy',
-    'Financial',
-    'Education',
-    'Transportation',
-    'Environmental',
-    'Technology',
-    'Real Estate',
-    'Non-Profit',
-    'Other'
-  ];
 
   // Initialize form data when the client changes, and when the form opens:
   // a new client's form opening again after a Cancel has no client change
@@ -163,14 +150,6 @@ const ClientEnhancementForm = ({ onClose }) => {
       });
     return () => { live = false; };
   }, [client, isModalOpen]);
-
-  const handlePracticeAreaChange = (area, checked) => {
-    const newPracticeArea = checked 
-      ? [...formData.practiceArea, area]
-      : formData.practiceArea.filter(a => a !== area);
-    
-    handleFieldChange('practiceArea', newPracticeArea);
-  };
 
   // A person picker changed. Choosing the current second chair as lead clears
   // the second chair, since one person cannot hold both seats.
@@ -389,9 +368,12 @@ const ClientEnhancementForm = ({ onClose }) => {
           </div>
 
           {/* Practice Areas: none is allowed, as the API and the import
-              allow it (docs/plans/tier-3.md, U7 (b)) */}
+              allow it (docs/plans/tier-3.md, U7 (b)). The dropdown offers the
+              21 under their groups; a retired name the client holds shows as
+              a chip marked "retired" and still saves (section 18, U43 (b),
+              U47 (a)); under it, the other clients in the same areas (U42) */}
           <div className="space-y-3">
-            <Label className="flex items-center gap-2">
+            <Label htmlFor="practice-area-add" className="flex items-center gap-2">
               <Building className="h-4 w-4" />
               Practice Areas
             </Label>
@@ -401,25 +383,12 @@ const ClientEnhancementForm = ({ onClose }) => {
                 {errors.practiceArea}
               </p>
             )}
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {practiceAreaOptions.map((area) => (
-                <div key={area} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={area}
-                    checked={formData.practiceArea.includes(area)}
-                    onCheckedChange={(checked) => handlePracticeAreaChange(area, checked)}
-                  />
-                  <Label htmlFor={area} className="text-sm">{area}</Label>
-                </div>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {formData.practiceArea.map((area) => (
-                <Badge key={area} variant="secondary">
-                  {area}
-                </Badge>
-              ))}
-            </div>
+            <PracticeAreaPicker
+              id="practice-area-add"
+              value={formData.practiceArea}
+              onChange={(areas) => handleFieldChange('practiceArea', areas)}
+            />
+            <SameAreaClients clients={clients} areas={formData.practiceArea} excludeId={isEditMode ? client.id : null} />
           </div>
 
           {/* Financials Section */}

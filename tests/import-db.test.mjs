@@ -219,7 +219,7 @@ describe(`the import on PostgreSQL (${shape.name})`, { skip: serverUrl ? false :
     assert.equal(energy.interaction_frequency, 'Monthly');
     assert.equal(energy.high_maintenance, true);
     assert.equal(energy.conflict_risk, 'Medium');
-    assert.deepEqual(energy.practice_area, ['Energy', 'Environmental']);
+    assert.deepEqual(energy.practice_area, ['Energy', 'Water and Waste']);
     assert.equal(energy.notes, 'Renewal talks in spring');
     assert.deepEqual(await revenue(ENERGY), { 2025: 40000, 2026: 85000 });
 

@@ -35,7 +35,7 @@ import { departureModel } from './departure.js';
 import { hireScenarioModel } from './hireScenario.js';
 import { revenueForYear } from './revenue.js';
 import { syncTransitions } from './transitionPlans.js';
-import { VALIDATION_RULES } from './validation.js';
+import { PRACTICE_AREAS } from './validation.js';
 
 export const KINDS = ['departure', 'hire'];
 export const STAGES = ['impact', 'mitigation', 'implementation'];
@@ -60,8 +60,11 @@ export const ASSOCIATE_KEYS = ['id', 'label', 'focus', 'target', 'personId'];
 export const TARGET_KINDS = ['count', 'average'];
 export const PICK_KEYS = ['associateId', 'seenSecondChairId'];
 export const HYPOTHETICAL_ID = /^h[1-9]\d{0,3}$/;
-// The client form's twelve practice areas (utils/clientRules.cjs on the server)
-export const PRACTICE_AREAS = VALIDATION_RULES.practiceArea.allowedValues;
+// The 21 practice areas a hire scenario's focus may name (utils/clientRules.cjs
+// on the server): the focus is not client data, so a retired name is neither
+// offered nor accepted, and openState drops one with a notice
+// (docs/plans/tier-3.md, U43 (b))
+export { PRACTICE_AREAS };
 export const LIMITS = {
   name: 120,
   stateBytes: 1000000,
@@ -450,7 +453,7 @@ const plural = (n, one, many) => (n === 1 ? one : many);
  */
 export function openState(saved, { people = [], clients = [], reportingYear = null, today } = {}) {
   const state = canonicalState(saved);
-  if (state.kind === 'hire') return openHire(state, { people, clients, reportingYear });
+  if (state.kind === 'hire') return openHire(state, { people, clients, reportingYear }, saved);
   const notices = [];
 
   const listed = new Map(people.map((p) => [String(p.id), p]));
@@ -532,10 +535,25 @@ export function openState(saved, { people = [], clients = [], reportingYear = nu
  *   keeps the link, which the figures do not use, and is named;
  * - a pick whose seat has changed since it was made stays, and the page shows
  *   why and does not apply it (a notice counts them), as a refused pick stays
- *   in a departure.
+ *   in a departure;
+ * - a practice area of focus no longer on the list (one of the four the list
+ *   retired, docs/plans/tier-3.md, U43 (b)) is taken off, as canonicalState
+ *   takes it off, and named in a notice, so the scenario saves again (the
+ *   server refuses it).
  */
-function openHire(state, { people, clients, reportingYear }) {
+function openHire(state, { people, clients, reportingYear }, saved = {}) {
   const notices = [];
+  const savedFocus = new Map();
+  for (const a of Array.isArray(saved?.associates) ? saved.associates : []) {
+    const id = isPlainObject(a) ? idText(a.id) : '';
+    if (id && !savedFocus.has(id)) savedFocus.set(id, Array.isArray(a.focus) ? a.focus.map(text) : []);
+  }
+  for (const a of state.associates) {
+    const dropped = [...new Set((savedFocus.get(a.id) || []).filter((area) => typeof area === 'string' && area !== '' && !PRACTICE_AREAS.includes(area)))];
+    if (dropped.length > 0) {
+      notices.push(`${a.label}'s ${plural(dropped.length, 'practice area', 'practice areas')} of focus ${dropped.map((area) => `"${area}"`).join(', ')} ${plural(dropped.length, 'is', 'are')} no longer on the list, so ${plural(dropped.length, 'it was', 'they were')} taken off.`);
+    }
+  }
   const listed = new Map(people.map((p) => [String(p.id), p]));
   const inBook = new Set(clients.map((c) => String(c.id)));
   const gone = Object.keys(state.picks).filter((id) => !inBook.has(id));

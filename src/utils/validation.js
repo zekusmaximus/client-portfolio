@@ -15,6 +15,36 @@ export const sanitizeArray = (array) => {
   return array.map(item => typeof item === 'string' ? sanitizeInput(item) : item);
 };
 
+// The practice areas (docs/plans/tier-3.md, section 18, WP13): 21 under seven
+// groups, held equal to utils/clientRules.cjs by tests/client-rules.test.mjs.
+// The groups are display only (the picker's headings, the filter's, the
+// charts' colours) and never stored, so a group's name may hold a comma; an
+// area's name holds letters and spaces only. The last entry has no name: Other
+// sits under no heading. The order is the picker's, the sort's and every
+// list's.
+export const PRACTICE_AREA_GROUPS = [
+  { name: 'Health and Human Services', areas: ['Healthcare', 'Human Services', 'Senior Care'] },
+  { name: 'Financial Services', areas: ['Banking and Finance', 'Insurance and Benefits'] },
+  { name: 'Energy and Environment', areas: ['Energy', 'Water and Waste'] },
+  { name: 'Built Environment and Transportation', areas: ['Construction', 'Real Estate', 'Transportation'] },
+  { name: 'Public Sector', areas: ['Municipal', 'Education', 'Justice and Legal'] },
+  {
+    name: 'Business and Consumer',
+    areas: ['Retail and Restaurants', 'Manufacturing and Consumer Products', 'Cannabis and Tobacco', 'Technology', 'Professional Services'],
+  },
+  { name: 'Arts, Media and Culture', areas: ['Arts and Culture', 'Media and Entertainment'] },
+  { name: null, areas: ['Other'] },
+];
+
+// What the page offers: the 21, in list order
+export const PRACTICE_AREAS = PRACTICE_AREA_GROUPS.flatMap((group) => group.areas);
+
+// Four of the twelve the list replaced. There is no retag (U46 (b)), so a
+// retired name a client already holds stays valid: the save check below
+// accepts it, as the server and the import do (U43 (b)), and the client's chip
+// marks it "retired". Nothing offers one.
+export const RETIRED_PRACTICE_AREAS = ['Corporate', 'Financial', 'Environmental', 'Non-Profit'];
+
 // Validation rules and error messages
 export const VALIDATION_RULES = {
   name: {
@@ -34,14 +64,12 @@ export const VALIDATION_RULES = {
   // (utils/clientRules.cjs; docs/plans/tier-3.md, U7 (b), WP4): the form used
   // to require one, so a client the import created with no practice area
   // could not be saved from the form, for its Stickiness or anything else,
-  // until someone picked an area nobody had chosen
+  // until someone picked an area nobody had chosen. What a save may hold: the
+  // 21 and the four retired names (U43 (b)); what the form offers is
+  // PRACTICE_AREAS
   practiceArea: {
     required: false,
-    allowedValues: [
-      'Healthcare', 'Municipal', 'Corporate', 'Energy',
-      'Financial', 'Education', 'Transportation', 'Environmental',
-      'Technology', 'Real Estate', 'Non-Profit', 'Other'
-    ],
+    allowedValues: [...PRACTICE_AREAS, ...RETIRED_PRACTICE_AREAS],
     errorMessages: {
       allowedValues: 'Please select valid practice areas only'
     }

@@ -13,13 +13,7 @@ import succession from '../utils/succession.cjs';
 import strategic from '../utils/strategic.cjs';
 import book from '../utils/book.cjs';
 import clientRules from '../utils/clientRules.cjs';
-import {
-  enhanceClientWithSuccessionMetrics,
-  successionInputs as pageInputs,
-  practiceAreasOf as pagePracticeAreasOf,
-  COMPLEX_AREAS as PAGE_COMPLEX_AREAS,
-  stickinessNotRated,
-} from '../src/utils/successionUtils.js';
+import * as pageSuccession from '../src/utils/successionUtils.js';
 import { MAX_EFFORT as PAGE_MAX_EFFORT, UNRATED_STICKINESS as PAGE_UNRATED } from '../src/utils/clientMetrics.js';
 import { clientFormData, clientRequestBody, revenuesToSend } from '../src/utils/clientForm.js';
 import { sanitizeFormData } from '../src/utils/validation.js';
@@ -34,9 +28,14 @@ const {
   metricsOf,
   practiceAreasOf,
   MAX_EFFORT,
-  COMPLEX_AREAS,
   RELATIONSHIP_TYPES,
 } = succession;
+const {
+  enhanceClientWithSuccessionMetrics,
+  successionInputs: pageInputs,
+  practiceAreasOf: pagePracticeAreasOf,
+  stickinessNotRated,
+} = pageSuccession;
 const { calculateStrategicScores, UNRATED_STICKINESS } = strategic;
 
 const METRICS = ['relationshipType', 'transitionComplexity', 'successionRisk'];
@@ -167,41 +166,60 @@ test('rule 2: cadence counts once, through effort; an As-Needed client with noth
   assert.equal(PAGE_MAX_EFFORT, MAX_EFFORT);
 });
 
-test('complexity: a complex practice area adds 1.5, High conflict risk 1; the label is read, not a number; the cap and rounding as before', () => {
+test('complexity: High conflict risk adds 1; the label is read, not a number; the rounding as before; 4 the most any client reaches', () => {
   const complexity = (fields) => both({ lead_id: 4, interaction_frequency: 'Monthly', ...fields }).transitionComplexity;
   assert.equal(complexity({}), 1);
-  assert.equal(complexity({ practice_area: ['Healthcare'] }), 2, '0.8 + 1.5 = 2.3');
-  assert.equal(complexity({ practice_area: ['Energy', 'Municipal'] }), 2);
+  assert.equal(complexity({ practice_area: ['Healthcare'] }), 1, '0.8 (0.8 + 1.5 = 2.3 until Tier 3 WP13, U41)');
+  assert.equal(complexity({ practice_area: ['Energy', 'Municipal'] }), 1);
   assert.equal(complexity({ conflict_risk: 'High' }), 2, '0.8 + 1 = 1.8');
   assert.equal(complexity({ conflict_risk: 'high' }), 2, 'regardless of case');
   assert.equal(complexity({ conflict_risk: 'Low' }), 1);
   assert.equal(complexity({ conflict_risk: '9' }), 1, 'a number is not a conflict label');
-  assert.equal(complexity({ practice_area: ['Healthcare'], conflict_risk: 'High' }), 3, '3.3');
-  assert.equal(complexity({ interaction_frequency: 'Daily', high_maintenance: true, practice_area: ['Energy'], conflict_risk: 'High' }), 6, '3 + 1.5 + 1 = 5.5, the most any client reaches');
+  assert.equal(complexity({ practice_area: ['Healthcare'], conflict_risk: 'High' }), 2, '1.8 (3.3 until WP13)');
+  assert.equal(complexity({ interaction_frequency: 'Daily', high_maintenance: true, practice_area: ['Energy'], conflict_risk: 'High' }), 4,
+    '3 + 1 = 4, the most any client reaches (5.5, so 6, with a complex area until WP13)');
 });
 
-// Tier 3 WP2 (U6 (b), approved by Jeff on 2026-09-29): until then the third
-// complex area was 'financial services', which the form's 'Financial' does
-// not contain, so a Financial client added nothing, and this test said so
-test('complexity: Financial, the form\'s practice area, is a complex area on both sides (U6 (b))', () => {
-  assert.deepEqual(COMPLEX_AREAS, ['healthcare', 'energy', 'financial']);
-  assert.deepEqual(PAGE_COMPLEX_AREAS, COMPLEX_AREAS);
-  assert.ok(clientRules.PRACTICE_AREAS.includes('Financial'));
-  const complexity = (areas) => both({ lead_id: 4, interaction_frequency: 'Monthly', practice_area: areas }).transitionComplexity;
-  // 0.8 + 1.5 = 2.3 (0.8 alone, 1, until WP2)
-  assert.equal(complexity(['Financial']), 2, 'the 1.5');
-  assert.equal(complexity(['financial']), 2, 'in any case');
-  assert.equal(complexity(['Financial Services']), 2, 'text holding it still counts, as it did (none since WP4\'s vocabulary)');
-  assert.equal(complexity(['Financial', 'Healthcare']), 2, 'once, however many complex areas');
-  // Which vocabulary values count at all
-  const counted = clientRules.PRACTICE_AREAS.filter((a) => complexity([a]) === 2);
-  assert.deepEqual(counted, ['Healthcare', 'Energy', 'Financial']);
-  // What moves for a Financial client: its complexity gains 1.5 before
-  // rounding, and its succession risk 0.3 of that complexity after it
-  const before = { relationshipType: 'secondary', transitionComplexity: 1, successionRisk: 4 };
-  assert.deepEqual(both({ lead_id: 4, interaction_frequency: 'Monthly', practice_area: [] }), before, 'the same client with no complex area');
+// Tier 3 WP13 (U41 (a), Jeff, 2026-10-02): no practice area moves a figure.
+// Until then a practice area whose name held healthcare, energy or financial
+// added 1.5 to the complexity (financial from Tier 3 WP2, U6 (b))
+test('complexity and risk: no practice area moves either, on either side; the area term is gone (U41)', () => {
+  assert.ok(!('COMPLEX_AREAS' in succession), 'the server\'s list of complex areas is gone');
+  assert.ok(!('COMPLEX_AREAS' in pageSuccession), 'and the page\'s');
+  const names = [...clientRules.ACCEPTED_PRACTICE_AREAS, 'Financial Services', 'financial', 'HEALTHCARE', 'Energy Policy', 'Tax'];
+  let clients = 0;
+  for (const interaction_frequency of [...clientRules.CADENCES, '']) {
+    for (const high_maintenance of [false, true]) {
+      for (const stickiness of [null, 1, 2, 3, 4, 5]) {
+        for (const conflict_risk of ['Low', 'Medium', 'High']) {
+          for (const seats of [{}, { lead_id: 4 }, { lead_id: 4, second_chair_id: 8 }, { lead_id: 4, originator_id: 4 }]) {
+            const fields = { interaction_frequency, high_maintenance, stickiness, conflict_risk, ...seats };
+            const none = both({ ...fields, practice_area: [] });
+            for (const area of names) {
+              assert.deepEqual(both({ ...fields, practice_area: [area] }), none, `${area}: ${JSON.stringify(fields)}`);
+            }
+            assert.deepEqual(both({ ...fields, practice_area: ['Healthcare', 'Energy', 'Financial'] }), none, `three former complex areas: ${JSON.stringify(fields)}`);
+            clients += 1;
+          }
+        }
+      }
+    }
+  }
+  assert.equal(clients, 864, 'every cadence, the handful or not, every pick and none, three risks, four kinds of seat');
+  // An Arts and Culture client and a Banking and Finance one, figure for figure
+  const arts = apiClient({ lead_id: 4, second_chair_id: 8, stickiness: 2, interaction_frequency: 'Weekly', conflict_risk: 'High', practice_area: ['Arts and Culture'] });
+  const bank = apiClient({ lead_id: 4, second_chair_id: 8, stickiness: 2, interaction_frequency: 'Weekly', conflict_risk: 'High', practice_area: ['Banking and Finance'] });
+  assert.deepEqual(successionMetrics(arts), successionMetrics(bank));
+  assert.deepEqual(page(arts), page(bank));
+  assert.deepEqual(successionMetrics(arts), { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 6 }, '2 + 3.5 + 0.6 = 6.1');
+  // What moved at the deploy for a former complex-area client: a Monthly
+  // Financial client's complexity 2 to 1 (0.8; 2.3 with the 1.5), its risk 4
+  // either way (2 + 1.556 + 0.3 = 3.856; 4.156 with it)
   assert.deepEqual(both({ lead_id: 4, interaction_frequency: 'Monthly', practice_area: ['Financial'] }),
-    { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 }, '2 + 1.556 + 0.6 = 4.156');
+    { relationshipType: 'secondary', transitionComplexity: 1, successionRisk: 4 });
+  // A client with no cadence and no pick, as nearly the whole book: 2 to 0, risk 4 either way
+  assert.deepEqual(both({ lead_id: 4, interaction_frequency: '', practice_area: ['Healthcare'] }),
+    { relationshipType: 'secondary', transitionComplexity: 0, successionRisk: 4 }, '0.4 (1.9); 2 + 1.556 + 0 = 3.556 (4.156)');
 });
 
 test('rule 3: practice areas from practiceArea or practice_area, through one helper on each side', () => {
@@ -220,10 +238,13 @@ test('rule 3: practice areas from practiceArea or practice_area, through one hel
   assert.deepEqual(pagePracticeAreasOf({ practiceArea: ['Energy', null, '', 3] }), ['Energy']);
 
   // The form holds practiceArea only. Until WP7 its preview read practice_area,
-  // so a complex area never counted there
+  // so a complex area never counted there; since Tier 3 WP13 none counts
+  // anywhere, and both sides still read the areas alike
   const form = { lead_id: '4', practiceArea: ['Healthcare'], interaction_frequency: 'Monthly', stickiness: null };
-  assert.equal(enhanceClientWithSuccessionMetrics(form).transitionComplexity, 2);
-  assert.equal(successionMetrics(form).transitionComplexity, 2);
+  assert.deepEqual(pageInputs(form).practiceAreas, ['Healthcare']);
+  assert.deepEqual(successionInputs(form).practiceAreas, ['Healthcare']);
+  assert.equal(enhanceClientWithSuccessionMetrics(form).transitionComplexity, 1);
+  assert.equal(successionMetrics(form).transitionComplexity, 1);
 });
 
 test('rule 4: an unrated client\'s stickiness term is the stand-in, exactly 40 / 9; both sides read the raw pick, never the rounded stickinessScore', () => {
@@ -263,14 +284,14 @@ test('rounding: sums at x.5 round as the page always rounded them, on both sides
   assert.deepEqual(both({ lead_id: 4, originator_id: 6, stickiness: 2, interaction_frequency: 'As-Needed' }),
     { relationshipType: 'secondary', transitionComplexity: 0, successionRisk: 6 });
   // Daily without the handful flag: 5 ÷ 7.5 × 10 × 0.3 is 1.9999999999999998
-  // in floating point, and with a complex area and High conflict risk the sum
-  // is 4.5 exactly: complexity 5. Shared with pick 4: 1 + 0 + 5 × 0.3 = 2.5,
-  // which rounds up to 3
+  // in floating point, which rounds to 2; with High conflict risk the sum is
+  // 3. Shared with pick 4: 1 + 0 + 3 × 0.3 = 1.9, which rounds to 2. Until
+  // Tier 3 WP13 a complex area made the complexity 4.5 exactly, so 5, and the
+  // risk 2.5, so 3: no sum of the rules reaches x.5 through the complexity now
   assert.equal((5 / 7.5) * 10 * 0.3, 1.9999999999999998);
   assert.deepEqual(both({ lead_id: 4, second_chair_id: 8, stickiness: 4, interaction_frequency: 'Daily', practice_area: ['Healthcare'], conflict_risk: 'High' }),
-    { relationshipType: 'shared', transitionComplexity: 5, successionRisk: 3 });
-  // The same client with a complex area only: 1.9999999999999998 + 1.5 is 3.5, rounds to 4
-  assert.equal(both({ lead_id: 4, interaction_frequency: 'Daily', practice_area: ['Energy'] }).transitionComplexity, 4);
+    { relationshipType: 'shared', transitionComplexity: 3, successionRisk: 2 });
+  assert.equal(both({ lead_id: 4, interaction_frequency: 'Daily', practice_area: ['Energy'] }).transitionComplexity, 2, '4 with the 1.5 until WP13');
   // Orphaned with pick 1: 5 + 6 + 0.3 = 11.3, capped at 10
   assert.equal(both({ stickiness: 1, interaction_frequency: 'Weekly' }).successionRisk, 10);
 });
@@ -292,7 +313,8 @@ function rng(seed) {
 }
 const choose = (rand, list) => list[Math.floor(rand() * list.length)];
 const CADENCES = [...clientRules.CADENCES, '', null];
-const AREAS = [...clientRules.PRACTICE_AREAS, 'Financial Services'];
+// Every name a client may hold, the retired four among them, and an old spelling
+const AREAS = [...clientRules.ACCEPTED_PRACTICE_AREAS, 'Financial Services'];
 const hex = (rand, n) => Array.from({ length: n }, () => Math.floor(rand() * 16).toString(16)).join('');
 
 /** A random book as the API sends it: people as ids and nested, every field a write allows, legacy text as stored. */
@@ -375,14 +397,19 @@ test('parity: the fixture book of tests/fixtures/books.mjs, on both sides and fr
   }])[0]);
   assertParity(FIXTURE_PEOPLE, scored, new Date('2026-09-26T12:00:00Z'), 'fixture, scored');
   assert.deepEqual(scored.map(successionMetrics), [
-    { relationshipType: 'shared', transitionComplexity: 5, successionRisk: 3 },
+    // Healthcare, Daily, High, pick 5: 2 + 1 = 3; risk 1 + 0 + 0.9 = 1.9
+    // (5 and 3 until Tier 3 WP13, U41, with the 1.5)
+    { relationshipType: 'shared', transitionComplexity: 3, successionRisk: 2 },
     { relationshipType: 'shared', transitionComplexity: 1, successionRisk: 1 },
-    { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 },
-    // Financial, Quarterly, High: 0.4 + 1.5 + 1 = 2.9 (1.4, so 1, until Tier 3
-    // WP2 counted Financial, U6 (b)); risk 3 + 3.5 + 0.9 = 7.4 (6.8), still 7
-    { relationshipType: 'primary', transitionComplexity: 3, successionRisk: 7 },
+    // Energy, Monthly: 0.8 (2.3, so 2, until WP13); risk 4 either way
+    { relationshipType: 'secondary', transitionComplexity: 1, successionRisk: 4 },
+    // Financial, Quarterly, High: 0.4 + 1 = 1.4 (2.9, so 3, from Tier 3 WP2's
+    // U6 (b) until WP13); risk 3 + 3.5 + 0.3 = 6.8, 7 either way
+    { relationshipType: 'primary', transitionComplexity: 1, successionRisk: 7 },
     { relationshipType: 'secondary', transitionComplexity: 0, successionRisk: 8 },
-    { relationshipType: 'orphaned', transitionComplexity: 2, successionRisk: 7 },
+    // Healthcare, unset cadence, pick 3: 0.4 (1.9, so 2, until WP13); risk
+    // 5 + 1 + 0 = 6 (6.6, so 7)
+    { relationshipType: 'orphaned', transitionComplexity: 0, successionRisk: 6 },
   ]);
 });
 
@@ -403,7 +430,7 @@ test('parity: 300 seeded random books, figure for figure, from the API\'s client
   assert.ok(clients > 5000, `${clients} clients`);
   // The books reach every type and the ends of both scales
   assert.deepEqual([...seen.types].sort(), ['orphaned', 'primary', 'secondary', 'shared']);
-  assert.ok(seen.complexity.has(0) && seen.complexity.has(6), [...seen.complexity].join());
+  assert.ok(seen.complexity.has(0) && seen.complexity.has(4) && !seen.complexity.has(5), [...seen.complexity].join());
   assert.ok(seen.risk.has(1) && seen.risk.has(10), [...seen.risk].join());
 });
 
@@ -520,7 +547,8 @@ test('the form\'s preview equals what the save returns: a new client, from an em
   assert.deepEqual(preview(empty), { relationshipType: 'orphaned', transitionComplexity: 0, successionRisk: 7 }, 'no lead yet');
   const filled = { ...empty, name: 'New Co', lead_id: '6', originator_id: '6', stickiness: 5, practiceArea: ['Energy'],
     interaction_frequency: 'Monthly', revenues: [{ year: 2026, revenue_amount: '12000' }] };
-  assert.deepEqual(preview(filled), { relationshipType: 'primary', transitionComplexity: 2, successionRisk: 4 });
+  // Energy, Monthly, pick 5: 0.8 (2.3 with the 1.5 until Tier 3 WP13); 3 + 0 + 0.3 = 3.3 (3.6)
+  assert.deepEqual(preview(filled), { relationshipType: 'primary', transitionComplexity: 1, successionRisk: 3 });
   assert.deepEqual(preview(filled), pick3(saved(filled)));
   for (let seed = 1; seed <= 200; seed += 1) {
     const rand = rng(seed);

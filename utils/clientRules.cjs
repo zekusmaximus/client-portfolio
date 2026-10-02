@@ -10,12 +10,34 @@
 
 const { EFFORT_BY_CADENCE } = require('./strategic.cjs');
 
-// The vocabularies. Cadence is the scorer's own list; the practice areas are
-// the client form's twelve.
+// The vocabularies. Cadence is the scorer's own list.
+//
+// The practice areas (docs/plans/tier-3.md, section 18, WP13): the 21 the
+// page offers, in the order of its seven groups (PRACTICE_AREA_GROUPS in
+// src/utils/validation.js), which is the picker's, the sort's and every
+// list's. A stored name holds letters and spaces only: no & (the repair
+// script's test requires every value to escape to itself), no ; (the
+// import's separator), no comma (the book writes a person's areas as
+// "Healthcare 3, Energy 1"), no / and no |.
 const PRACTICE_AREAS = [
-  'Healthcare', 'Municipal', 'Corporate', 'Energy', 'Financial', 'Education',
-  'Transportation', 'Environmental', 'Technology', 'Real Estate', 'Non-Profit', 'Other',
+  'Healthcare', 'Human Services', 'Senior Care',
+  'Banking and Finance', 'Insurance and Benefits',
+  'Energy', 'Water and Waste',
+  'Construction', 'Real Estate', 'Transportation',
+  'Municipal', 'Education', 'Justice and Legal',
+  'Retail and Restaurants', 'Manufacturing and Consumer Products', 'Cannabis and Tobacco', 'Technology', 'Professional Services',
+  'Arts and Culture', 'Media and Entertainment',
+  'Other',
 ];
+// Four of the twelve the list replaced. There is no retag (U46 (b)): each
+// lobbyist tags their own clients when they next work on them, so a retired
+// name a client already holds stays valid wherever a client's areas are
+// written (U43 (b)): this check, the import and the page's save check accept
+// it. Nothing offers one, and every message lists PRACTICE_AREAS alone. The
+// hire scenario's focus is not client data and takes PRACTICE_AREAS only
+// (utils/scenarioState.cjs).
+const RETIRED_PRACTICE_AREAS = ['Corporate', 'Financial', 'Environmental', 'Non-Profit'];
+const ACCEPTED_PRACTICE_AREAS = [...PRACTICE_AREAS, ...RETIRED_PRACTICE_AREAS];
 const CADENCES = Object.keys(EFFORT_BY_CADENCE);
 const CONFLICT_RISKS = ['Low', 'Medium', 'High'];
 const STICKINESS = [1, 2, 3, 4, 5];
@@ -63,10 +85,12 @@ function checkName(name) {
   return null;
 }
 
+// A retired name passes (ACCEPTED_PRACTICE_AREAS); the message lists only the
+// 21, since a retired name is never one to pick
 function checkPracticeAreas(areas) {
   if (blank(areas)) return null;
   if (!Array.isArray(areas)) return `Practice areas must be a list from: ${PRACTICE_AREAS.join(', ')}.`;
-  const unknown = areas.filter((area) => !PRACTICE_AREAS.includes(area));
+  const unknown = areas.filter((area) => !ACCEPTED_PRACTICE_AREAS.includes(area));
   if (unknown.length === 0) return null;
   const one = unknown.length === 1;
   return `Practice area${one ? '' : 's'} ${unknown.map(shown).join(', ')} ${one ? 'is' : 'are'} not on the list: ${PRACTICE_AREAS.join(', ')}.`;
@@ -152,6 +176,8 @@ function checkClient(body) {
 
 module.exports = {
   PRACTICE_AREAS,
+  RETIRED_PRACTICE_AREAS,
+  ACCEPTED_PRACTICE_AREAS,
   CADENCES,
   CONFLICT_RISKS,
   STICKINESS,

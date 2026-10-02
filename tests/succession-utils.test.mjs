@@ -79,7 +79,7 @@ test('the Dashboard\'s and Stage 1\'s helpers read what each client carries, a 0
   assert.equal(analytics.averageComplexity, 1.5);
   const zero = fromServer(5, 'shared', 0, 1);
   const busy = { ...zero, interaction_frequency: 'Daily', high_maintenance: true, practiceArea: ['Healthcare'], conflict_risk: 'High' };
-  assert.equal(calculateTransitionComplexity(busy), 6, 'what this module would compute');
+  assert.equal(calculateTransitionComplexity(busy), 4, 'what this module would compute (6 with the area\'s 1.5 until Tier 3 WP13)');
   assert.equal(getSuccessionAnalytics([busy]).averageComplexity, 0, 'the 0 the client carries');
 });
 
@@ -90,7 +90,9 @@ test('withSuccessionMetrics keeps the server\'s figures; from an older API, whic
   const older = { id: 2, lead: { id: 4, name: 'Kevin' }, lead_id: 4, secondChair: null, originator: { id: 4, name: 'Kevin' }, originator_id: 4,
     stickiness: 2, interaction_frequency: 'Weekly', effort: 3, practiceArea: ['Energy'], conflict_risk: 'Low' };
   const filled = withSuccessionMetrics(older);
-  assert.deepEqual(filled, { ...older, relationshipType: 'primary', transitionComplexity: 3, successionRisk: 7 });
+  // Weekly, effort 3, Energy, pick 2: 1.2 (2.7, so 3, with the area's 1.5
+  // until Tier 3 WP13); 3 + 3.5 + 0.3 = 6.8 (7.4), 7 either way
+  assert.deepEqual(filled, { ...older, relationshipType: 'primary', transitionComplexity: 1, successionRisk: 7 });
   assert.deepEqual(filled, enhanceClientWithSuccessionMetrics(older));
   // One missing is none: all three are computed together
   const { successionRisk, ...partial } = server;

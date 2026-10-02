@@ -44,6 +44,7 @@ import {
 } from './helpers/server.mjs';
 import { createSseParser, eventJson } from '../src/utils/sse.js';
 import succession from '../utils/succession.cjs';
+import clientRules from '../utils/clientRules.cjs';
 import { clientFormData, clientRequestBody, revenuesToSend } from '../src/utils/clientForm.js';
 import { sanitizeFormData } from '../src/utils/validation.js';
 import { toPersonId } from '../src/utils/people.js';
@@ -229,7 +230,8 @@ const EXACT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}$/;
 // docs/plans/tier-2.md, WP4): [what, the body's fields over a valid form body,
 // the 400's details]. Each detail's field is the body's, or `revenue_<n>` for
 // the n-th revenue entry (the client form's key for its row).
-const PRACTICE_AREA_LIST = 'Healthcare, Municipal, Corporate, Energy, Financial, Education, Transportation, Environmental, Technology, Real Estate, Non-Profit, Other';
+// The 21 a message lists (docs/plans/tier-3.md, section 18), never a retired name
+const PRACTICE_AREA_LIST = clientRules.PRACTICE_AREAS.join(', ');
 const detail = (field, message) => [{ field, message }];
 const yearDetail = (year, n = 0) => detail(`revenue_${n}`, `Revenue year ${year} must be a whole year from 1900 to 2099.`);
 const amountDetail = (year) => detail('revenue_0', `The amount for ${year} must be a number from 0 to 1,000,000,000.`);
@@ -787,6 +789,28 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.deepEqual(await revenueRows(rows[0].id), [{ year: 2025, amount: 1000 }, { year: 2026, amount: 2500 }]);
     });
 
+    // Tier 3 WP13 (U43 (b)): the downloaded book sheet writes each client's
+    // areas as stored, a retired name among them, and imports; a new name
+    // imports too (refused by the API before WP13). Matched regardless of case
+    test('200: a Practice Area cell with a retired name and new names, Check file then Upload; stored as the server spells them', async () => {
+      const kevin = await seed('Kevin');
+      const held = await addClient({ lead: kevin });
+      await db.query("UPDATE clients SET practice_area = ARRAY['Environmental'] WHERE id::text = $1", [String(held.id)]);
+      const csvData = [
+        { CLIENT: held.name, '2026 Contracts': '100000', Lead: 'Kevin', 'Practice Area': 'Environmental' },
+        { CLIENT: uniqueName('Tagged Client'), '2026 Contracts': '5000', Lead: 'Kevin', 'Practice Area': 'human services;Justice and Legal;non-profit' },
+      ];
+      const checked = await call('POST', '/api/data/process-csv', { csvData, dryRun: true });
+      assert.equal(checked.status, 200, checked.text);
+      assert.deepEqual([checked.body.dryRun, checked.body.summary.totalClients], [true, 2]);
+      const res = await call('POST', '/api/data/process-csv', { csvData });
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual([res.body.summary.updatedClients, res.body.summary.changedClients, res.body.summary.newClients], [1, 0, 1]);
+      assert.deepEqual((await storedClient(held.id)).practice_area, ['Environmental'], 'the retired name, unchanged and not written');
+      const { rows: [created] } = await db.query('SELECT practice_area FROM clients WHERE name = $1', [csvData[1].CLIENT]);
+      assert.deepEqual(created.practice_area, ['Human Services', 'Justice and Legal', 'Non-Profit']);
+    });
+
     test('Check file (dryRun: true): 200 { success, dryRun, validation, summary }, no clients, nothing written', async () => {
       const name = uniqueName('Checked Client');
       const before = await clientCount();
@@ -1084,9 +1108,10 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       for (const key of ['strategicValue', 'stickinessScore']) assert.equal(typeof client[key], 'number', key);
       // WP7 (S11): the succession metrics, the server's (utils/succession.cjs)
       // for every client. This one has a second chair and Stickiness 3 (5 of
-      // 10): secondary; Monthly and Healthcare, 0.8 + 1.5 = 2.3; 2 + 1 + 0.6 = 3.6
+      // 10): secondary; Monthly, 0.8; 2 + 1 + 0.3 = 3.3. Until Tier 3 WP13
+      // (U41) its Healthcare added 1.5: 2.3 (2) and 3.6 (4)
       for (const each of res.body.clients) assert.deepEqual(metricsOf(each), succession.successionMetrics(each), each.name);
-      assert.deepEqual(metricsOf(client), { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 });
+      assert.deepEqual(metricsOf(client), { relationshipType: 'secondary', transitionComplexity: 1, successionRisk: 3 });
       // WP6: updated_at to the microsecond as PostgreSQL holds it (the page
       // sends it back as expected_updated_at), and who saved last (c.*)
       assert.match(client.updated_at_exact, EXACT);
@@ -1104,7 +1129,7 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       // WP7 (S11 rule 1): no lead is orphaned, whatever the legacy text says
       // (until WP7 the page read primary_lobbyist and called it secondary)
       assert.equal(client.relationshipType, 'orphaned');
-      assert.equal(client.successionRisk, 7, '5 + 1 (Stickiness 3) + 0.6 (complexity 2)');
+      assert.equal(client.successionRisk, 6, '5 + 1 (Stickiness 3) + 0.3 (complexity 1; 2, so 7, until Tier 3 WP13)');
     });
   });
 
@@ -1381,7 +1406,8 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       const jay = await seed('Jay');
       const form = { ...clientFormData({}), name: uniqueName('Preview Client'), lead_id: String(paula.id), originator_id: String(paula.id),
         stickiness: 5, practiceArea: ['Energy'], interaction_frequency: 'Monthly', revenues: [{ year: 2026, revenue_amount: '12000' }] };
-      assert.deepEqual(previewOf(form), { relationshipType: 'primary', transitionComplexity: 2, successionRisk: 4 });
+      // Energy, Monthly, pick 5: 0.8 and 3 + 0 + 0.3 (2 and 4 until Tier 3 WP13, U41)
+      assert.deepEqual(previewOf(form), { relationshipType: 'primary', transitionComplexity: 1, successionRisk: 3 });
       const res = await call('POST', '/api/data/clients', formSaveBody(form));
       assert.equal(res.status, 201, res.text);
       assert.deepEqual(metricsOf(res.body.client), previewOf(form));
@@ -1389,7 +1415,7 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
 
       // An edit through clientFormData: a second chair, with Stickiness 5, makes it shared
       const edit = { ...clientFormData(await listedClient(res.body.client.id)), second_chair_id: String(jay.id) };
-      assert.deepEqual(previewOf(edit), { relationshipType: 'shared', transitionComplexity: 2, successionRisk: 2 });
+      assert.deepEqual(previewOf(edit), { relationshipType: 'shared', transitionComplexity: 1, successionRisk: 1 });
       const put = await call('PUT', `/api/data/clients/${res.body.client.id}`, formSaveBody(edit));
       assert.equal(put.status, 200, put.text);
       assert.deepEqual(metricsOf(put.body.client), previewOf(edit));
@@ -1484,6 +1510,34 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       res = await call('PUT', `/api/data/clients/${created.id}`, formBody({ name: created.name, lead_id: kevin.id, revenues: [] }));
       assert.equal(res.status, 200, res.text);
       assert.deepEqual(await revenueRows(created.id), []);
+    });
+
+    // Tier 3 WP13 (docs/plans/tier-3.md, section 18, U43 (b), U46 (b)): there
+    // is no retag, so a retired practice area a client holds stays valid on
+    // every write, and the partner removes it as any other change. A new name
+    // (Human Services) is refused by the API before WP13
+    test('200: a client holding a retired practice area saves for another field with it kept, then without it and with a new area; one `form` row each, naming only what changed', async () => {
+      const kevin = await seed('Kevin');
+      const created = await addClient({ lead: kevin });
+      await db.query("UPDATE clients SET practice_area = ARRAY['Corporate', 'Healthcare'] WHERE id::text = $1", [String(created.id)]);
+      let res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { practice_area: ['Corporate', 'Healthcare'], stickiness: 4 }));
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual(res.body.client.practiceArea, ['Corporate', 'Healthcare']);
+      assert.deepEqual((await storedClient(created.id)).practice_area, ['Corporate', 'Healthcare'], 'kept as it was');
+      assert.deepEqual((await changeRows(created.id)).map((r) => [r.source, r.changes]), [['form', { stickiness: { from: 3, to: 4 } }]]);
+      res = await call('PUT', `/api/data/clients/${created.id}`, storedBody(created, kevin, { practice_area: ['Healthcare', 'Human Services'], stickiness: 4 }));
+      assert.equal(res.status, 200, res.text);
+      assert.deepEqual((await storedClient(created.id)).practice_area, ['Healthcare', 'Human Services']);
+      assert.deepEqual((await changeRows(created.id)).map((r) => [r.source, r.changes]), [
+        ['form', { stickiness: { from: 3, to: 4 } }],
+        ['form', { practice_area: { from: ['Corporate', 'Healthcare'], to: ['Healthcare', 'Human Services'] } }],
+      ]);
+      // A retired name on a new client too: accepted wherever a client's areas are written
+      for (const retired of clientRules.RETIRED_PRACTICE_AREAS) {
+        res = await call('POST', '/api/data/clients', formBody({ lead_id: kevin.id, practice_area: [retired, 'Justice and Legal'] }));
+        assert.equal(res.status, 201, `${retired}: ${res.text}`);
+        assert.deepEqual((await storedClient(res.body.client.id)).practice_area, [retired, 'Justice and Legal']);
+      }
     });
 
     test('400 "Validation failed" for each field rule POST applies, with the same details; the client and its revenue unchanged', async () => {
@@ -2197,7 +2251,8 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
       assert.equal((await listedClient(created.id)).relationshipType, 'secondary', 'a lead, no second chair, no originator');
       const res = await call('PUT', `/api/data/clients/${created.id}/second-chair`, { second_chair_id: associate.id, expected_second_chair_id: null });
       assert.equal(res.status, 200, res.text);
-      assert.deepEqual(metricsOf(res.body.client), { relationshipType: 'shared', transitionComplexity: 2, successionRisk: 2 });
+      // Monthly: 0.8; 1 + 0 + 0.3 (2 and 2 with Healthcare's 1.5 until Tier 3 WP13)
+      assert.deepEqual(metricsOf(res.body.client), { relationshipType: 'shared', transitionComplexity: 1, successionRisk: 1 });
       assert.deepEqual(metricsOf(res.body.client), metricsOf(await listedClient(created.id)));
     });
   });
@@ -3098,15 +3153,16 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
     test('200: the succession metrics in the prompt, and the priority, are the server\'s, not the request\'s', async () => {
       const body = await planBody();
       const listed = await listedClient(body.client.id);
-      // Mike leads it, no second chair, Stickiness 3, Monthly, Healthcare, Low: secondary, 2, 4
-      assert.deepEqual(metricsOf(listed), { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 4 });
+      // Mike leads it, no second chair, Stickiness 3, Monthly, Healthcare, Low:
+      // secondary, 1, 3 (2 and 4 until Tier 3 WP13, U41, took the area out)
+      assert.deepEqual(metricsOf(listed), { relationshipType: 'secondary', transitionComplexity: 1, successionRisk: 3 });
       const res = await call('POST', '/api/scenarios/transition-plan', {
         ...body, client: { ...body.client, relationshipType: 'shared', transitionComplexity: 9, successionRisk: 10 },
       });
       assert.equal(res.status, 200, res.text);
-      assert.equal(res.body.plan.priority, 'medium', 'from risk 4; the request\'s 10 would be critical');
+      assert.equal(res.body.plan.priority, 'low', 'from risk 3; the request\'s 10 would be critical');
       const turn = fake.requests.at(-1).body.messages[0].content;
-      for (const line of ['- **Relationship Type**: secondary', '- **Succession Risk**: 4/10', '- **Transition Complexity**: 2/10']) {
+      for (const line of ['- **Relationship Type**: secondary', '- **Succession Risk**: 3/10', '- **Transition Complexity**: 1/10']) {
         assert.ok(turn.includes(`${line}\n`), line);
       }
       assert.doesNotMatch(turn, /shared|10\/10|9\/10/);
@@ -3470,7 +3526,10 @@ describe(`route contracts on PostgreSQL (${shape.name})`, { skip: serverUrl ? fa
         ['a hypothetical id as the seat the scenario saw', withHire({ picks: { [pickOf]: { associateId: 'h1', seenSecondChairId: 'h1' } } }),
           [{ field: `state.picks.${pickOf}.seenSecondChairId`, message: `state.picks.${pickOf}.seenSecondChairId must be a person's id as text, or null.` }]],
         ['a focus off the form\'s list', withHire({ associates: [{ ...associate, focus: ['Financial services'] }] }),
-          [{ field: 'state.associates.0.focus.0', message: 'state.associates.0.focus.0 must be one of Healthcare, Municipal, Corporate, Energy, Financial, Education, Transportation, Environmental, Technology, Real Estate, Non-Profit, Other.' }]],
+          [{ field: 'state.associates.0.focus.0', message: `state.associates.0.focus.0 must be one of ${PRACTICE_AREA_LIST}.` }]],
+        // Tier 3 WP13 (U43 (b)): the focus is not client data, so a retired name is refused
+        ['a retired practice area as a focus', withHire({ associates: [{ ...associate, focus: ['Environmental'] }] }),
+          [{ field: 'state.associates.0.focus.0', message: `state.associates.0.focus.0 must be one of ${PRACTICE_AREA_LIST}.` }]],
         ['a toggle that is not true or false', withHire({ relief: 'on' }), [{ field: 'state.relief', message: 'state.relief must be true or false.' }]],
       );
       const before = await scenarioCount();

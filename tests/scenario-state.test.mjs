@@ -409,7 +409,7 @@ const hireStore = () => ({
   hireScenario: {
     associates: [
       { id: 'h1', label: ' New associate ', focus: ['Healthcare'], target: { kind: 'count', count: 2 }, personId: null },
-      { id: 'h2', label: 'Energy hire', focus: ['Energy', 'Corporate'], target: { kind: 'average' }, personId: null },
+      { id: 'h2', label: 'Energy hire', focus: ['Energy', 'Banking and Finance'], target: { kind: 'average' }, personId: null },
     ],
     picks: hire.withPick(hire.withPick({}, CLIENTS[3], 'h1'), CLIENTS[4], null),
     relief: true,
@@ -425,7 +425,7 @@ test('a hire scenario\'s state: its own keys, ids as text, strings trimmed, the 
     kind: 'hire',
     associates: [
       { id: 'h1', label: 'New associate', focus: ['Healthcare'], target: { kind: 'count', count: 2 }, personId: null },
-      { id: 'h2', label: 'Energy hire', focus: ['Corporate', 'Energy'], target: { kind: 'average' }, personId: null },
+      { id: 'h2', label: 'Energy hire', focus: ['Banking and Finance', 'Energy'], target: { kind: 'average' }, personId: null },
     ],
     picks: { 4: { associateId: 'h1', seenSecondChairId: null }, 5: { associateId: null, seenSecondChairId: '4' } },
     relief: true,
@@ -473,6 +473,8 @@ test('a hypothetical id never passes for a person\'s id: refused wherever the st
     [{ ...hireState, associates: [hireState.associates[0], { ...hireState.associates[1], id: 'h1' }] }, 'state.associates.1.id'],
     [{ ...hireState, associates: [{ ...hireState.associates[0], personId: '9' }, { ...hireState.associates[1], personId: '9' }] }, 'state.associates.1.personId'],
     [{ ...hireState, associates: [{ ...hireState.associates[0], focus: ['Financial services'] }] }, 'state.associates.0.focus.0'],
+    // A retired name is not a focus: the focus is not client data (docs/plans/tier-3.md, U43 (b))
+    [{ ...hireState, associates: [{ ...hireState.associates[0], focus: ['Environmental'] }] }, 'state.associates.0.focus.0'],
     [{ ...hireState, associates: [{ ...hireState.associates[0], target: { kind: 'count', count: 501 } }] }, 'state.associates.0.target.count'],
     [{ ...hireState, associates: [{ ...hireState.associates[0], target: { kind: 'average', count: 2 } }] }, 'state.associates.0.target.count'],
     [{ ...hireState, associates: [{ ...hireState.associates[0], label: '' }] }, 'state.associates.0.label'],
@@ -525,6 +527,33 @@ test('a hire scenario opened on a changed book: a deleted client\'s pick dropped
   assert.deepEqual(opened.hireScenario.picks['3'], { associateId: 'h2', seenSecondChairId: null }, 'the stale pick is kept');
   assert.deepEqual(opened.hireScenario.associates.map((a) => a.personId), ['11', null]);
   assert.deepEqual(server.checkState(page.stateFromStore({ scenarioKind: 'hire', hireScenario: opened.hireScenario })), []);
+});
+
+// docs/plans/tier-3.md, section 18 (WP13, U43 (b)): a hire scenario saved
+// before the list changed may name a retired area as a focus, which the server
+// now refuses. The focus is not client data, so the page takes it off on open
+// and says which, as it names a person no longer on the People list; the
+// state then saves again.
+test('a hire scenario saved with a retired focus: taken off on open with a notice naming it, the rest kept, and the server accepts the state again', () => {
+  const base = page.stateFromStore(hireStore());
+  const stored = {
+    ...base,
+    associates: [
+      { ...base.associates[0], focus: ['Healthcare', 'Environmental'] },
+      { ...base.associates[1], focus: ['Energy', 'Corporate', 'Financial', 'Corporate'] },
+    ],
+  };
+  assert.ok(server.checkState(stored).some((d) => d.field === 'state.associates.0.focus.1'), 'the server refuses it');
+  const opened = openHireOn(stored);
+  assert.deepEqual(opened.notices, [
+    'New associate\'s practice area of focus "Environmental" is no longer on the list, so it was taken off.',
+    'Energy hire\'s practice areas of focus "Corporate", "Financial" are no longer on the list, so they were taken off.',
+  ]);
+  assert.deepEqual(opened.hireScenario.associates.map((a) => a.focus), [['Healthcare'], ['Energy']]);
+  assert.deepEqual(opened.hireScenario.picks, base.picks);
+  assert.deepEqual(server.checkState(page.stateFromStore({ scenarioKind: 'hire', hireScenario: opened.hireScenario })), []);
+  // Nothing retired, nothing said
+  assert.deepEqual(openHireOn(base).notices, []);
 });
 
 // Trap 4: WP8's rules hold, and a departure scenario WP8 saved opens unchanged

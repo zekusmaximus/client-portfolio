@@ -216,19 +216,20 @@ test('createTransitionPlanPrompt: the client\'s facts and its succession metrics
   // Tier 2 WP7 (S11): the succession metrics are the server's, from the
   // book's entry (utils/succession.cjs). The request says primary, risk 8 and
   // complexity 6; the book's c1 has a second chair, Stickiness 2, effort 2, a
-  // Healthcare area and High conflict risk: secondary, 0.8 + 1.5 + 1 = 3.3
-  // (3), 2 + 3.5 + 0.9 = 6.4 (6). Until WP7 the prompt showed the request's
+  // Healthcare area and High conflict risk: secondary, 0.8 + 1 = 1.8 (2), and
+  // 2 + 3.5 + 0.6 = 6.1 (6); until Tier 3 WP13 (U41) the area added 1.5, so
+  // 3.3 (3) and 6.4 (6). Until WP7 the prompt showed the request's
   assert.ok(profile.includes([
     'Its succession analysis, computed from the entry above, as the partners see it on the Dashboard and in Scenarios:',
     '- **Relationship Type**: secondary',
     '- **Succession Risk**: 6/10',
-    '- **Transition Complexity**: 3/10',
+    '- **Transition Complexity**: 2/10',
   ].join('\n')), profile);
   assert.doesNotMatch(profile, /primary|8\/10|Complexity\*\*: 6\/10|page's succession analysis/, 'none of the request\'s metrics');
   const { metrics } = createTransitionPlanPrompt(client, stage1Data, ROSTER, BOOK, at);
   assert.deepEqual(metrics, { ...succession.bookEntryMetrics(bookClient(BOOK, 'c1')), notRated: false });
   assert.deepEqual(metrics, planMetrics(BOOK, 'c1'));
-  assert.deepEqual(metrics, { relationshipType: 'secondary', transitionComplexity: 3, successionRisk: 6, notRated: false });
+  assert.deepEqual(metrics, { relationshipType: 'secondary', transitionComplexity: 2, successionRisk: 6, notRated: false });
 
   const scenario = section(prompt, '## THE SCENARIO', '## THE CLIENT');
   assert.match(scenario, /\*\*Departing\*\*: Kevin \(Partner\), Anna \(Associate\)/);
