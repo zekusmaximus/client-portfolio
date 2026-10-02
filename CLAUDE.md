@@ -160,7 +160,7 @@ client already holds stays valid wherever a client's areas are written, is
 offered nowhere, and shows as a chip marked "retired" (U43 (b)); Client
 Details gets both the sort and a filter listing every client that holds an
 area, whichever tag it is (U48 (a) and (b)). The section and WP13's code
-ship in one PR on `claude/exciting-feynman-0uhcv8`. The firm's client names
+ship in one PR, #75, on `claude/exciting-feynman-0uhcv8`, in review. The firm's client names
 and the per-client tagging never go in the repository (it is public). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
