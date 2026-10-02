@@ -14,7 +14,7 @@
 
 const { validateAssignment, legacyText } = require('./people.cjs');
 const { unescapeStored } = require('./escaping.cjs');
-const { PRACTICE_AREAS, CADENCES, CONFLICT_RISKS, STICKINESS, REVENUE_YEAR, REVENUE_AMOUNT_MAX } = require('./clientRules.cjs');
+const { PRACTICE_AREAS, ACCEPTED_PRACTICE_AREAS, CADENCES, CONFLICT_RISKS, STICKINESS, REVENUE_YEAR, REVENUE_AMOUNT_MAX } = require('./clientRules.cjs');
 
 // `YYYY Contracts`, its year the client form's rule too (utils/clientRules.cjs)
 const REVENUE_HEADER = new RegExp(`^\\s*(${REVENUE_YEAR})\\s+contracts?\\s*$`, 'i');
@@ -168,7 +168,10 @@ const PEOPLE_KEYS = ['lead', 'secondChair', 'originator', 'creditToFirm'];
 const HEADER_OF = Object.fromEntries(SHEET_COLUMNS.map(({ key, header }) => [key, header]));
 
 // The vocabularies (CADENCES, CONFLICT_RISKS, PRACTICE_AREAS, STICKINESS) are
-// utils/clientRules.cjs's, which POST and PUT /api/data/clients apply too.
+// utils/clientRules.cjs's, which POST and PUT /api/data/clients apply too. A
+// Practice Area cell may hold a retired name (ACCEPTED_PRACTICE_AREAS: there
+// is no retag, so the book sheet writes one a client still holds; tier-3.md,
+// U43 (b)); the message lists the 21 alone.
 const FIRM = 'firm';
 
 // The first row of data is row 2: the header is row 1, as in a spreadsheet.
@@ -283,7 +286,7 @@ function readSheetRow(row, columns = {}) {
     const areas = [];
     const unknown = [];
     for (const piece of text('practiceArea').split(';').map(squash).filter(Boolean)) {
-      const found = canonical(PRACTICE_AREAS, piece);
+      const found = canonical(ACCEPTED_PRACTICE_AREAS, piece);
       if (found === undefined) unknown.push(piece);
       else if (!areas.includes(found)) areas.push(found);
     }

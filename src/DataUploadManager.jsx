@@ -10,11 +10,11 @@ import { apiClient, apiErrorBody, apiErrorMessage } from './api';
 import usePortfolioStore from './portfolioStore';
 import Papa from 'papaparse';
 import { buildBookSheet, exportBookSheet } from './utils/bookSheet';
+import { PRACTICE_AREAS, RETIRED_PRACTICE_AREAS } from './utils/validation';
 
 // The import sheet (docs/plans/people-and-second-chair.md, section 3). The
-// server's rules are in utils/csvImport.cjs; this is the help text.
-const PRACTICE_AREAS =
-  'Healthcare, Municipal, Corporate, Energy, Financial, Education, Transportation, Environmental, Technology, Real Estate, Non-Profit, Other';
+// server's rules are in utils/csvImport.cjs; this is the help text, its
+// practice areas the page's list (docs/plans/tier-3.md, section 18).
 
 const SHEET_COLUMNS = [
   { name: 'CLIENT', required: 'yes', values: "the client's name; once per file" },
@@ -39,7 +39,11 @@ const SHEET_COLUMNS = [
   { name: 'Cadence', required: 'no', values: 'Daily, Weekly, Monthly, Quarterly or As-Needed' },
   { name: 'Handful', required: 'no', values: 'Y when every interaction is heavy (effort × 1.5)' },
   { name: 'Conflict Risk', required: 'no', values: 'Low, Medium or High' },
-  { name: 'Practice Area', required: 'no', values: `one or more of ${PRACTICE_AREAS}, separated by ;` },
+  {
+    name: 'Practice Area',
+    required: 'no',
+    values: `one or more of ${PRACTICE_AREAS.join(', ')}, separated by ;. A client may still hold a name the list retired (${RETIRED_PRACTICE_AREAS.join(', ')}): it still imports, and the client form marks it retired`,
+  },
   { name: 'Notes', required: 'no', values: 'free text' },
 ];
 

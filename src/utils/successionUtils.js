@@ -19,19 +19,18 @@
  * The rules (S11): orphaned without a lead; primary when the lead is the
  * recorded originator and there is no second chair, whatever the firm credit
  * says; shared when there is a second chair and stickiness is 7 or more of 10;
- * otherwise secondary. Cadence counts once, through effort. Practice areas
- * from practiceArea or practice_area. An unrated client's stickiness term is
- * the scorer's stand-in, 40 / 9 (UNRATED_STICKINESS), not a rating.
+ * otherwise secondary. Cadence counts once, through effort. No practice area
+ * moves a figure (Tier 3 WP13, U41 (a)): complexity is effort and the High
+ * point only. An unrated client's stickiness term is the scorer's stand-in,
+ * 40 / 9 (UNRATED_STICKINESS), not a rating.
  */
 
 import { safePracticeAreaToArray } from './dataUtils.js';
 import { resolveStickinessScore, resolveEffort, MAX_EFFORT } from './clientMetrics.js';
 
-// Held equal to utils/succession.cjs. 'Financial', the form's practice area,
-// counts from Tier 3 WP2 (U6 (b), Jeff, 2026-09-29): until then the third
-// area was 'financial services', which 'Financial' does not contain, so it
-// added nothing. Change both sides together
-export const COMPLEX_AREAS = ['healthcare', 'energy', 'financial'];
+// Held equal to utils/succession.cjs; change both sides together. Until Tier
+// 3 WP13 (U41 (a), Jeff, 2026-10-02) a practice area holding 'healthcare',
+// 'energy' or 'financial' added 1.5 to the complexity; none does now
 const TYPE_RISK = { primary: 3, secondary: 2, shared: 1, orphaned: 5 };
 
 // A person's id as text, or null: the nested person's (the API's lead,
@@ -85,11 +84,6 @@ const transitionComplexityOf = (inputs) => {
   // effort already; until WP7 it was also added on its own
   const engagement = Math.min(10, (inputs.effort / MAX_EFFORT) * 10);
   complexity += engagement * 0.3;
-
-  const areas = inputs.practiceAreas.map((area) => area.toLowerCase());
-  if (areas.some((area) => COMPLEX_AREAS.some((complexArea) => area.includes(complexArea)))) {
-    complexity += 1.5;
-  }
 
   if (conflictLabel(inputs.conflictRisk) === 'high') {
     complexity += 1;
@@ -195,7 +189,7 @@ export const getRelationshipTypeColor = (type) => {
 
 // A metric as the client carries it, computed here only when it has none. A
 // 0 is a value (transition complexity is 0 for an As-Needed client with no
-// complex area and no High conflict risk), so `??`, never `||`
+// High conflict risk), so `??`, never `||`
 const riskOf = (client) => client.successionRisk ?? calculateSuccessionRisk(client);
 const complexityOf = (client) => client.transitionComplexity ?? calculateTransitionComplexity(client);
 const typeOf = (client) => client.relationshipType ?? deriveRelationshipType(client);

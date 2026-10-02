@@ -26,6 +26,15 @@ import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/succ
 import { NativeSelect } from './components/ui/native-select';
 import { personFilterOptions, matchesPersonFilter } from './utils/people';
 import { formatMoney } from './utils/load';
+import {
+  PRACTICE_AREA_GROUPS,
+  FILTER_ALL,
+  FILTER_NONE,
+  NOT_SET,
+  compareByArea,
+  matchesPracticeAreaFilter,
+  orderAreas,
+} from './utils/practiceAreas';
 
 const ClientListView = () => {
   const reportingYear = usePortfolioStore((s) => s.getReportingYear());
@@ -44,6 +53,8 @@ const ClientListView = () => {
   const [secondChairFilter, setSecondChairFilter] = useState('all');
   const [relationshipTypeFilter, setRelationshipTypeFilter] = useState('all');
   const [successionRiskFilter, setSuccessionRiskFilter] = useState('all');
+  // 'all', 'none' or an area's name (docs/plans/tier-3.md, section 18, U48 (b))
+  const [practiceAreaFilter, setPracticeAreaFilter] = useState(FILTER_ALL);
   const [deleteDialogClient, setDeleteDialogClient] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -76,9 +87,15 @@ const ClientListView = () => {
             (successionRiskFilter === 'medium' && client.successionRisk > 3 && client.successionRisk <= 6) ||
             (successionRiskFilter === 'high' && client.successionRisk > 6);
           
-          return matchesSearch && matchesPartner && matchesRelationshipType && matchesSuccessionRisk;
+          // Practice area: every client holding it, whichever of its tags it is
+          const matchesPracticeArea = matchesPracticeAreaFilter(client, practiceAreaFilter);
+
+          return matchesSearch && matchesPartner && matchesRelationshipType && matchesSuccessionRisk && matchesPracticeArea;
         })
         .sort((a, b) => {
+          // By each client's first area in list order, then the name (U48 (a))
+          if (sortBy === 'practiceArea') return sortOrder === 'asc' ? compareByArea(a, b) : compareByArea(b, a);
+
           let aValue, bValue;
 
           // Handle different sort criteria
@@ -111,7 +128,7 @@ const ClientListView = () => {
             return bValue - aValue;
           }
         });
-  }, [clients, searchTerm, sortBy, sortOrder, leadFilter, secondChairFilter, relationshipTypeFilter, successionRiskFilter]);
+  }, [clients, searchTerm, sortBy, sortOrder, leadFilter, secondChairFilter, relationshipTypeFilter, successionRiskFilter, practiceAreaFilter]);
 
   const handleEditClient = (client) => {
     openClientModal(client);
@@ -254,10 +271,31 @@ const ClientListView = () => {
                 <option value="high">High (7-10)</option>
               </NativeSelect>
             </div>
+            <div className="w-full sm:w-56">
+              <NativeSelect
+                aria-label="Filter by practice area"
+                value={practiceAreaFilter}
+                onChange={(e) => setPracticeAreaFilter(e.target.value)}
+              >
+                <option value={FILTER_ALL}>All practice areas</option>
+                {PRACTICE_AREA_GROUPS.map((group) => (group.name ? (
+                  <optgroup key={group.name} label={group.name}>
+                    {group.areas.map((area) => <option key={area} value={area}>{area}</option>)}
+                  </optgroup>
+                ) : group.areas.map((area) => <option key={area} value={area}>{area}</option>)))}
+                <option value={FILTER_NONE}>{NOT_SET}</option>
+              </NativeSelect>
+            </div>
             <div className="flex gap-2">
               <select
+                aria-label="Sort by"
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
+                onChange={(e) => {
+                  setSortBy(e.target.value);
+                  // The list's order reads top down, so the sort starts ↑
+                  // (the page's default is ↓)
+                  if (e.target.value === 'practiceArea') setSortOrder('asc');
+                }}
                 className="px-3 py-2 border rounded-md text-sm"
               >
                 <option value="strategicValue">Strategic Value</option>
@@ -265,6 +303,7 @@ const ClientListView = () => {
                 <option value="successionRisk">Succession Risk</option>
                 <option value="transitionComplexity">Complexity</option>
                 <option value="name">Name</option>
+                <option value="practiceArea">Practice Area</option>
               </select>
               <Button
                 variant="outline"
@@ -362,17 +401,14 @@ const ClientListView = () => {
                     <Building className="h-3 w-3 text-muted-foreground" />
                     <span className="text-xs text-muted-foreground">Practice Areas</span>
                   </div>
-                  <div className="flex flex-wrap gap-1">
-                    {client.practiceArea.slice(0, 3).map((area) => (
+                  {/* In list order (U44 (a)); every area shown, so the one the
+                      filter matched is always on the card */}
+                  <div className="flex flex-wrap gap-1" data-testid="client-areas">
+                    {orderAreas(client.practiceArea).map((area) => (
                       <Badge key={area} variant="outline" className="text-xs">
                         {area}
                       </Badge>
                     ))}
-                    {client.practiceArea.length > 3 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{client.practiceArea.length - 3} more
-                      </Badge>
-                    )}
                   </div>
                 </div>
               )}

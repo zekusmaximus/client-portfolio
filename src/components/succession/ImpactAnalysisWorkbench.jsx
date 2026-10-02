@@ -21,6 +21,7 @@ import {
   Scatter,
   XAxis,
   YAxis,
+  ZAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
@@ -38,15 +39,8 @@ import {
 import { groupPeople } from '../../utils/people';
 import { formatMoney, formatEffort, practiceAreasOf, SECOND_CHAIR_EFFORT_SHARE } from '../../utils/load';
 import { candidateReason } from '../../utils/departure';
-
-const PRACTICE_AREA_COLORS = {
-  'Healthcare': '#8884d8',
-  'Municipal': '#82ca9d',
-  'Corporate': '#ffc658',
-  'Energy': '#ff7300',
-  'Financial': '#00ff88',
-  'Other': '#8dd1e1'
-};
+import { clientGroup, clientsByArea, groupRevenue, isRetired, legendGroups, orderAreas, NOT_SET } from '../../utils/practiceAreas';
+import GroupLegend from '../GroupLegend';
 
 const num = 'text-right tabular-nums';
 const LeavingBadge = () => (
@@ -283,7 +277,9 @@ const LoadComparison = ({ groups, year }) => (
   </Card>
 );
 
-// Impact Heat Map Component
+// Impact Heat Map Component: one series per practice-area group, each with
+// its colour and marker shape (docs/plans/tier-3.md, section 18, U45 (a)); a
+// client with no area is "Not set", never Other (candidate (ag))
 const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
   const heatMapData = affectedClients.map(client => ({
     x: client.successionRisk ?? 5,
@@ -292,10 +288,11 @@ const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
     client: client,
     risk: client.successionRisk ?? 5,
     revenue: usePortfolioStore.getState().getClientRevenue(client) || 0,
-    practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0) 
-      ? client.practiceArea[0] 
-      : 'Other'
+    areas: orderAreas(practiceAreasOf(client)),
+    group: clientGroup(client)
   }));
+  const series = legendGroups(heatMapData.map((d) => d.group))
+    .map((g) => ({ ...g, data: heatMapData.filter((d) => d.group === g.group) }));
 
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
@@ -305,7 +302,8 @@ const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
           <p className="font-semibold">{data.name}</p>
           <p className="text-sm">Succession Risk: {data.risk}/10</p>
           <p className="text-sm">Revenue: {formatMoney(data.revenue)}</p>
-          <p className="text-sm">Practice Area: {data.practiceArea}</p>
+          <p className="text-sm">Practice areas: {data.areas.length ? data.areas.join(', ') : NOT_SET}</p>
+          <p className="text-sm text-gray-500">Group: {data.group}</p>
           <p className="text-xs text-gray-500 mt-1">Click for details</p>
         </div>
       );
@@ -321,14 +319,14 @@ const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
           Impact Heat Map
         </CardTitle>
         <p className="text-sm text-gray-600">
-          Clients positioned by succession risk (X-axis) and revenue (Y-axis). 
-          Color indicates practice area.
+          Clients positioned by succession risk (x: 1 to 3 low, 4 to 6 medium, 7 to 10 high) and revenue (y). Colour
+          and shape show the group of each client&apos;s first practice area.
         </p>
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={400}>
-          <ScatterChart data={heatMapData}>
-            <CartesianGrid strokeDasharray="3 3" />
+          <ScatterChart>
+            <CartesianGrid stroke="#e1e0d9" />
             <XAxis 
               type="number" 
               dataKey="x" 
@@ -344,40 +342,29 @@ const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
               tickFormatter={(value) => `$${(value / 1000).toFixed(0)}K`}
               label={{ value: 'Annual Revenue', angle: -90, position: 'insideLeft' }}
             />
+            {/* One marker size, about 10px across, so the white ring leaves at least 8px of colour */}
+            <ZAxis range={[100, 100]} />
             <Tooltip content={<CustomTooltip />} />
-            <Scatter 
-              name="Clients" 
-              data={heatMapData} 
-              fill="#8884d8"
-              onClick={onClientClick}
-              cursor="pointer"
-            >
-              {heatMapData.map((entry, index) => (
-                <Cell 
-                  key={`cell-${index}`} 
-                  fill={PRACTICE_AREA_COLORS[entry.practiceArea] || PRACTICE_AREA_COLORS.Other}
-                />
-              ))}
-            </Scatter>
+            {series.map((g) => (
+              <Scatter
+                key={g.group}
+                name={g.group}
+                data={g.data}
+                fill={g.color}
+                shape={g.shape}
+                stroke="#ffffff"
+                strokeWidth={1.5}
+                onClick={onClientClick}
+                cursor="pointer"
+                isAnimationActive={false}
+              />
+            ))}
           </ScatterChart>
         </ResponsiveContainer>
-        
-        {/* Risk Zone Legend */}
-        <div className="flex justify-between items-center mt-4 text-sm">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-green-500 rounded"></div>
-              <span>Low Risk (1-3)</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-orange-500 rounded"></div>
-              <span>Medium Risk (4-6)</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-red-500 rounded"></div>
-              <span>High Risk (7-10)</span>
-            </div>
-          </div>
+
+        {/* The groups' legend; until WP13 a legend of risk zones whose colours no point wore */}
+        <div className="mt-4">
+          <GroupLegend items={series} shapes testId="heat-map-legend" />
         </div>
       </CardContent>
     </Card>
@@ -387,27 +374,24 @@ const ImpactHeatMap = ({ affectedClients, onClientClick }) => {
 // Risk by practice area and succession risk, for the affected clients
 const RiskSummary = ({ affectedClients }) => {
   const riskGroups = groupClientsBySuccessionRisk(affectedClients);
-  
-  const practiceAreaBreakdown = affectedClients.reduce((acc, client) => {
-    const areas = client.practiceArea || ['Other'];
-    const revenue = usePortfolioStore.getState().getClientRevenue(client);
-    
-    areas.forEach(area => {
-      if (!acc[area]) acc[area] = { revenue: 0, count: 0, highRisk: 0 };
-      acc[area].revenue += revenue;
-      acc[area].count += 1;
-      if (client.successionRisk > 6) acc[area].highRisk += 1;
-    });
-    
-    return acc;
-  }, {});
+  const revenueOf = (client) => usePortfolioStore.getState().getClientRevenue(client) || 0;
 
-  const pieData = Object.entries(practiceAreaBreakdown).map(([area, data]) => ({
-    name: area,
-    value: data.revenue,
-    count: data.count,
-    highRisk: data.highRisk
+  // By area, a client under each of its areas, one with none under "Not set"
+  // (candidate (ag): until WP13 such a client counted under no area, since
+  // the API sends [], which `|| ['Other']` let through)
+  const practiceAreaBreakdown = clientsByArea(affectedClients).map(({ area, color, clients }) => ({
+    area,
+    color,
+    count: clients.length,
+    revenue: clients.reduce((sum, c) => sum + revenueOf(c), 0),
+    highRisk: clients.filter((c) => c.successionRisk > 6).length,
   }));
+
+  // The pie: the revenue at risk by group, each client once, so the slices
+  // add up to it (until WP13 a slice per area, a client with two areas counted
+  // in both)
+  const pieData = groupRevenue(affectedClients, revenueOf);
+  const pieTotal = pieData.reduce((sum, g) => sum + g.revenue, 0);
 
   return (
     <Card>
@@ -423,7 +407,7 @@ const RiskSummary = ({ affectedClients }) => {
           <div>
             <h4 className="font-medium mb-3 flex items-center gap-2">
               <Building className="h-4 w-4" />
-              Practice Area Vulnerability
+              Revenue at Risk by Practice-Area Group
             </h4>
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
@@ -431,27 +415,45 @@ const RiskSummary = ({ affectedClients }) => {
                   data={pieData}
                   cx="50%"
                   cy="50%"
-                  outerRadius={60}
-                  fill="#8884d8"
-                  dataKey="value"
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={70}
+                  stroke="#ffffff"
+                  strokeWidth={2}
+                  dataKey="revenue"
+                  nameKey="group"
+                  isAnimationActive={false}
                 >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={PRACTICE_AREA_COLORS[entry.name] || PRACTICE_AREA_COLORS.Other} />
+                  {pieData.map((entry) => (
+                    <Cell key={entry.group} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value) => [formatMoney(value), 'Revenue at Risk']} />
+                <Tooltip formatter={(value, name) => [formatMoney(value), name]} />
               </PieChart>
             </ResponsiveContainer>
+            {/* The legend carries each slice's figures: a pie's own labels
+                would not fit seven groups' names */}
+            <ul className="mt-2 max-w-sm space-y-1 text-sm" data-testid="risk-pie-legend">
+              {pieData.map((g) => (
+                <li key={g.group} className="flex items-center gap-2" data-group={g.group}>
+                  <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: g.color }} aria-hidden="true" />
+                  <span className="flex-1">{g.group}</span>
+                  <span className="tabular-nums text-gray-600">
+                    {formatMoney(g.revenue)}{pieTotal > 0 ? ` (${Math.round((g.revenue / pieTotal) * 100)}%)` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
 
           <div>
             <h4 className="font-medium mb-3">Practice Area Risk Breakdown</h4>
-            <div className="space-y-3">
-              {Object.entries(practiceAreaBreakdown).map(([area, data]) => (
-                <div key={area} className="flex items-center justify-between p-3 border rounded-lg">
+            <div className="space-y-3" data-testid="area-breakdown">
+              {practiceAreaBreakdown.map((data) => (
+                <div key={data.area} className="flex items-center justify-between p-3 border rounded-lg" data-area={data.area}>
                   <div>
-                    <div className="font-medium">{area}</div>
+                    <div className="font-medium flex items-center gap-2">
+                      <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: data.color }} aria-hidden="true" />
+                      {data.area}{isRetired(data.area) ? ' (retired)' : ''}
+                    </div>
                     <div className="text-sm text-gray-600">
                       {data.count} {data.count === 1 ? 'client' : 'clients'} • {formatMoney(data.revenue)}
                     </div>
@@ -538,7 +540,7 @@ const ClientCategorization = ({ affectedClients, onClientSelect }) => {
                         <div className="font-medium">{formatClientName(client.name)}</div>
                         <div className="text-sm text-gray-600">
                           {formatMoney(usePortfolioStore.getState().getClientRevenue(client))} •{' '}
-                          {client.practiceArea?.[0] || 'Other'}
+                          {orderAreas(practiceAreasOf(client))[0] || 'not set'}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                           <Badge 

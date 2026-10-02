@@ -137,16 +137,24 @@ describe('readSheetRow: vocabularies', () => {
     assert.deepEqual(judge('Conflict Risk', 'Severe').errors, ['Conflict Risk "Severe" must be Low, Medium or High, or blank.']);
   });
 
-  test('Practice Area: the list, separated by ;, any case and spacing, duplicates once; blank empties', () => {
-    assert.equal(PRACTICE_AREAS.length, 12);
-    assert.deepEqual(judge('Practice Area', 'Energy;Environmental').values, { practice_area: ['Energy', 'Environmental'] });
+  // docs/plans/tier-3.md, section 18: the 21, and the four retired names a
+  // client may still hold (U43 (b)), which the book sheet writes back; the
+  // message lists the 21 alone
+  test('Practice Area: the list or a retired name, separated by ;, any case and spacing, duplicates once; blank empties', () => {
+    assert.equal(PRACTICE_AREAS.length, 21);
+    assert.deepEqual(judge('Practice Area', 'Energy;Water and Waste').values, { practice_area: ['Energy', 'Water and Waste'] });
     assert.deepEqual(judge('Practice Area', ' energy ;  real   estate;;Energy; ').values, { practice_area: ['Energy', 'Real Estate'] });
-    assert.deepEqual(judge('Practice Area', 'Non-Profit').values, { practice_area: ['Non-Profit'] });
+    assert.deepEqual(judge('Practice Area', 'human services;JUSTICE AND LEGAL').values, { practice_area: ['Human Services', 'Justice and Legal'] });
+    assert.deepEqual(judge('Practice Area', 'Non-Profit').values, { practice_area: ['Non-Profit'] }, 'a retired name a client holds');
+    assert.deepEqual(judge('Practice Area', 'Energy;environmental;Corporate;Financial').values,
+      { practice_area: ['Energy', 'Environmental', 'Corporate', 'Financial'] }, 'each retired name, as the server spells it');
     assert.deepEqual(judge('Practice Area', '').values, { practice_area: [] });
 
     const one = judge('Practice Area', 'Energy;Gaming');
     assert.deepEqual(one.values, {});
-    assert.match(one.errors[0], /^Practice Area "Gaming" is not on the list: Healthcare, .*Other \(separate several with ;\)\.$/);
+    assert.equal(one.errors[0], `Practice Area "Gaming" is not on the list: ${PRACTICE_AREAS.join(', ')} (separate several with ;).`);
+    assert.match(one.errors[0], /^Practice Area "Gaming" is not on the list: Healthcare, Human Services, .*Other \(separate several with ;\)\.$/);
+    assert.doesNotMatch(one.errors[0], /Corporate|Financial|Environmental|Non-Profit/, 'no retired name offered');
     assert.match(judge('Practice Area', 'Gaming, Energy;Sports').errors[0], /^Practice Area "Gaming, Energy", "Sports" are not on the list/);
   });
 
@@ -468,7 +476,7 @@ describe('processCSVData and checkSheet', () => {
     assert.deepEqual(energy.revenue, { 2024: 0, 2025: 40000, 2026: 85000 });
     assert.deepEqual(energy.sheet.values, {
       stickiness: 3, interaction_frequency: 'Monthly', high_maintenance: true,
-      conflict_risk: 'Medium', practice_area: ['Energy', 'Environmental'], notes: 'Renewal talks in spring',
+      conflict_risk: 'Medium', practice_area: ['Energy', 'Water and Waste'], notes: 'Renewal talks in spring',
     });
     assert.deepEqual(people.get(3).values, { lead_id: 6, second_chair_id: null, originator_id: 6, originator_is_firm: false });
   });

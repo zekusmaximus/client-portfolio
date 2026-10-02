@@ -70,7 +70,7 @@ import {
 } from './departure.js';
 import { stickinessPick, stickinessText, THIN_STICKINESS } from './exposure.js';
 import { ROLE_ORDER, ROLE_LABELS } from './people.js';
-import { VALIDATION_RULES } from './validation.js';
+import { VALIDATION_RULES, PRACTICE_AREAS } from './validation.js';
 
 const key = (id) => (id === null || id === undefined ? '' : String(id));
 const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
@@ -89,8 +89,8 @@ export const HYPOTHETICAL_CLIENT_ID = 'new-client';
 /** The name the client shows until one is typed. */
 export const DEFAULT_NAME = 'New client';
 
-/** The client form's vocabularies (src/utils/validation.js, held equal to utils/clientRules.cjs). */
-export const PRACTICE_AREAS = VALIDATION_RULES.practiceArea.allowedValues;
+/** The client form's vocabularies (src/utils/validation.js, held equal to utils/clientRules.cjs): the 21 practice areas offered, never a retired one. */
+export { PRACTICE_AREAS };
 export const CADENCES = VALIDATION_RULES.interaction_frequency.allowedValues;
 export const CONFLICT_RISKS = VALIDATION_RULES.conflict_risk.allowedValues;
 

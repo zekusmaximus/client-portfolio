@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import PracticeAreaPicker from '../PracticeAreaPicker';
+import SameAreaClients from '../SameAreaClients';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -13,7 +15,6 @@ import usePortfolioStore from '../../portfolioStore';
 import {
   CADENCES,
   CONFLICT_RISKS,
-  PRACTICE_AREAS,
   clientDraft,
   clientFitModel,
   reasonText,
@@ -63,10 +64,7 @@ const loadText = (load) =>
 const personText = (person) => (person ? `${person.name}${person.role !== 'partner' ? ` (${ROLE_LABELS[person.role] || person.role})` : ''}` : '');
 
 // The picks: the client form's fields, as the hire view lays out an associate's
-const PicksCard = ({ picks, year, setPicks, model }) => {
-  const toggleArea = (area) => setPicks({
-    practiceArea: picks.practiceArea.includes(area) ? picks.practiceArea.filter((a) => a !== area) : [...picks.practiceArea, area],
-  });
+const PicksCard = ({ picks, year, setPicks, model, clients }) => {
   const { lines, score } = model;
   return (
     <Card data-testid="sandbox-picks">
@@ -107,19 +105,12 @@ const PicksCard = ({ picks, year, setPicks, model }) => {
           </div>
         </div>
 
-        <div>
-          <Label>Practice areas</Label>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
-            {PRACTICE_AREAS.map((area) => {
-              const id = `sandbox-area-${area.replace(/\W/g, '')}`;
-              return (
-                <div key={area} className="flex items-center gap-1.5">
-                  <Checkbox id={id} checked={picks.practiceArea.includes(area)} onCheckedChange={() => toggleArea(area)} />
-                  <label htmlFor={id} className="text-sm cursor-pointer">{area}</label>
-                </div>
-              );
-            })}
-          </div>
+        {/* The client form's picker and the other clients in the same areas
+            (docs/plans/tier-3.md, section 18, U42 (a), U47 (a)) */}
+        <div className="space-y-2">
+          <Label htmlFor="sandbox-area-add">Practice areas</Label>
+          <PracticeAreaPicker id="sandbox-area-add" value={picks.practiceArea} onChange={(practiceArea) => setPicks({ practiceArea })} />
+          <SameAreaClients clients={clients} areas={picks.practiceArea} />
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
@@ -339,7 +330,7 @@ const ClientSandbox = () => {
 
   return (
     <div className="space-y-6" data-testid="client-sandbox">
-      <PicksCard picks={sandbox.picks} year={reportingYear} setPicks={setSandboxPicks} model={model} />
+      <PicksCard picks={sandbox.picks} year={reportingYear} setPicks={setSandboxPicks} model={model} clients={clients} />
 
       {model.lead.noCandidate && (
         <Alert variant="destructive">

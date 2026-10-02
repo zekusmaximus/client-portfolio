@@ -70,7 +70,7 @@ This is the format Phase 2 builds and the sheet Jeff assembles (with Cowork) for
 | `Cadence` | no | `Daily`, `Weekly`, `Monthly`, `Quarterly`, `As-Needed` | how often the client is touched; drives effort |
 | `Handful` | no | `Y` or blank | every interaction is heavy; effort × 1.5 |
 | `Conflict Risk` | no | `Low`, `Medium`, `High` | subtracts 0, 1 or 3 from the score |
-| `Practice Area` | no | one or more of `Healthcare`, `Municipal`, `Corporate`, `Energy`, `Financial`, `Education`, `Transportation`, `Environmental`, `Technology`, `Real Estate`, `Non-Profit`, `Other`, separated by `;` | |
+| `Practice Area` | no | one or more of `Healthcare`, `Human Services`, `Senior Care`, `Banking and Finance`, `Insurance and Benefits`, `Energy`, `Water and Waste`, `Construction`, `Real Estate`, `Transportation`, `Municipal`, `Education`, `Justice and Legal`, `Retail and Restaurants`, `Manufacturing and Consumer Products`, `Cannabis and Tobacco`, `Technology`, `Professional Services`, `Arts and Culture`, `Media and Entertainment`, `Other`, separated by `;`; a client may still hold `Corporate`, `Financial`, `Environmental` or `Non-Profit`, the four names the list retired (`docs/plans/tier-3.md`, section 18, U43 (b)), which the import accepts and nothing offers | |
 | `Notes` | no | free text | |
 
 A `Contract Period` column is ignored like any other header not listed here (P13): a sheet that still has it imports exactly as one without it, whatever its cells hold.
@@ -80,7 +80,7 @@ Header line and two example rows:
 ```csv
 CLIENT,2024 Contracts,2025 Contracts,2026 Contracts,Lead,Second Chair,Originator,Credit To Firm,Stickiness,Cadence,Handful,Conflict Risk,Practice Area,Notes
 Example Health Network,"$60,000","$66,000","$72,000",Kevin,Jay,Jay,Y,5,Weekly,,Low,Healthcare,
-Example Energy Coalition,,"$40,000","$85,000",Paula,,Paula,,3,Monthly,Y,Medium,Energy;Environmental,Renewal talks in spring
+Example Energy Coalition,,"$40,000","$85,000",Paula,,Paula,,3,Monthly,Y,Medium,Energy;Water and Waste,Renewal talks in spring
 ```
 
 Headers and values match regardless of case (`weekly`, `high`, `y`). A blank cell in a column the sheet has clears that field; a column the sheet lacks leaves it alone. Any problem refuses the whole file and the upload page lists each one by row, counting the header as row 1.

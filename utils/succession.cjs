@@ -14,8 +14,8 @@
 // by its last bit.
 //
 // The rules are the page's as they were until WP7, with S11's four changes
-// (approved by Jeff on 2026-09-27) and, from Tier 3 WP2, Financial among the
-// complex areas (below), and nothing else:
+// (approved by Jeff on 2026-09-27) and, from Tier 3 WP13, no practice area
+// in the complexity (below), and nothing else:
 //   1. The relationship type reads the people by id, not the legacy text:
 //      orphaned without a lead; primary when the lead is the recorded
 //      originator and there is no second chair, whatever originator_is_firm
@@ -26,7 +26,8 @@
 //      legacy text (P6).
 //   2. Cadence counts once, through effort: the separate cadence term is gone.
 //   3. Practice areas are read from practiceArea or practice_area, so the
-//      form's preview (which holds practiceArea) counts them too.
+//      form's preview (which holds practiceArea) reads them too; since Tier 3
+//      WP13 no rule uses them (below).
 //   4. An unrated client's stickiness term uses UNRATED_STICKINESS, exactly
 //      40 / 9, the scorer's stand-in, not a rating. Both sides compute the
 //      0 to 10 figure from the raw pick (getStickiness), never from the API's
@@ -35,13 +36,13 @@
 //      checks that too.
 //
 // Kept as they were: the weights, the 0.3 factors, the rounding and the cap
-// of 10. The complex areas are 'healthcare', 'energy' and 'financial', each
-// matched as part of a practice area's name in any case. Until Tier 3 WP2
-// the third was 'financial services', which the practice-area vocabulary's
-// 'Financial' (utils/clientRules.cjs) does not contain, so a Financial client
-// added no complexity; counting it was Jeff's call (Tier 3, U6 (b), approved
-// 2026-09-29). 'financial' still matches 'Financial Services', as stored
-// before the vocabulary.
+// of 10. No practice area moves a figure since Tier 3 WP13 (U41 (a), Jeff,
+// 2026-10-02: "sometimes an arts client could be as complicated as a banking
+// client"): complexity is effort and the High point only, 0 to 4. Until then
+// a practice area whose name held 'healthcare', 'energy' or 'financial', in
+// any case, added 1.5 (the third was 'financial services' until Tier 3 WP2,
+// U6 (b)); the area was a proxy for difficulty that the partners' own picks
+// (cadence, the handful, conflict risk) already carry.
 
 const { getStickiness, EFFORT_BY_CADENCE, HANDFUL_MULTIPLIER } = require('./strategic.cjs');
 const { clientEffort } = require('./book.cjs');
@@ -50,7 +51,6 @@ const { clientEffort } = require('./book.cjs');
 // on a 0 to 10 scale against it
 const MAX_EFFORT = EFFORT_BY_CADENCE.Daily * HANDFUL_MULTIPLIER;
 
-const COMPLEX_AREAS = ['healthcare', 'energy', 'financial'];
 const TYPE_RISK = { primary: 3, secondary: 2, shared: 1, orphaned: 5 };
 const RELATIONSHIP_TYPES = Object.keys(TYPE_RISK);
 
@@ -121,7 +121,7 @@ function relationshipTypeOf(inputs) {
   return 'secondary';
 }
 
-/** Transition complexity, 0 to 10: effort (rule 2), a complex practice area, High conflict risk. */
+/** Transition complexity, 0 to 4: effort (rule 2) and High conflict risk; no practice area (Tier 3 WP13, U41). */
 function transitionComplexityOf(inputs) {
   let complexity = 0;
 
@@ -129,11 +129,6 @@ function transitionComplexityOf(inputs) {
   // effort already; until WP7 it was also added on its own (0 to 3)
   const engagement = Math.min(10, (inputs.effort / MAX_EFFORT) * 10);
   complexity += engagement * 0.3;
-
-  const areas = inputs.practiceAreas.map((area) => area.toLowerCase());
-  if (areas.some((area) => COMPLEX_AREAS.some((complexArea) => area.includes(complexArea)))) {
-    complexity += 1.5;
-  }
 
   if (conflictLabel(inputs.conflictRisk) === 'high') {
     complexity += 1;
@@ -175,7 +170,6 @@ const withSuccessionMetrics = (clients = []) => clients.map((client) => ({ ...cl
 
 module.exports = {
   MAX_EFFORT,
-  COMPLEX_AREAS,
   TYPE_RISK,
   RELATIONSHIP_TYPES,
   practiceAreasOf,

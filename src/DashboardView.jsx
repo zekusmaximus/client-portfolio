@@ -6,7 +6,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   BarChart3,
-  PieChart,
   TrendingUp,
   Users,
   DollarSign,
@@ -17,13 +16,15 @@ import {
 import {
   ScatterChart,
   Scatter,
+  BarChart,
+  Bar,
+  LabelList,
   XAxis,
   YAxis,
+  ZAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart as RechartsPieChart,
-  Pie,
   Cell
 } from 'recharts';
 import usePortfolioStore from './portfolioStore';
@@ -31,8 +32,10 @@ import { formatClientName } from './utils/textUtils';
 import { getSuccessionRiskVariant, getRelationshipTypeColor } from './utils/successionUtils';
 import DataUploadManager from './DataUploadManager';
 import PersonLoadSheet from './components/PersonLoadSheet';
-import { partnershipModel, bookYears, formatMoney } from './utils/load';
+import { partnershipModel, bookYears, formatMoney, practiceAreasOf } from './utils/load';
 import { revenueForYear } from './utils/revenue';
+import { areaRevenue, clientGroup, groupOf, legendGroups, orderAreas, NOT_SET } from './utils/practiceAreas';
+import GroupLegend from './components/GroupLegend';
 import { exposureModel } from './utils/exposure';
 import { ratedForStickiness } from './utils/askTheBook';
 
@@ -121,43 +124,9 @@ const DashboardView = () => {
   const [selectedTab, setSelectedTab] = useState('overview');
   const [showUpload, setShowUpload] = useState(false);
 
-  // Color palette for charts
-  const COLORS = {
-    'Healthcare': '#8884d8',
-    'Municipal': '#82ca9d',
-    'Corporate': '#ffc658',
-    'Energy': '#ff7300',
-    'Financial': '#00ff88',
-    'Other': '#8dd1e1',
-    'Not Specified': '#d1d5db'
-  };
-
   // Calculate analytics data
   const analytics = useMemo(() => {
     if (!clients || clients.length === 0) return null;
-
-    // Practice area breakdown
-    const practiceAreas = {};
-    clients.forEach(client => {
-      const clientRevenue = usePortfolioStore.getState().getClientRevenue(client);
-
-      if (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0) {
-        client.practiceArea.forEach(area => {
-          if (!practiceAreas[area]) {
-            practiceAreas[area] = { count: 0, revenue: 0 };
-          }
-          practiceAreas[area].count++;
-          practiceAreas[area].revenue += clientRevenue;
-        });
-      } else {
-        // Handle clients without practice area or with empty array
-        if (!practiceAreas['Not Specified']) {
-          practiceAreas['Not Specified'] = { count: 0, revenue: 0 };
-        }
-        practiceAreas['Not Specified'].count++;
-        practiceAreas['Not Specified'].revenue += clientRevenue;
-      }
-    });
 
     // Top clients by strategic value
     const topClients = [...clients]
@@ -181,7 +150,6 @@ const DashboardView = () => {
     const successionAnalytics = getSuccessionAnalytics();
 
     return {
-      practiceAreas,
       topClients,
       totalRevenue,
       averageStrategicValue,
@@ -189,9 +157,17 @@ const DashboardView = () => {
     };
   }, [clients]);
 
+  // Revenue by practice area, a bar each, coloured by the area's group
+  // (docs/plans/tier-3.md, section 18, U45 (a)); until WP13 a pie of twelve
+  // areas, five of them with a colour of their own
+  const areaBars = useMemo(
+    () => areaRevenue(clients, revenueOf).map((bar) => ({ ...bar, label: bar.retired ? `${bar.area} (retired)` : bar.area })),
+    [clients, revenueOf]
+  );
 
-
-  // Prepare data for charts
+  // Prepare data for charts: one scatter series per group, each with its
+  // colour and its own marker shape (seven hues cannot all be told apart
+  // where any two points may touch; the shape is the second encoding)
   const scatterData = clients.map(client => {
     const revenue = usePortfolioStore.getState().getClientRevenue(client);
     return {
@@ -199,17 +175,12 @@ const DashboardView = () => {
       y: parseFloat(client.strategicValue) || 0,
       name: formatClientName(client.name) || 'Unnamed Client',
       revenue: revenue,
-      practiceArea: (client.practiceArea && Array.isArray(client.practiceArea) && client.practiceArea.length > 0)
-        ? client.practiceArea[0]
-        : 'Not Specified'
+      areas: orderAreas(practiceAreasOf(client)),
+      group: clientGroup(client)
     };
   });
-
-  const pieData = analytics ? Object.entries(analytics.practiceAreas).map(([area, data]) => ({
-    name: area,
-    value: data.revenue,
-    count: data.count
-  })) : [];
+  const scatterGroups = legendGroups(scatterData.map((d) => d.group))
+    .map((g) => ({ ...g, data: scatterData.filter((d) => d.group === g.group) }));
 
   if (!analytics) {
     return (
@@ -279,11 +250,28 @@ const DashboardView = () => {
           <p className="font-semibold">{data.name || 'Unnamed Client'}</p>
           <p className="text-sm">Strategic Value: {(data.y || 0).toFixed(2)}</p>
           <p className="text-sm">Revenue: {formatMoney(data.revenue)}</p>
-          <p className="text-sm">Practice Area: {data.practiceArea || 'Not Specified'}</p>
+          <p className="text-sm">Practice areas: {data.areas?.length ? data.areas.join(', ') : NOT_SET}</p>
+          <p className="text-sm text-muted-foreground">Group: {data.group}</p>
         </div>
       );
     }
     return null;
+  };
+
+  // A bar's tooltip: the area, its group, the revenue and the clients
+  const AreaTooltip = ({ active, payload }) => {
+    if (!active || !payload || !payload.length) return null;
+    const bar = payload[0].payload;
+    return (
+      <div className="bg-background border rounded-lg p-3 shadow-lg">
+        <p className="font-semibold">{bar.area}</p>
+        <p className="text-sm text-muted-foreground">
+          {bar.area === NOT_SET ? 'No practice area' : bar.retired ? `Retired from the list; counted with ${groupOf(bar.area)}` : `Group: ${bar.group}`}
+        </p>
+        <p className="text-sm">{reportingYear} revenue: {formatMoney(bar.revenue)}</p>
+        <p className="text-sm">{bar.count} {bar.count === 1 ? 'client' : 'clients'}</p>
+      </div>
+    );
   };
 
   return (
@@ -376,33 +364,35 @@ const DashboardView = () => {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
-          {/* Portfolio Composition */}
-          <Card>
+          {/* Portfolio composition: revenue by practice area, sorted, each
+              bar its group's colour (docs/plans/tier-3.md, section 18, U45 (a)) */}
+          <Card data-testid="area-revenue">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <PieChart className="h-5 w-5" />
-                Portfolio Composition by Practice Area
+                <BarChart3 className="h-5 w-5" />
+                Revenue by Practice Area, {reportingYear}
               </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Each bar is a practice area&apos;s {reportingYear} revenue, largest first, coloured by its group. A client
+                counts under each of its areas, so one with two areas adds to both bars.
+              </p>
             </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <RechartsPieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[entry.name] || COLORS.Other} />
+            <CardContent className="space-y-3">
+              <ResponsiveContainer width="100%" height={Math.max(160, areaBars.length * 32 + 48)}>
+                <BarChart data={areaBars} layout="vertical" margin={{ top: 4, right: 96, bottom: 4, left: 8 }}>
+                  <CartesianGrid horizontal={false} stroke="#e1e0d9" />
+                  <XAxis type="number" tickFormatter={formatMoney} tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="label" width={240} interval={0} tick={{ fontSize: 12 }} />
+                  <Tooltip cursor={{ fill: 'rgba(11, 11, 11, 0.04)' }} content={<AreaTooltip />} />
+                  <Bar dataKey="revenue" barSize={20} radius={[0, 4, 4, 0]} isAnimationActive={false}>
+                    {areaBars.map((bar) => (
+                      <Cell key={bar.area} fill={bar.color} />
                     ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => [formatMoney(value), 'Revenue']} />
-                </RechartsPieChart>
+                    <LabelList dataKey="revenue" position="right" formatter={(value) => formatMoney(value)} style={{ fontSize: 12, fill: '#52514e' }} />
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
+              <GroupLegend items={legendGroups(areaBars.map((bar) => bar.group))} testId="area-revenue-legend" />
             </CardContent>
           </Card>
         </TabsContent>
@@ -458,8 +448,8 @@ const DashboardView = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={400}>
-                <ScatterChart data={scatterData}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                <ScatterChart>
+                  <CartesianGrid stroke="#e1e0d9" />
                   <XAxis
                     type="number"
                     dataKey="x"
@@ -473,24 +463,28 @@ const DashboardView = () => {
                     name="Strategic Value"
                     domain={[0, 'dataMax + 1']}
                   />
+                  {/* One marker size, about 10px across, so the white ring leaves at least 8px of colour */}
+                  <ZAxis range={[100, 100]} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Scatter 
-                    name="Clients" 
-                    data={scatterData} 
-                    fill="#8884d8"
-                  >
-                    {scatterData.map((entry, index) => (
-                      <Cell 
-                        key={`cell-${index}`} 
-                        fill={COLORS[entry.practiceArea] || COLORS.Other} 
-                      />
-                    ))}
-                  </Scatter>
+                  {scatterGroups.map((g) => (
+                    <Scatter
+                      key={g.group}
+                      name={g.group}
+                      data={g.data}
+                      fill={g.color}
+                      shape={g.shape}
+                      stroke="#ffffff"
+                      strokeWidth={1.5}
+                      isAnimationActive={false}
+                    />
+                  ))}
                 </ScatterChart>
               </ResponsiveContainer>
-              <div className="mt-4">
+              <div className="mt-4 space-y-2">
+                <GroupLegend items={scatterGroups} shapes testId="scatter-legend" />
                 <p className="text-sm text-muted-foreground">
-                  Each point is a client: its {reportingYear} revenue against its strategic value, colored by its first practice area.
+                  Each point is a client: its {reportingYear} revenue against its strategic value. Its colour and shape are the
+                  group of its first practice area.
                 </p>
               </div>
             </CardContent>

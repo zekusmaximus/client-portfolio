@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import PracticeAreaPicker from '../PracticeAreaPicker';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -15,7 +16,7 @@ import { acceptance, hireScenarioModel, RELIEVED_LEAD_SHARE, targetText } from '
 import { formatEffort, formatMoney, formatRatio, practiceAreasOf, SECOND_CHAIR_EFFORT_SHARE } from '../../utils/load';
 import { revenueForYear } from '../../utils/revenue';
 import { formatClientName } from '../../utils/textUtils';
-import { LIMITS, PRACTICE_AREAS } from '../../utils/scenarioState';
+import { LIMITS } from '../../utils/scenarioState';
 
 // An associate in Scenarios (docs/plans/tier-2.md, section 14, S18 and S19):
 // hypothetical associates, the second-chair seats proposed for them from the
@@ -75,9 +76,6 @@ const AssociateCard = ({ associate, entered, model, people, year, available, bus
   const linkable = people.filter((p) => p.active && p.role === 'associate' && !linkedElsewhere.has(String(p.id)));
   const target = entered.target || { kind: 'count', count: 0 };
   const focus = entered.focus || [];
-  const toggleFocus = (area) => updateHireAssociate(associate.id, {
-    focus: focus.includes(area) ? focus.filter((a) => a !== area) : [...focus, area],
-  });
   const count = seats.length;
   const name = associate.linked ? `${associate.label} (${associate.linked.name})` : associate.label;
 
@@ -141,19 +139,19 @@ const AssociateCard = ({ associate, entered, model, people, year, available, bus
           </div>
         </div>
 
-        <div>
-          <Label>Practice areas of focus <span className="font-normal text-muted-foreground">(break ties in effort)</span></Label>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
-            {PRACTICE_AREAS.map((area) => {
-              const id = `hire-focus-${associate.id}-${area.replace(/\W/g, '')}`;
-              return (
-                <div key={area} className="flex items-center gap-1.5">
-                  <Checkbox id={id} checked={focus.includes(area)} onCheckedChange={() => toggleFocus(area)} />
-                  <label htmlFor={id} className="text-sm cursor-pointer">{area}</label>
-                </div>
-              );
-            })}
-          </div>
+        {/* The 21 only: the focus is not client data, so no retired name is
+            offered or kept (docs/plans/tier-3.md, section 18, U43 (b), U47 (a)) */}
+        <div className="space-y-2">
+          <Label htmlFor={`hire-focus-${associate.id}`}>
+            Practice areas of focus <span className="font-normal text-muted-foreground">(break ties in effort)</span>
+          </Label>
+          <PracticeAreaPicker
+            id={`hire-focus-${associate.id}`}
+            label="Practice areas of focus"
+            testId={`hire-focus-${associate.id}`}
+            value={focus}
+            onChange={(next) => updateHireAssociate(associate.id, { focus: next })}
+          />
         </div>
 
         <div>
