@@ -150,13 +150,14 @@ generated for it (U35 (a)), its design approved now and effective then
 (U37 (a) with (b) pre-authorized, U38 (a), U39 (a) with the run before the
 deploy optional), so the session that builds it needs nothing more from
 Jeff; and WP12, Stage 2's note (U36 (a), section 17.12), approved and next,
-page only, to ship before Jeff's rollout walkthrough with the partners.
+page only, to ship before Jeff's rollout walkthrough with the partners, with
+candidate (ai), the Dashboard scatter's top tick, in the same PR (Jeff,
+2026-10-02).
 Section 16.5 gives Jeff a read-only check of the saved scenarios and plans,
 WP8's measurement after its deploy. **Before any change, read tier-3.md
 section 11.1**: every open item, the event that starts each, and the
-recommendations not yet approved (candidate (ai), the scatter's top tick;
-Jeff's operations; the items recommended for retiring); a PR whose change
-touches one says so. Section 18 (WP13, practice areas: 21 areas in seven groups in
+recommendations not yet approved (Jeff's operations; the items recommended
+for retiring); a PR whose change touches one says so. Section 18 (WP13, practice areas: 21 areas in seven groups in
 place of the twelve, a dropdown picker with chips, the other clients in the
 same areas, a Practice Area sort and filter on Client Details, no practice
 area in transition complexity, and charts coloured by group), written
