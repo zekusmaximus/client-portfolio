@@ -146,7 +146,14 @@ then the partners asking for relief firm-wide, U33; WP8: a real departure
 becoming known, U35), and Stage 2's note is proposed now as WP12 (U36,
 section 17.12). Section 16.5 gives Jeff a read-only check of the saved
 scenarios and plans. Build nothing from either section until Jeff approves
-its decisions. Run the packages in
+its decisions. Section 18 (WP13, practice areas: 21 areas in seven groups in
+place of the twelve, a dropdown picker, the other clients in the same areas,
+a Practice Area sort on Client Details, no practice area in transition
+complexity, and the book retagged through the book sheet), written 2026-10-02
+against `68cefec`, holds decisions U40 to U48: U41, U42, U47 and U48 are
+Jeff's own (2026-10-02), U40 and U43 to U46 proposed; build nothing from it
+until Jeff approves them. The firm's client names and the per-client tagging
+never go in the repository (it is public). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
 Background and evidence: `REVIEW-2026-09.md`. Product direction:
