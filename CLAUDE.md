@@ -160,7 +160,10 @@ client already holds stays valid wherever a client's areas are written, is
 offered nowhere, and shows as a chip marked "retired" (U43 (b)); Client
 Details gets both the sort and a filter listing every client that holds an
 area, whichever tag it is (U48 (a) and (b)). The section and WP13's code
-ship in one PR, #75, on `claude/exciting-feynman-0uhcv8`, in review. The firm's client names
+merged together as PR #75 (`faea395`) on 2026-10-02 at Jeff's instruction, CI
+green on its head `d71f313` (check, schema, GitGuardian and the Deploy
+Preview), and were verified on gbacpod.com by Jeff the same day: his nine
+after-deploy checks (tier-3.md section 18.11) all as expected. The firm's client names
 and the per-client tagging never go in the repository (it is public). Run the packages in
 its status table's order, and update that table when you finish one. A package that changes a
 route changes its contract in `tests/routes.test.mjs` in the same PR.
